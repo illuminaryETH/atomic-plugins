@@ -41,3 +41,24 @@ export async function getEmbeddingStatus(atomId: string): Promise<string> {
   return invoke('get_embedding_status', { atomId });
 }
 
+// Wiki commands
+export async function getWikiArticle(tagId: string): Promise<any | null> {
+  return invoke('get_wiki_article', { tagId });
+}
+
+export async function getWikiArticleStatus(tagId: string): Promise<any> {
+  return invoke('get_wiki_article_status', { tagId });
+}
+
+export async function generateWikiArticle(tagId: string, tagName: string): Promise<any> {
+  return invoke('generate_wiki_article', { tagId, tagName });
+}
+
+export async function updateWikiArticle(tagId: string, tagName: string): Promise<any> {
+  return invoke('update_wiki_article', { tagId, tagName });
+}
+
+export async function deleteWikiArticle(tagId: string): Promise<void> {
+  return invoke('delete_wiki_article', { tagId });
+}
+
