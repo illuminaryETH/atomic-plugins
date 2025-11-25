@@ -5,6 +5,7 @@ mod embedding;
 mod extraction;
 mod models;
 mod settings;
+mod wiki;
 
 use db::{Database, SharedDatabase};
 use std::sync::Arc;
