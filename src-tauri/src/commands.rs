@@ -1,6 +1,7 @@
 use crate::db::{Database, SharedDatabase};
 use crate::embedding::{distance_to_similarity, spawn_embedding_task};
 use crate::models::{Atom, AtomWithTags, SemanticSearchResult, SimilarAtomResult, Tag, TagWithCount};
+use crate::settings;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -735,5 +736,50 @@ pub fn get_embedding_status(db: State<Database>, atom_id: String) -> Result<Stri
         .map_err(|e| format!("Failed to get embedding status: {}", e))?;
 
     Ok(status)
+}
+
+// Settings commands
+
+#[tauri::command]
+pub fn get_settings(db: State<Database>) -> Result<HashMap<String, String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    settings::get_all_settings(&conn)
+}
+
+#[tauri::command]
+pub fn set_setting(db: State<Database>, key: String, value: String) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    settings::set_setting(&conn, &key, &value)
+}
+
+#[tauri::command]
+pub async fn test_openrouter_connection(api_key: String) -> Result<bool, String> {
+    let client = reqwest::Client::new();
+    
+    let response = client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "model": "anthropic/claude-haiku-4.5",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hi"
+                }
+            ],
+            "max_tokens": 5
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+    
+    if response.status().is_success() {
+        Ok(true)
+    } else {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(format!("API error ({}): {}", status, body))
+    }
 }
 

@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod embedding;
 mod models;
+mod settings;
 
 use db::{Database, SharedDatabase};
 use std::sync::Arc;
@@ -60,6 +61,9 @@ pub fn run() {
             commands::retry_embedding,
             commands::process_pending_embeddings,
             commands::get_embedding_status,
+            commands::get_settings,
+            commands::set_setting,
+            commands::test_openrouter_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
