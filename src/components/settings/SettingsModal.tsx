@@ -14,6 +14,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [autoTaggingEnabled, setAutoTaggingEnabled] = useState(true);
+  const [taggingModel, setTaggingModel] = useState('openai/gpt-4o-mini');
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -30,6 +31,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   useEffect(() => {
     setApiKey(settings.openrouter_api_key || '');
     setAutoTaggingEnabled(settings.auto_tagging_enabled !== 'false');
+    setTaggingModel(settings.tagging_model || 'openai/gpt-4o-mini');
   }, [settings]);
   
   useEffect(() => {
@@ -79,6 +81,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     try {
       await setSetting('openrouter_api_key', apiKey);
       await setSetting('auto_tagging_enabled', autoTaggingEnabled ? 'true' : 'false');
+      await setSetting('tagging_model', taggingModel);
       onClose();
     } catch (e) {
       console.error('Failed to save settings:', e);
@@ -213,6 +216,23 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 }`}
               />
             </button>
+          </div>
+          
+          {/* Tagging Model Section */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-[#dcddde]">
+              Tagging Model
+            </label>
+            <p className="text-xs text-[#888888]">
+              OpenRouter model ID for automatic tag extraction (e.g., openai/gpt-4o-mini, anthropic/claude-sonnet-4.5)
+            </p>
+            <input
+              type="text"
+              value={taggingModel}
+              onChange={(e) => setTaggingModel(e.target.value)}
+              placeholder="openai/gpt-4o-mini"
+              className="w-full px-3 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150"
+            />
           </div>
         </div>
         

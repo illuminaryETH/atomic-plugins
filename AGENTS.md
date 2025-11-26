@@ -65,7 +65,7 @@ Phase 1 (Foundation + Data Layer) features:
 - **State Management**: Zustand 5 (with persist middleware for UI preferences)
 - **Database**: SQLite with sqlite-vec and sqlite-lembed extensions (via rusqlite)
 - **Embeddings**: Real 384-dimensional vectors via sqlite-lembed + all-MiniLM-L6-v2 GGUF model
-- **LLM Provider**: OpenRouter API (anthropic/claude-sonnet-4.5 with structured outputs)
+- **LLM Provider**: OpenRouter API (configurable model, default: openai/gpt-4o-mini for tagging)
 - **HTTP Client**: reqwest (Rust)
 - **Markdown Editor**: CodeMirror 6 (`@uiw/react-codemirror`)
 - **Markdown Rendering**: react-markdown with remark-gfm
@@ -73,6 +73,10 @@ Phase 1 (Foundation + Data Layer) features:
 
 ## Project Structure
 ```
+/scripts
+  import-wikipedia.js  # Bulk import Wikipedia articles for stress testing
+  README.md            # Documentation for scripts
+
 /src-tauri
   /src
     main.rs           # Tauri entry point
@@ -145,6 +149,14 @@ cd src-tauri && cargo build
 
 # Run tests (including chunking tests)
 cd src-tauri && cargo test
+```
+
+### Utility Scripts
+```bash
+# Import Wikipedia articles for stress testing (requires app to be run once first)
+npm run import:wikipedia        # Import 500 articles (default)
+npm run import:wikipedia 1000   # Import custom number of articles
+npm run import:wikipedia 500 --db /path/to/atomic.db  # Custom database path
 ```
 
 ## Database
@@ -238,6 +250,7 @@ CREATE TABLE atom_positions (
 ### Settings Keys
 - `openrouter_api_key`: User's OpenRouter API key for LLM access
 - `auto_tagging_enabled`: "true" or "false" (default: "true")
+- `tagging_model`: OpenRouter model ID for tag extraction (default: "openai/gpt-4o-mini")
 
 ## Tauri Commands (API)
 
@@ -338,11 +351,17 @@ Wiki generation uses OpenRouter's structured outputs:
 ### How It Works
 1. When an atom is created/updated, the embedding pipeline runs
 2. If auto-tagging is enabled and API key is set, tag extraction runs in parallel with embedding
-3. Each content chunk is sent to OpenRouter (Claude Sonnet 4.5) with the existing tag hierarchy
+3. Each content chunk is sent to OpenRouter using the configured tagging model (default: openai/gpt-4o-mini) with the existing tag hierarchy
 4. The LLM identifies existing tags that apply and suggests new tags if needed
 5. Results from all chunks are merged and deduplicated
 6. Existing tags are linked to the atom; new tags are created with proper hierarchy
 7. The `embedding-complete` event includes tag information for UI updates
+
+### Configurable Model
+The tagging model can be configured in Settings:
+- Default: `openai/gpt-4o-mini` (cheaper/faster, good for bulk imports)
+- Alternative: `anthropic/claude-sonnet-4.5` (higher quality, more expensive)
+- Any OpenRouter model ID that supports structured outputs can be used
 
 ### Structured Outputs
 The tag extraction uses OpenRouter's structured outputs feature to guarantee valid JSON responses:
@@ -439,6 +458,7 @@ Content is chunked for optimal embedding generation:
 - `d3-force` = "^3.0.0"
 - `react-zoom-pan-pinch` = "^3.0.0"
 - `@types/d3-force` = "^3.0.0" (dev)
+- `better-sqlite3` = "^11.5.0" (dev, for import scripts)
 
 ## Design System (Dark Theme - Obsidian-inspired)
 

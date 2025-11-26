@@ -96,6 +96,7 @@ pub async fn extract_tags_from_chunk(
     api_key: &str,
     chunk_content: &str,
     tag_tree_json: &str,
+    model: &str,
 ) -> Result<ExtractionResult, String> {
     let user_content = format!(
         "EXISTING TAG HIERARCHY:\n{}\n\nTEXT TO ANALYZE:\n{}",
@@ -141,7 +142,7 @@ pub async fn extract_tags_from_chunk(
     });
 
     let request = OpenRouterRequest {
-        model: "anthropic/claude-sonnet-4.5".to_string(),
+        model: model.to_string(),
         messages: vec![
             Message {
                 role: "system".to_string(),
