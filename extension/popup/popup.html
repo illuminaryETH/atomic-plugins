@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Connection Status -->
+    <div class="status-bar">
+      <div class="status-indicator" id="status">
+        <span class="dot"></span>
+        <span class="label" id="status-label">Checking...</span>
+      </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="actions">
+      <button class="btn-primary" id="capture-page">
+        📄 Capture Page
+      </button>
+      <button class="btn-secondary" id="capture-selection">
+        ✂️ Capture Selection
+      </button>
+    </div>
+
+    <!-- Queue -->
+    <div class="queue-section" id="queue-section" style="display: none;">
+      <div class="queue-header">
+        <h3>Pending Captures</h3>
+        <span class="count" id="queue-count">0</span>
+      </div>
+      <div class="queue-list" id="queue-list">
+        <!-- Queue items populated by JS -->
+      </div>
+      <button class="btn-sync" id="sync-now">Sync Now</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

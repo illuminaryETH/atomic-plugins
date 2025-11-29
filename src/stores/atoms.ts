@@ -67,6 +67,7 @@ interface AtomsStore {
   
   // New methods
   updateAtomStatus: (atomId: string, status: string) => void;
+  addAtom: (atom: AtomWithTags) => void;
   searchSemantic: (query: string) => Promise<void>;
   clearSemanticSearch: () => void;
   setSemanticSearchQuery: (query: string) => void;
@@ -161,6 +162,13 @@ export const useAtomsStore = create<AtomsStore>((set) => ({
           ? { ...a, embedding_status: status as Atom['embedding_status'] }
           : a
       ),
+    }));
+  },
+
+  addAtom: (atom: AtomWithTags) => {
+    set((state) => ({
+      // Add to beginning of list (most recent first)
+      atoms: [atom, ...state.atoms],
     }));
   },
   

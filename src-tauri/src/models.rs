@@ -136,3 +136,11 @@ pub struct AtomWithEmbedding {
     pub embedding: Option<Vec<f32>>,  // Average of chunk embeddings, None if not yet embedded
 }
 
+/// Request payload for creating an atom (used by both Tauri commands and HTTP API)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateAtomRequest {
+    pub content: String,
+    pub source_url: Option<String>,
+    pub tag_ids: Vec<String>,
+}
+

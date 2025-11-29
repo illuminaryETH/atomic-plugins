@@ -1,6 +1,6 @@
 use crate::db::{Database, SharedDatabase};
 use crate::embedding::{distance_to_similarity, spawn_embedding_task_single};
-use crate::models::{Atom, AtomPosition, AtomWithEmbedding, AtomWithTags, SemanticSearchResult, SimilarAtomResult, Tag, TagWithCount};
+use crate::models::{Atom, AtomPosition, AtomWithEmbedding, AtomWithTags, CreateAtomRequest, SemanticSearchResult, SimilarAtomResult, Tag, TagWithCount};
 use crate::settings;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -99,6 +99,54 @@ pub fn get_atom_by_id(db: State<Database>, id: String) -> Result<Option<AtomWith
     }
 }
 
+// Public function for creating an atom (used by both Tauri commands and HTTP API)
+pub fn create_atom_impl(
+    conn: &rusqlite::Connection,
+    app_handle: tauri::AppHandle,
+    shared_db: SharedDatabase,
+    request: CreateAtomRequest,
+) -> Result<AtomWithTags, String> {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    let embedding_status = "pending";
+
+    conn.execute(
+        "INSERT INTO atoms (id, content, source_url, created_at, updated_at, embedding_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        (&id, &request.content, &request.source_url, &now, &now, &embedding_status),
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Add tags
+    for tag_id in &request.tag_ids {
+        conn.execute(
+            "INSERT INTO atom_tags (atom_id, tag_id) VALUES (?1, ?2)",
+            (&id, tag_id),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    let atom = Atom {
+        id: id.clone(),
+        content: request.content.clone(),
+        source_url: request.source_url,
+        created_at: now.clone(),
+        updated_at: now,
+        embedding_status: embedding_status.to_string(),
+    };
+
+    let tags = get_tags_for_atom(conn, &id)?;
+
+    // Spawn embedding task (non-blocking)
+    spawn_embedding_task_single(
+        app_handle,
+        shared_db,
+        id,
+        request.content,
+    );
+
+    Ok(AtomWithTags { atom, tags })
+}
+
 #[tauri::command]
 pub fn create_atom(
     app_handle: tauri::AppHandle,
@@ -110,48 +158,18 @@ pub fn create_atom(
 ) -> Result<AtomWithTags, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    let id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
-    let embedding_status = "pending";
-
-    conn.execute(
-        "INSERT INTO atoms (id, content, source_url, created_at, updated_at, embedding_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        (&id, &content, &source_url, &now, &now, &embedding_status),
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Add tags
-    for tag_id in &tag_ids {
-        conn.execute(
-            "INSERT INTO atom_tags (atom_id, tag_id) VALUES (?1, ?2)",
-            (&id, tag_id),
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    let atom = Atom {
-        id: id.clone(),
-        content: content.clone(),
+    let request = CreateAtomRequest {
+        content,
         source_url,
-        created_at: now.clone(),
-        updated_at: now,
-        embedding_status: embedding_status.to_string(),
+        tag_ids,
     };
 
-    let tags = get_tags_for_atom(&conn, &id)?;
+    let result = create_atom_impl(&conn, app_handle, Arc::clone(&shared_db), request)?;
 
-    // Drop the connection lock before spawning the embedding task
+    // Drop the connection lock
     drop(conn);
 
-    // Spawn embedding task (non-blocking)
-    spawn_embedding_task_single(
-        app_handle,
-        Arc::clone(&shared_db),
-        id,
-        content,
-    );
-
-    Ok(AtomWithTags { atom, tags })
+    Ok(result)
 }
 
 #[tauri::command]

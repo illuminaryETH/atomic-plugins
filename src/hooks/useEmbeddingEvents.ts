@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useAtomsStore } from '../stores/atoms';
 import { useTagsStore } from '../stores/tags';
 import { useUIStore } from '../stores/ui';
+import type { AtomWithTags } from '../stores/atoms';
 
 interface EmbeddingCompletePayload {
   atom_id: string;
@@ -16,11 +17,19 @@ export function useEmbeddingEvents() {
   const updateAtomStatus = useAtomsStore((s) => s.updateAtomStatus);
   const fetchTags = useTagsStore((s) => s.fetchTags);
   const fetchAtoms = useAtomsStore((s) => s.fetchAtoms);
+  const addAtomToStore = useAtomsStore((s) => s.addAtom);
   const addLoadingOperation = useUIStore((s) => s.addLoadingOperation);
   const removeLoadingOperation = useUIStore((s) => s.removeLoadingOperation);
 
   useEffect(() => {
-    const unlisten = listen<EmbeddingCompletePayload>('embedding-complete', (event) => {
+    // Listen for atom-created events (from HTTP API / browser extension)
+    const unlistenAtomCreated = listen<AtomWithTags>('atom-created', (event) => {
+      console.log('Atom created via HTTP API:', event.payload);
+      addAtomToStore(event.payload);
+    });
+
+    // Listen for embedding-complete events
+    const unlistenEmbeddingComplete = listen<EmbeddingCompletePayload>('embedding-complete', (event) => {
       console.log('Embedding complete event:', event.payload);
       updateAtomStatus(event.payload.atom_id, event.payload.status);
 
@@ -42,8 +51,9 @@ export function useEmbeddingEvents() {
     });
 
     return () => {
-      unlisten.then(fn => fn());
+      unlistenAtomCreated.then(fn => fn());
+      unlistenEmbeddingComplete.then(fn => fn());
     };
-  }, [updateAtomStatus, fetchTags, fetchAtoms, addLoadingOperation, removeLoadingOperation]);
+  }, [updateAtomStatus, fetchTags, fetchAtoms, addAtomToStore, addLoadingOperation, removeLoadingOperation]);
 }
 

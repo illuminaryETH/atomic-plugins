@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod embedding;
 mod extraction;
+mod http_server;
 mod models;
 mod settings;
 mod wiki;
@@ -43,7 +44,20 @@ pub fn run() {
             });
 
             app.manage(database);
-            app.manage(shared_db);
+            app.manage(shared_db.clone());
+
+            // Start HTTP server in background for browser extension
+            let server_shared_db = shared_db.clone();
+            let server_app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+                rt.block_on(async move {
+                    if let Err(e) = http_server::start_server(server_shared_db, server_app_handle).await {
+                        eprintln!("HTTP server error: {}", e);
+                    }
+                });
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
