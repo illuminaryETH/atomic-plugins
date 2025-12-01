@@ -2,7 +2,7 @@ use crate::providers::error::ProviderError;
 use crate::providers::openrouter::OpenRouterProvider;
 use crate::providers::traits::{LlmConfig, StreamCallback};
 use crate::providers::types::{
-    CompletionResponse, Message, MessageRole, StreamDelta, ToolCall, ToolCallFunction,
+    CompletionResponse, Message, StreamDelta, ToolCall, ToolCallFunction,
     ToolDefinition,
 };
 use futures::StreamExt;
@@ -107,6 +107,7 @@ struct ChatResponse {
 #[derive(Deserialize)]
 struct Choice {
     message: ResponseMessage,
+    #[allow(dead_code)]
     finish_reason: Option<String>,
 }
 
@@ -230,15 +231,6 @@ pub async fn complete(
     complete_internal(provider, messages, &[], config, false).await
 }
 
-pub async fn complete_with_tools(
-    provider: &OpenRouterProvider,
-    messages: &[Message],
-    tools: &[ToolDefinition],
-    config: &LlmConfig,
-) -> Result<CompletionResponse, ProviderError> {
-    complete_internal(provider, messages, tools, config, false).await
-}
-
 async fn complete_internal(
     provider: &OpenRouterProvider,
     messages: &[Message],
@@ -351,20 +343,10 @@ async fn complete_internal(
     Ok(CompletionResponse {
         content: choice.message.content.unwrap_or_default(),
         tool_calls,
-        finish_reason: choice.finish_reason,
     })
 }
 
 // ==================== Streaming Implementation ====================
-
-pub async fn complete_streaming(
-    provider: &OpenRouterProvider,
-    messages: &[Message],
-    config: &LlmConfig,
-    on_delta: StreamCallback,
-) -> Result<CompletionResponse, ProviderError> {
-    complete_streaming_internal(provider, messages, &[], config, on_delta).await
-}
 
 pub async fn complete_streaming_with_tools(
     provider: &OpenRouterProvider,
@@ -560,6 +542,5 @@ async fn complete_streaming_internal(
     Ok(CompletionResponse {
         content,
         tool_calls,
-        finish_reason,
     })
 }

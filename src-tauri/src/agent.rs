@@ -2,9 +2,9 @@ use crate::db::Database;
 use crate::models::{
     ChatCitation, ChatMessage, ChatMessageWithContext, ChatToolCall, SemanticSearchResult,
 };
-use crate::providers::openrouter::OpenRouterProvider;
-use crate::providers::traits::{LlmConfig, StreamingLlmProvider};
+use crate::providers::traits::LlmConfig;
 use crate::providers::types::{GenerationParams, Message, StreamDelta, ToolDefinition};
+use crate::providers::{create_streaming_llm_provider, ProviderConfig, ProviderType};
 use chrono::Utc;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -147,11 +147,12 @@ struct AgentContext {
 async fn run_agent_loop(
     app_handle: AppHandle,
     db: Arc<Database>,
-    api_key: String,
+    provider_config: ProviderConfig,
     model: String,
     mut ctx: AgentContext,
 ) -> Result<ChatMessageWithContext, String> {
-    let provider = OpenRouterProvider::new(api_key);
+    let provider = create_streaming_llm_provider(&provider_config)
+        .map_err(|e| format!("Failed to create streaming provider: {}", e))?;
     let tools = get_tools();
     let max_iterations = 10;
 
@@ -508,26 +509,29 @@ pub async fn send_chat_message(
     conversation_id: String,
     content: String,
 ) -> Result<ChatMessageWithContext, String> {
-    // Get API key and model from settings
-    let (api_key, model) = {
+    // Get provider config and model from settings
+    let (provider_config, model) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let api_key: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'openrouter_api_key'",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|_| "OpenRouter API key not configured. Please set it in Settings.")?;
+        let settings_map = crate::settings::get_all_settings(&conn)?;
+        let provider_config = ProviderConfig::from_settings(&settings_map);
 
-        let model: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'chat_model'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or_else(|_| "anthropic/claude-sonnet-4".to_string());
+        // Validate provider configuration
+        if provider_config.provider_type == ProviderType::OpenRouter
+            && provider_config.openrouter_api_key.is_none()
+        {
+            return Err("OpenRouter API key not configured. Please set it in Settings.".to_string());
+        }
 
-        (api_key, model)
+        // Use provider-appropriate model: Ollama uses its configured LLM, OpenRouter uses chat_model setting
+        let model = match provider_config.provider_type {
+            ProviderType::Ollama => provider_config.llm_model().to_string(),
+            ProviderType::OpenRouter => settings_map
+                .get("chat_model")
+                .cloned()
+                .unwrap_or_else(|| "anthropic/claude-sonnet-4".to_string()),
+        };
+
+        (provider_config, model)
     };
 
     // Save user message
@@ -566,7 +570,7 @@ pub async fn send_chat_message(
     });
 
     // Run agent loop
-    let mut result = run_agent_loop(app_handle.clone(), db_arc, api_key, model, ctx).await?;
+    let mut result = run_agent_loop(app_handle.clone(), db_arc, provider_config, model, ctx).await?;
 
     // Save assistant message
     {

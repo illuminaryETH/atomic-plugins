@@ -1,3 +1,4 @@
+use crate::providers::ollama::{get_embedding_dimension, is_embedding_model};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -48,14 +49,6 @@ impl ModelCapabilitiesCache {
     /// Get supported parameters for a model
     pub fn get_supported_params(&self, model_id: &str) -> Option<&Vec<String>> {
         self.models.get(model_id)
-    }
-
-    /// Check if a model supports a specific parameter
-    pub fn supports_param(&self, model_id: &str, param: &str) -> bool {
-        self.models
-            .get(model_id)
-            .map(|params| params.iter().any(|p| p == param))
-            .unwrap_or(true) // Default to true if model not in cache
     }
 
     /// Get all models that support structured outputs (JSON schema validation)
@@ -174,4 +167,115 @@ pub fn get_cached_capabilities_sync(
         return Ok(Some(cache));
     }
     Ok(None)
+}
+
+// ==================== Ollama Model Discovery ====================
+
+/// Model information from Ollama API
+#[derive(Debug, Clone, Deserialize)]
+pub struct OllamaModelInfo {
+    pub name: String,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub digest: String,
+}
+
+/// Response from Ollama /api/tags endpoint
+#[derive(Debug, Deserialize)]
+struct OllamaModelsResponse {
+    models: Vec<OllamaModelInfo>,
+}
+
+/// Ollama model with categorization
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaModel {
+    pub id: String,
+    pub name: String,
+    pub is_embedding: bool,
+    pub embedding_dimension: Option<usize>,
+}
+
+/// Fetch locally available models from Ollama
+pub async fn fetch_ollama_models(base_url: &str) -> Result<Vec<OllamaModel>, String> {
+    let client = Client::new();
+
+    let response = client
+        .get(format!("{}/api/tags", base_url))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to Ollama: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Ollama API returned status: {}",
+            response.status()
+        ));
+    }
+
+    let models_response: OllamaModelsResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Ollama models response: {}", e))?;
+
+    let models = models_response
+        .models
+        .into_iter()
+        .map(|m| {
+            let is_emb = is_embedding_model(&m.name);
+            OllamaModel {
+                id: m.name.clone(),
+                name: m.name.clone(),
+                is_embedding: is_emb,
+                embedding_dimension: if is_emb {
+                    Some(get_embedding_dimension(&m.name))
+                } else {
+                    None
+                },
+            }
+        })
+        .collect();
+
+    Ok(models)
+}
+
+/// Test connection to Ollama server
+pub async fn test_ollama_connection(base_url: &str) -> Result<bool, String> {
+    let client = Client::new();
+
+    let response = client
+        .get(format!("{}/api/tags", base_url))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to Ollama: {}", e))?;
+
+    Ok(response.status().is_success())
+}
+
+/// Get embedding models from Ollama
+pub async fn get_ollama_embedding_models(base_url: &str) -> Result<Vec<AvailableModel>, String> {
+    let models = fetch_ollama_models(base_url).await?;
+
+    Ok(models
+        .into_iter()
+        .filter(|m| m.is_embedding)
+        .map(|m| AvailableModel {
+            id: m.id,
+            name: m.name,
+        })
+        .collect())
+}
+
+/// Get LLM models from Ollama (non-embedding models)
+pub async fn get_ollama_llm_models(base_url: &str) -> Result<Vec<AvailableModel>, String> {
+    let models = fetch_ollama_models(base_url).await?;
+
+    Ok(models
+        .into_iter()
+        .filter(|m| !m.is_embedding)
+        .map(|m| AvailableModel {
+            id: m.id,
+            name: m.name,
+        })
+        .collect())
 }

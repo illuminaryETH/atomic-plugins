@@ -7,8 +7,8 @@ use crate::extraction::{
 };
 use crate::models::EmbeddingCompletePayload;
 use crate::providers::models::{fetch_and_return_capabilities, get_cached_capabilities_sync, save_capabilities_cache};
-use crate::providers::openrouter::OpenRouterProvider;
-use crate::providers::traits::{EmbeddingConfig, EmbeddingProvider};
+use crate::providers::traits::EmbeddingConfig;
+use crate::providers::{create_embedding_provider, ProviderConfig, ProviderType};
 use crate::settings;
 use reqwest::Client;
 use std::sync::{Arc, LazyLock};
@@ -25,32 +25,38 @@ static EMBEDDING_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| {
 });
 
 /// Generate embeddings via provider abstraction (batch support)
-/// Uses the configured embedding model from settings or defaults to text-embedding-3-small
-pub async fn generate_embeddings_with_provider(
-    api_key: &str,
+/// Uses ProviderConfig to determine which provider to use
+pub async fn generate_embeddings_with_config(
+    config: &ProviderConfig,
     texts: &[String],
-    model: Option<&str>,
 ) -> Result<Vec<Vec<f32>>, String> {
-    let provider = OpenRouterProvider::new(api_key.to_string());
-    let config = EmbeddingConfig::new(
-        model.unwrap_or("openai/text-embedding-3-small")
-    );
+    let provider = create_embedding_provider(config).map_err(|e| e.to_string())?;
+    let embed_config = EmbeddingConfig::new(config.embedding_model());
 
     provider
-        .embed_batch(texts, &config)
+        .embed_batch(texts, &embed_config)
         .await
         .map_err(|e| e.to_string())
 }
 
 /// Generate embeddings via OpenRouter API (batch support)
-/// DEPRECATED: Use generate_embeddings_with_provider instead
+/// DEPRECATED: Use generate_embeddings_with_config instead
 /// Kept for backward compatibility with existing code
 pub async fn generate_openrouter_embeddings_public(
     _client: &Client,
     api_key: &str,
     texts: &[String],
 ) -> Result<Vec<Vec<f32>>, String> {
-    generate_embeddings_with_provider(api_key, texts, None).await
+    use crate::providers::openrouter::OpenRouterProvider;
+    use crate::providers::traits::EmbeddingProvider;
+
+    let provider = OpenRouterProvider::new(api_key.to_string());
+    let config = EmbeddingConfig::new("openai/text-embedding-3-small");
+
+    provider
+        .embed_batch(texts, &config)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Convert f32 vector to binary blob for sqlite-vec
@@ -182,7 +188,7 @@ async fn process_embeddings(
     content: &str,
 ) -> Result<(Vec<String>, Vec<String>), String> {
     // Scope to ensure connection is dropped before any async operations
-    let (auto_tagging_enabled, api_key, tagging_model, embedding_model, chunks) = {
+    let (auto_tagging_enabled, provider_config, chunks) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
         // Set status to processing
@@ -198,18 +204,14 @@ async fn process_embeddings(
             .get("auto_tagging_enabled")
             .map(|v| v == "true")
             .unwrap_or(true); // Default to true
-        let api_key = settings_map
-            .get("openrouter_api_key")
-            .cloned()
-            .ok_or("OpenRouter API key not configured. Embeddings require API key.")?;
-        let tagging_model = settings_map
-            .get("tagging_model")
-            .cloned()
-            .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
-        let embedding_model = settings_map
-            .get("embedding_model")
-            .cloned()
-            .unwrap_or_else(|| "openai/text-embedding-3-small".to_string());
+
+        // Build provider config from settings
+        let provider_config = ProviderConfig::from_settings(&settings_map);
+
+        // Validate provider configuration
+        if provider_config.provider_type == ProviderType::OpenRouter && provider_config.openrouter_api_key.is_none() {
+            return Err("OpenRouter API key not configured. Please set it in Settings.".to_string());
+        }
 
         // First, get existing chunk IDs for this atom to delete from vec_chunks
         let existing_chunk_ids: Vec<String> = {
@@ -247,14 +249,20 @@ async fn process_embeddings(
             return Ok((Vec::new(), Vec::new()));
         }
 
-        (auto_tagging_enabled, api_key, tagging_model, embedding_model, chunks)
+        (auto_tagging_enabled, provider_config, chunks)
     }; // Connection dropped here
 
-    // Create HTTP client for OpenRouter API (still used for tag extraction)
-    let client = Client::new();
+    // Get tagging model from provider config
+    let tagging_model = provider_config.llm_model().to_string();
 
-    // Load model capabilities for parameter filtering
-    let supported_params: Option<Vec<String>> = if auto_tagging_enabled {
+    // Load model capabilities for parameter filtering (OpenRouter only)
+    // Ollama doesn't have a capability API, so we skip this for Ollama
+    let supported_params: Option<Vec<String>> = if auto_tagging_enabled
+        && provider_config.provider_type == ProviderType::OpenRouter
+    {
+        // Create HTTP client for OpenRouter API
+        let client = Client::new();
+
         // Step 1: Check cache (sync, with lock)
         let (cached, is_stale) = {
             let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -295,7 +303,7 @@ async fn process_embeddings(
 
     // Generate all embeddings via provider in one batch
     let chunk_texts: Vec<String> = chunks.iter().map(|s| s.to_string()).collect();
-    let embeddings = generate_embeddings_with_provider(&api_key, &chunk_texts, Some(&embedding_model))
+    let embeddings = generate_embeddings_with_config(&provider_config, &chunk_texts)
         .await
         .map_err(|e| format!("Failed to generate embeddings: {}", e))?;
 
@@ -336,7 +344,7 @@ async fn process_embeddings(
 
         // Extract tags with current tag tree (includes tags from previous chunks)
         if auto_tagging_enabled {
-            match extract_tags_from_chunk(&client, &api_key, chunk_content, &tag_tree_json, &tagging_model, supported_params.clone()).await {
+            match extract_tags_from_chunk(&provider_config, chunk_content, &tag_tree_json, &tagging_model, supported_params.clone()).await {
                 Ok(result) => {
                     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
@@ -388,7 +396,7 @@ async fn process_embeddings(
         }; // Lock dropped here
 
         // Call consolidation (async operation without lock)
-        match consolidate_atom_tags(&client, &api_key, tag_info, &tagging_model, supported_params.clone()).await {
+        match consolidate_atom_tags(&provider_config, tag_info, &tagging_model, supported_params.clone()).await {
             Ok(consolidation) => {
                 // Re-acquire connection for consolidation operations
                 let conn = db.conn.lock().map_err(|e| e.to_string())?;

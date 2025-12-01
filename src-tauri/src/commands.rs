@@ -989,18 +989,18 @@ pub fn get_settings(db: State<Database>) -> Result<HashMap<String, String>, Stri
 pub fn set_setting(db: State<Database>, key: String, value: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Special handling for embedding_model changes - may require dimension change
-    if key == "embedding_model" {
-        let current_model = settings::get_setting(&conn, "embedding_model")
-            .unwrap_or_else(|_| "openai/text-embedding-3-small".to_string());
+    // Check if this setting change affects embedding dimensions
+    // This includes: provider, embedding_model, ollama_embedding_model
+    let dimension_affecting_keys = ["provider", "embedding_model", "ollama_embedding_model"];
 
-        let current_dim = crate::db::get_embedding_dimension(&current_model);
-        let new_dim = crate::db::get_embedding_dimension(&value);
+    if dimension_affecting_keys.contains(&key.as_str()) {
+        let (will_change, new_dim) = crate::db::will_dimension_change(&conn, &key, &value);
 
-        if current_dim != new_dim {
+        if will_change {
+            let current_dim = crate::db::get_current_embedding_dimension(&conn);
             eprintln!(
-                "Embedding dimension changing from {} to {} - recreating vec_chunks",
-                current_dim, new_dim
+                "Embedding dimension changing from {} to {} due to {} change - recreating vec_chunks",
+                current_dim, new_dim, key
             );
             crate::db::recreate_vec_chunks_with_dimension(&conn, new_dim)?;
         }
@@ -1043,7 +1043,7 @@ pub async fn test_openrouter_connection(api_key: String) -> Result<bool, String>
 // Model discovery commands
 use crate::providers::{
     fetch_and_return_capabilities, get_cached_capabilities_sync, save_capabilities_cache,
-    AvailableModel,
+    AvailableModel, ProviderConfig, ProviderType,
 };
 
 /// Get available LLM models that support structured outputs
@@ -1122,25 +1122,33 @@ pub async fn generate_wiki_article(
     tag_name: String,
 ) -> Result<crate::models::WikiArticleWithCitations, String> {
     // Get settings and prepare data
-    let (api_key, wiki_model) = {
+    let (provider_config, wiki_model) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let settings_map = settings::get_all_settings(&conn)?;
-        let api_key = settings_map
-            .get("openrouter_api_key")
-            .cloned()
-            .ok_or("OpenRouter API key not configured. Please set it in Settings.")?;
-        let wiki_model = settings_map
-            .get("wiki_model")
-            .cloned()
-            .unwrap_or_else(|| "anthropic/claude-sonnet-4".to_string());
-        (api_key, wiki_model)
+        let provider_config = ProviderConfig::from_settings(&settings_map);
+
+        // Validate provider configuration
+        if provider_config.provider_type == ProviderType::OpenRouter
+            && provider_config.openrouter_api_key.is_none()
+        {
+            return Err("OpenRouter API key not configured. Please set it in Settings.".to_string());
+        }
+
+        // Use provider-appropriate model: Ollama uses its configured LLM, OpenRouter uses wiki_model setting
+        let wiki_model = match provider_config.provider_type {
+            ProviderType::Ollama => provider_config.llm_model().to_string(),
+            ProviderType::OpenRouter => settings_map
+                .get("wiki_model")
+                .cloned()
+                .unwrap_or_else(|| "anthropic/claude-sonnet-4".to_string()),
+        };
+        (provider_config, wiki_model)
     };
 
-    let input = wiki::prepare_wiki_generation(&db, &api_key, &tag_id, &tag_name).await?;
+    let input = wiki::prepare_wiki_generation(&db, &provider_config, &tag_id, &tag_name).await?;
 
     // Generate article via API (async, no db lock needed)
-    let client = reqwest::Client::new();
-    let result = wiki::generate_wiki_content(&client, &api_key, &input, &wiki_model).await?;
+    let result = wiki::generate_wiki_content(&provider_config, &input, &wiki_model).await?;
 
     // Save to database (sync, with db lock)
     {
@@ -1159,14 +1167,26 @@ pub async fn update_wiki_article(
     tag_name: String,
 ) -> Result<crate::models::WikiArticleWithCitations, String> {
     // Get settings, existing article, and prepare update data (sync, with db lock)
-    let (api_key, wiki_model, existing, update_input) = {
+    let (provider_config, wiki_model, existing, update_input) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let settings_map = settings::get_all_settings(&conn)?;
-        let api_key = settings_map.get("openrouter_api_key").cloned();
-        let wiki_model = settings_map
-            .get("wiki_model")
-            .cloned()
-            .unwrap_or_else(|| "anthropic/claude-sonnet-4".to_string());
+        let provider_config = ProviderConfig::from_settings(&settings_map);
+
+        // Validate provider configuration
+        if provider_config.provider_type == ProviderType::OpenRouter
+            && provider_config.openrouter_api_key.is_none()
+        {
+            return Err("OpenRouter API key not configured. Please set it in Settings.".to_string());
+        }
+
+        // Use provider-appropriate model: Ollama uses its configured LLM, OpenRouter uses wiki_model setting
+        let wiki_model = match provider_config.provider_type {
+            ProviderType::Ollama => provider_config.llm_model().to_string(),
+            ProviderType::OpenRouter => settings_map
+                .get("wiki_model")
+                .cloned()
+                .unwrap_or_else(|| "anthropic/claude-sonnet-4".to_string()),
+        };
         let existing = wiki::load_wiki_article(&conn, &tag_id)?;
 
         let update_input = if let Some(ref ex) = existing {
@@ -1175,11 +1195,10 @@ pub async fn update_wiki_article(
             None
         };
 
-        (api_key, wiki_model, existing, update_input)
+        (provider_config, wiki_model, existing, update_input)
     };
     // Lock released here
 
-    let api_key = api_key.ok_or("OpenRouter API key not configured. Please set it in Settings.")?;
     let existing = existing.ok_or("No existing article to update")?;
 
     // Check if there are new atoms to incorporate
@@ -1192,8 +1211,7 @@ pub async fn update_wiki_article(
     };
 
     // Update article via API (async, no db lock needed)
-    let client = reqwest::Client::new();
-    let result = wiki::update_wiki_content(&client, &api_key, &input, &wiki_model).await?;
+    let result = wiki::update_wiki_content(&provider_config, &input, &wiki_model).await?;
 
     // Save to database (sync, with db lock)
     {
@@ -1790,5 +1808,38 @@ pub fn get_connection_counts(
     let threshold = min_similarity.unwrap_or(0.5);
 
     clustering::get_connection_counts(&conn, threshold)
+}
+
+// ==================== Ollama Commands ====================
+
+use crate::providers::models::{
+    fetch_ollama_models, get_ollama_embedding_models, get_ollama_llm_models,
+    test_ollama_connection, OllamaModel,
+};
+
+/// Test connection to Ollama server
+#[tauri::command]
+pub async fn test_ollama(host: String) -> Result<bool, String> {
+    test_ollama_connection(&host).await
+}
+
+/// Get all available Ollama models (with categorization)
+#[tauri::command]
+pub async fn get_ollama_models(host: String) -> Result<Vec<OllamaModel>, String> {
+    fetch_ollama_models(&host).await
+}
+
+/// Get Ollama embedding models only
+#[tauri::command]
+pub async fn get_ollama_embedding_models_cmd(
+    host: String,
+) -> Result<Vec<AvailableModel>, String> {
+    get_ollama_embedding_models(&host).await
+}
+
+/// Get Ollama LLM models only (non-embedding)
+#[tauri::command]
+pub async fn get_ollama_llm_models_cmd(host: String) -> Result<Vec<AvailableModel>, String> {
+    get_ollama_llm_models(&host).await
 }
 

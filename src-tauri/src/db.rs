@@ -305,13 +305,45 @@ impl Database {
     }
 }
 
-/// Get the embedding dimension for a given model
-pub fn get_embedding_dimension(model: &str) -> usize {
+/// Get the embedding dimension for an OpenRouter model
+pub fn get_openrouter_embedding_dimension(model: &str) -> usize {
     match model {
         "openai/text-embedding-3-small" => 1536,
         "openai/text-embedding-3-large" => 3072,
         _ => 1536, // Default to small model dimension
     }
+}
+
+/// Get embedding dimension based on current settings
+/// Uses ProviderConfig to determine the correct dimension for the active provider
+pub fn get_current_embedding_dimension(conn: &Connection) -> usize {
+    use crate::providers::ProviderConfig;
+    use crate::settings;
+
+    let settings_map = settings::get_all_settings(conn).unwrap_or_default();
+    let config = ProviderConfig::from_settings(&settings_map);
+    config.embedding_dimension()
+}
+
+/// Check if dimension will change with new settings
+pub fn will_dimension_change(
+    conn: &Connection,
+    key: &str,
+    new_value: &str,
+) -> (bool, usize) {
+    use crate::providers::ProviderConfig;
+    use crate::settings;
+
+    let current_dim = get_current_embedding_dimension(conn);
+
+    // Get current settings and apply the change
+    let mut settings_map = settings::get_all_settings(conn).unwrap_or_default();
+    settings_map.insert(key.to_string(), new_value.to_string());
+
+    let new_config = ProviderConfig::from_settings(&settings_map);
+    let new_dim = new_config.embedding_dimension();
+
+    (current_dim != new_dim, new_dim)
 }
 
 /// Recreate vec_chunks table with a new dimension and reset all atom embedding status

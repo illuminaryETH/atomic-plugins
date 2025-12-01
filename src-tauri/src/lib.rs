@@ -101,6 +101,11 @@ pub fn run() {
             commands::compute_clusters,
             commands::get_clusters,
             commands::get_connection_counts,
+            // Ollama commands
+            commands::test_ollama,
+            commands::get_ollama_models,
+            commands::get_ollama_embedding_models_cmd,
+            commands::get_ollama_llm_models_cmd,
             // Chat commands
             chat::create_conversation,
             chat::get_conversations,

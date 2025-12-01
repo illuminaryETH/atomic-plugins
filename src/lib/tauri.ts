@@ -189,3 +189,27 @@ export async function getAvailableLlmModels(): Promise<AvailableModel[]> {
   return invoke('get_available_llm_models');
 }
 
+// Ollama types and commands
+export interface OllamaModel {
+  id: string;
+  name: string;
+  is_embedding: boolean;
+  embedding_dimension: number | null;
+}
+
+export async function testOllamaConnection(host: string): Promise<boolean> {
+  return invoke('test_ollama', { host });
+}
+
+export async function getOllamaModels(host: string): Promise<OllamaModel[]> {
+  return invoke('get_ollama_models', { host });
+}
+
+export async function getOllamaEmbeddingModels(host: string): Promise<AvailableModel[]> {
+  return invoke('get_ollama_embedding_models_cmd', { host });
+}
+
+export async function getOllamaLlmModels(host: string): Promise<AvailableModel[]> {
+  return invoke('get_ollama_llm_models_cmd', { host });
+}
+

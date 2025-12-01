@@ -1,9 +1,8 @@
 use crate::models::{ChunkWithContext, WikiArticle, WikiArticleWithCitations, WikiCitation};
-use crate::providers::openrouter::OpenRouterProvider;
-use crate::providers::traits::{LlmConfig, LlmProvider};
+use crate::providers::traits::{EmbeddingConfig, LlmConfig};
 use crate::providers::types::{GenerationParams, Message, StructuredOutputSchema};
+use crate::providers::{create_embedding_provider, create_llm_provider, ProviderConfig};
 use chrono::Utc;
-use reqwest::Client;
 use rusqlite::{Connection, params_from_iter};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -58,19 +57,19 @@ pub struct WikiUpdateInput {
 /// Restructured to avoid holding db connection across await
 pub async fn prepare_wiki_generation(
     db: &crate::db::Database,
-    api_key: &str,
+    provider_config: &ProviderConfig,
     tag_id: &str,
     tag_name: &str,
 ) -> Result<WikiGenerationInput, String> {
     // Generate embedding for tag name first (no db lock)
-    let client = reqwest::Client::new();
-    let embeddings = crate::embedding::generate_openrouter_embeddings_public(
-        &client,
-        api_key,
-        &[tag_name.to_string()],
-    )
-    .await
-    .map_err(|e| format!("Failed to generate tag embedding: {}", e))?;
+    let embedding_provider = create_embedding_provider(provider_config)
+        .map_err(|e| format!("Failed to create embedding provider: {}", e))?;
+    let embed_config = EmbeddingConfig::new(provider_config.embedding_model());
+
+    let embeddings = embedding_provider
+        .embed_batch(&[tag_name.to_string()], &embed_config)
+        .await
+        .map_err(|e| format!("Failed to generate tag embedding: {}", e))?;
 
     let tag_embedding = crate::embedding::f32_vec_to_blob_public(&embeddings[0]);
 
@@ -179,8 +178,7 @@ pub fn prepare_wiki_update(
 
 /// Generate wiki article content via API (async, no db needed)
 pub async fn generate_wiki_content(
-    client: &Client,
-    api_key: &str,
+    provider_config: &ProviderConfig,
     input: &WikiGenerationInput,
     model: &str,
 ) -> Result<WikiArticleWithCitations, String> {
@@ -196,8 +194,8 @@ pub async fn generate_wiki_content(
         source_materials
     );
 
-    // Call OpenRouter API
-    let result = call_openrouter_for_wiki(client, api_key, WIKI_GENERATION_SYSTEM_PROMPT, &user_content, model).await?;
+    // Call LLM API
+    let result = call_llm_for_wiki(provider_config, WIKI_GENERATION_SYSTEM_PROMPT, &user_content, model).await?;
 
     // Create article
     let article_id = Uuid::new_v4().to_string();
@@ -220,8 +218,7 @@ pub async fn generate_wiki_content(
 
 /// Update wiki article content via API (async, no db needed)
 pub async fn update_wiki_content(
-    client: &Client,
-    api_key: &str,
+    provider_config: &ProviderConfig,
     input: &WikiUpdateInput,
     model: &str,
 ) -> Result<WikiArticleWithCitations, String> {
@@ -247,8 +244,8 @@ pub async fn update_wiki_content(
         new_sources
     );
 
-    // Call OpenRouter API
-    let result = call_openrouter_for_wiki(client, api_key, WIKI_UPDATE_SYSTEM_PROMPT, &user_content, model).await?;
+    // Call LLM API
+    let result = call_llm_for_wiki(provider_config, WIKI_UPDATE_SYSTEM_PROMPT, &user_content, model).await?;
 
     // Create updated article
     let now = Utc::now().to_rfc3339();
@@ -413,10 +410,9 @@ fn distance_to_similarity(distance: f32) -> f32 {
     (1.0 - (distance / 2.0)).max(0.0).min(1.0)
 }
 
-/// Call OpenRouter API for wiki generation
-async fn call_openrouter_for_wiki(
-    _client: &Client, // Kept for backward compatibility, not used
-    api_key: &str,
+/// Call LLM provider for wiki generation
+async fn call_llm_for_wiki(
+    provider_config: &ProviderConfig,
     system_prompt: &str,
     user_content: &str,
     model: &str,
@@ -443,14 +439,15 @@ async fn call_openrouter_for_wiki(
         Message::user(user_content),
     ];
 
-    let config = LlmConfig::new(model).with_params(
+    let llm_config = LlmConfig::new(model).with_params(
         GenerationParams::new()
             .with_temperature(0.3)
             .with_max_tokens(4000)
             .with_structured_output(StructuredOutputSchema::new("wiki_generation_result", schema)),
     );
 
-    let provider = OpenRouterProvider::new(api_key.to_string());
+    let provider = create_llm_provider(provider_config)
+        .map_err(|e| e.to_string())?;
 
     // Retry logic with exponential backoff
     let mut last_error = String::new();
@@ -459,7 +456,7 @@ async fn call_openrouter_for_wiki(
             tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
         }
 
-        match provider.complete(&messages, &config).await {
+        match provider.complete(&messages, &llm_config).await {
             Ok(response) => {
                 let content = &response.content;
                 if !content.is_empty() {

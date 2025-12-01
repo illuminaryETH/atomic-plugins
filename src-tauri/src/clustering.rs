@@ -187,21 +187,6 @@ pub fn save_cluster_assignments(
     Ok(())
 }
 
-/// Get cluster assignments from the database
-pub fn get_cluster_assignments(conn: &Connection) -> Result<HashMap<String, u32>, String> {
-    let mut stmt = conn
-        .prepare("SELECT atom_id, cluster_id FROM atom_clusters")
-        .map_err(|e| e.to_string())?;
-
-    let assignments: HashMap<String, u32> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(assignments)
-}
-
 /// Calculate connection counts for hub identification
 pub fn get_connection_counts(
     conn: &Connection,

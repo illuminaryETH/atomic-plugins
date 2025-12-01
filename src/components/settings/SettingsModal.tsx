@@ -2,7 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '../ui/Button';
 import { useSettingsStore } from '../../stores/settings';
-import { getAvailableLlmModels, type AvailableModel } from '../../lib/tauri';
+import {
+  getAvailableLlmModels,
+  testOllamaConnection,
+  getOllamaModels,
+  type AvailableModel,
+  type OllamaModel
+} from '../../lib/tauri';
 
 interface SelectOption {
   value: string;
@@ -304,6 +310,35 @@ function SearchableSelect({ value, onChange, options, isLoading, placeholder = '
   );
 }
 
+// Connection status indicator component
+function ConnectionStatus({ status, error }: { status: 'checking' | 'connected' | 'disconnected'; error?: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      {status === 'checking' && (
+        <>
+          <svg className="w-4 h-4 animate-spin text-[#888888]" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          <span className="text-[#888888]">Checking connection...</span>
+        </>
+      )}
+      {status === 'connected' && (
+        <>
+          <div className="w-2 h-2 rounded-full bg-green-500" />
+          <span className="text-green-500">Connected</span>
+        </>
+      )}
+      {status === 'disconnected' && (
+        <>
+          <div className="w-2 h-2 rounded-full bg-red-500" />
+          <span className="text-red-500">{error || 'Not connected'}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -312,29 +347,68 @@ interface SettingsModalProps {
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const { settings, fetchSettings, setSetting, testOpenRouterConnection } = useSettingsStore();
 
+  // Provider selection
+  const [provider, setProvider] = useState<'openrouter' | 'ollama'>('openrouter');
+
+  // OpenRouter settings
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
+  // Ollama settings
+  const [ollamaHost, setOllamaHost] = useState('http://127.0.0.1:11434');
+  const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+  const [ollamaError, setOllamaError] = useState<string | undefined>();
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+  const [ollamaEmbeddingModel, setOllamaEmbeddingModel] = useState('nomic-embed-text');
+  const [ollamaLlmModel, setOllamaLlmModel] = useState('llama3.2');
+  const [isLoadingOllamaModels, setIsLoadingOllamaModels] = useState(false);
+
+  // Common settings
   const [autoTaggingEnabled, setAutoTaggingEnabled] = useState(true);
   const [embeddingModel, setEmbeddingModel] = useState('openai/text-embedding-3-small');
   const [taggingModel, setTaggingModel] = useState('openai/gpt-4o-mini');
   const [wikiModel, setWikiModel] = useState('anthropic/claude-sonnet-4.5');
   const [chatModel, setChatModel] = useState('anthropic/claude-sonnet-4.5');
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
-  const [testError, setTestError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Dynamic model loading
+  // OpenRouter model loading
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
   const overlayRef = useRef<HTMLDivElement>(null);
 
+  // Check Ollama connection
+  const checkOllamaConnection = useCallback(async (host: string) => {
+    setOllamaStatus('checking');
+    setOllamaError(undefined);
+    try {
+      const connected = await testOllamaConnection(host);
+      if (connected) {
+        setOllamaStatus('connected');
+        // Fetch available models
+        setIsLoadingOllamaModels(true);
+        const models = await getOllamaModels(host);
+        setOllamaModels(models);
+        setIsLoadingOllamaModels(false);
+      } else {
+        setOllamaStatus('disconnected');
+        setOllamaError('Could not connect to Ollama');
+      }
+    } catch (e) {
+      setOllamaStatus('disconnected');
+      setOllamaError(String(e));
+      setIsLoadingOllamaModels(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (isOpen) {
       fetchSettings();
-      // Fetch available models
+      // Fetch OpenRouter models
       setIsLoadingModels(true);
       getAvailableLlmModels()
         .then(models => setAvailableModels(models))
@@ -342,16 +416,29 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         .finally(() => setIsLoadingModels(false));
     }
   }, [isOpen, fetchSettings]);
-  
+
+  // Load settings into state
   useEffect(() => {
+    const p = settings.provider as 'openrouter' | 'ollama' | undefined;
+    setProvider(p || 'openrouter');
     setApiKey(settings.openrouter_api_key || '');
     setAutoTaggingEnabled(settings.auto_tagging_enabled !== 'false');
     setEmbeddingModel(settings.embedding_model || 'openai/text-embedding-3-small');
     setTaggingModel(settings.tagging_model || 'openai/gpt-4o-mini');
     setWikiModel(settings.wiki_model || 'anthropic/claude-sonnet-4.5');
     setChatModel(settings.chat_model || 'anthropic/claude-sonnet-4.5');
+    setOllamaHost(settings.ollama_host || 'http://127.0.0.1:11434');
+    setOllamaEmbeddingModel(settings.ollama_embedding_model || 'nomic-embed-text');
+    setOllamaLlmModel(settings.ollama_llm_model || 'llama3.2');
   }, [settings]);
-  
+
+  // Check Ollama connection when provider is ollama or host changes
+  useEffect(() => {
+    if (isOpen && provider === 'ollama') {
+      checkOllamaConnection(ollamaHost);
+    }
+  }, [isOpen, provider, ollamaHost, checkOllamaConnection]);
+
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -369,20 +456,20 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       document.body.style.overflow = '';
     };
   }, [isOpen, onClose]);
-  
+
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === overlayRef.current) {
       onClose();
     }
   };
-  
+
   const handleTestConnection = async () => {
     if (!apiKey.trim()) return;
-    
+
     setIsTesting(true);
     setTestResult(null);
     setTestError(null);
-    
+
     try {
       await testOpenRouterConnection(apiKey);
       setTestResult('success');
@@ -393,16 +480,25 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setIsTesting(false);
     }
   };
-  
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await setSetting('openrouter_api_key', apiKey);
+      await setSetting('provider', provider);
+
+      if (provider === 'openrouter') {
+        await setSetting('openrouter_api_key', apiKey);
+        await setSetting('embedding_model', embeddingModel);
+        await setSetting('tagging_model', taggingModel);
+        await setSetting('wiki_model', wikiModel);
+        await setSetting('chat_model', chatModel);
+      } else {
+        await setSetting('ollama_host', ollamaHost);
+        await setSetting('ollama_embedding_model', ollamaEmbeddingModel);
+        await setSetting('ollama_llm_model', ollamaLlmModel);
+      }
+
       await setSetting('auto_tagging_enabled', autoTaggingEnabled ? 'true' : 'false');
-      await setSetting('embedding_model', embeddingModel);
-      await setSetting('tagging_model', taggingModel);
-      await setSetting('wiki_model', wikiModel);
-      await setSetting('chat_model', chatModel);
       onClose();
     } catch (e) {
       console.error('Failed to save settings:', e);
@@ -410,16 +506,26 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setIsSaving(false);
     }
   };
-  
+
   // Reset test result when API key changes
   const handleApiKeyChange = (value: string) => {
     setApiKey(value);
     setTestResult(null);
     setTestError(null);
   };
-  
+
+  // Get Ollama embedding models
+  const ollamaEmbeddingModels: AvailableModel[] = ollamaModels
+    .filter(m => m.is_embedding)
+    .map(m => ({ id: m.id, name: m.name }));
+
+  // Get Ollama LLM models
+  const ollamaLlmModels: AvailableModel[] = ollamaModels
+    .filter(m => !m.is_embedding)
+    .map(m => ({ id: m.id, name: m.name }));
+
   if (!isOpen) return null;
-  
+
   return createPortal(
     <div
       ref={overlayRef}
@@ -439,79 +545,287 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             </svg>
           </button>
         </div>
-        
+
         {/* Content */}
         <div className="px-6 py-4 space-y-6 overflow-y-auto flex-1">
-          {/* OpenRouter API Key Section */}
+          {/* Provider Selector */}
           <div className="space-y-2">
             <label className="block text-sm font-medium text-[#dcddde]">
-              OpenRouter API Key
+              AI Provider
             </label>
             <p className="text-xs text-[#888888]">
-              Required for automatic tag extraction using AI
+              Choose between cloud (OpenRouter) or local (Ollama) AI models
             </p>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  value={apiKey}
-                  onChange={(e) => handleApiKeyChange(e.target.value)}
-                  placeholder="sk-or-..."
-                  className="w-full px-3 py-2 pr-10 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150"
-                />
+            <CustomSelect
+              value={provider}
+              onChange={(v) => setProvider(v as 'openrouter' | 'ollama')}
+              options={[
+                { value: 'openrouter', label: 'OpenRouter (Cloud)' },
+                { value: 'ollama', label: 'Ollama (Local)' },
+              ]}
+            />
+          </div>
+
+          {/* OpenRouter Settings */}
+          {provider === 'openrouter' && (
+            <>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-[#dcddde]">
+                  OpenRouter API Key
+                </label>
+                <p className="text-xs text-[#888888]">
+                  Required for AI features. Get your key at openrouter.ai
+                </p>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showApiKey ? 'text' : 'password'}
+                      value={apiKey}
+                      onChange={(e) => handleApiKeyChange(e.target.value)}
+                      placeholder="sk-or-..."
+                      className="w-full px-3 py-2 pr-10 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#dcddde] transition-colors"
+                    >
+                      {showApiKey ? (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={handleTestConnection}
+                    disabled={!apiKey.trim() || isTesting}
+                    className="whitespace-nowrap"
+                  >
+                    {isTesting ? (
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    ) : (
+                      'Test'
+                    )}
+                  </Button>
+                </div>
+
+                {/* Test Result */}
+                {testResult === 'success' && (
+                  <div className="flex items-center gap-2 text-sm text-green-500">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Connection successful
+                  </div>
+                )}
+                {testResult === 'error' && (
+                  <div className="flex items-start gap-2 text-sm text-red-500">
+                    <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    <span>{testError || 'Connection failed'}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Model Configuration for OpenRouter */}
+              <div className="space-y-3">
                 <button
                   type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#dcddde] transition-colors"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center gap-2 text-sm font-medium text-[#dcddde] hover:text-white transition-colors"
                 >
-                  {showApiKey ? (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-              <Button
-                variant="secondary"
-                onClick={handleTestConnection}
-                disabled={!apiKey.trim() || isTesting}
-                className="whitespace-nowrap"
-              >
-                {isTesting ? (
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  <svg
+                    className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
-                ) : (
-                  'Test'
+                  Model Configuration
+                </button>
+
+                {showAdvanced && (
+                  <div className="space-y-4 pl-6 border-l-2 border-[#3d3d3d]">
+                    <p className="text-xs text-[#888888]">
+                      Select models for different AI tasks.
+                    </p>
+
+                    {/* Embedding Model */}
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-[#dcddde]">
+                        Embedding Model
+                      </label>
+                      <p className="text-xs text-[#888888]">
+                        Used for semantic search. Changing this requires re-embedding all atoms.
+                      </p>
+                      <CustomSelect
+                        value={embeddingModel}
+                        onChange={setEmbeddingModel}
+                        options={[
+                          { value: 'openai/text-embedding-3-small', label: 'text-embedding-3-small (1536 dim)' },
+                          { value: 'openai/text-embedding-3-large', label: 'text-embedding-3-large (3072 dim)' },
+                        ]}
+                      />
+                    </div>
+
+                    {/* Tagging Model */}
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-[#dcddde]">
+                        Tagging Model
+                      </label>
+                      <p className="text-xs text-[#888888]">
+                        Used for automatic tag extraction
+                      </p>
+                      <SearchableSelect
+                        value={taggingModel}
+                        onChange={setTaggingModel}
+                        options={availableModels}
+                        isLoading={isLoadingModels}
+                        placeholder="Select tagging model..."
+                      />
+                    </div>
+
+                    {/* Wiki Model */}
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-[#dcddde]">
+                        Wiki Model
+                      </label>
+                      <p className="text-xs text-[#888888]">
+                        Used for wiki article generation
+                      </p>
+                      <SearchableSelect
+                        value={wikiModel}
+                        onChange={setWikiModel}
+                        options={availableModels}
+                        isLoading={isLoadingModels}
+                        placeholder="Select wiki model..."
+                      />
+                    </div>
+
+                    {/* Chat Model */}
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-[#dcddde]">
+                        Chat Model
+                      </label>
+                      <p className="text-xs text-[#888888]">
+                        Used for conversational AI assistant
+                      </p>
+                      <SearchableSelect
+                        value={chatModel}
+                        onChange={setChatModel}
+                        options={availableModels}
+                        isLoading={isLoadingModels}
+                        placeholder="Select chat model..."
+                      />
+                    </div>
+                  </div>
                 )}
-              </Button>
-            </div>
-            
-            {/* Test Result */}
-            {testResult === 'success' && (
-              <div className="flex items-center gap-2 text-sm text-green-500">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Connection successful
               </div>
-            )}
-            {testResult === 'error' && (
-              <div className="flex items-start gap-2 text-sm text-red-500">
-                <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                <span>{testError || 'Connection failed'}</span>
+            </>
+          )}
+
+          {/* Ollama Settings */}
+          {provider === 'ollama' && (
+            <>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-[#dcddde]">
+                  Ollama Server URL
+                </label>
+                <p className="text-xs text-[#888888]">
+                  URL of your local Ollama server (default: http://127.0.0.1:11434)
+                </p>
+                <input
+                  type="text"
+                  value={ollamaHost}
+                  onChange={(e) => setOllamaHost(e.target.value)}
+                  placeholder="http://127.0.0.1:11434"
+                  className="w-full px-3 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150"
+                />
+                <ConnectionStatus status={ollamaStatus} error={ollamaError} />
               </div>
-            )}
-          </div>
-          
+
+              {ollamaStatus === 'connected' && (
+                <div className="space-y-4">
+                  {/* Ollama Embedding Model */}
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium text-[#dcddde]">
+                      Embedding Model
+                    </label>
+                    <p className="text-xs text-[#888888]">
+                      Used for semantic search. Pull nomic-embed-text if not available.
+                    </p>
+                    {ollamaEmbeddingModels.length > 0 ? (
+                      <SearchableSelect
+                        value={ollamaEmbeddingModel}
+                        onChange={setOllamaEmbeddingModel}
+                        options={ollamaEmbeddingModels}
+                        isLoading={isLoadingOllamaModels}
+                        placeholder="Select embedding model..."
+                      />
+                    ) : (
+                      <div className="px-3 py-2 bg-[#2d2d2d] border border-amber-500/50 rounded-md text-sm text-amber-400">
+                        No embedding models found. Run: ollama pull nomic-embed-text
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Ollama LLM Model */}
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium text-[#dcddde]">
+                      LLM Model
+                    </label>
+                    <p className="text-xs text-[#888888]">
+                      Used for tagging, wiki generation, and chat
+                    </p>
+                    {ollamaLlmModels.length > 0 ? (
+                      <SearchableSelect
+                        value={ollamaLlmModel}
+                        onChange={setOllamaLlmModel}
+                        options={ollamaLlmModels}
+                        isLoading={isLoadingOllamaModels}
+                        placeholder="Select LLM model..."
+                      />
+                    ) : (
+                      <div className="px-3 py-2 bg-[#2d2d2d] border border-amber-500/50 rounded-md text-sm text-amber-400">
+                        No LLM models found. Run: ollama pull llama3.2
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {ollamaStatus === 'disconnected' && (
+                <div className="p-4 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md space-y-2">
+                  <p className="text-sm text-[#dcddde]">Make sure Ollama is running:</p>
+                  <ol className="text-xs text-[#888888] space-y-1 list-decimal list-inside">
+                    <li>Install Ollama from ollama.com</li>
+                    <li>Start Ollama (it runs in the background)</li>
+                    <li>Pull required models: ollama pull llama3.2 && ollama pull nomic-embed-text</li>
+                  </ol>
+                  <Button
+                    variant="secondary"
+                    onClick={() => checkOllamaConnection(ollamaHost)}
+                    className="mt-2"
+                  >
+                    Retry Connection
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+
           {/* Auto-tagging Toggle Section */}
           <div className="flex items-center justify-between">
             <div className="space-y-1">
@@ -538,104 +852,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               />
             </button>
           </div>
-          
-          {/* Model Configuration Section */}
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="flex items-center gap-2 text-sm font-medium text-[#dcddde] hover:text-white transition-colors"
-            >
-              <svg
-                className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-              Model Configuration
-            </button>
-
-            {showAdvanced && (
-              <div className="space-y-4 pl-6 border-l-2 border-[#3d3d3d]">
-                <p className="text-xs text-[#888888]">
-                  Select models for different AI tasks. Only models supporting structured outputs are available.
-                </p>
-
-                {/* Embedding Model */}
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-[#dcddde]">
-                    Embedding Model
-                  </label>
-                  <p className="text-xs text-[#888888]">
-                    Used for semantic search. Changing this requires re-embedding all atoms.
-                  </p>
-                  <CustomSelect
-                    value={embeddingModel}
-                    onChange={setEmbeddingModel}
-                    options={[
-                      { value: 'openai/text-embedding-3-small', label: 'openai/text-embedding-3-small (1536 dim)' },
-                      { value: 'openai/text-embedding-3-large', label: 'openai/text-embedding-3-large (3072 dim)' },
-                    ]}
-                  />
-                </div>
-
-                {/* Tagging Model */}
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-[#dcddde]">
-                    Tagging Model
-                  </label>
-                  <p className="text-xs text-[#888888]">
-                    Used for automatic tag extraction
-                  </p>
-                  <SearchableSelect
-                    value={taggingModel}
-                    onChange={setTaggingModel}
-                    options={availableModels}
-                    isLoading={isLoadingModels}
-                    placeholder="Select tagging model..."
-                  />
-                </div>
-
-                {/* Wiki Model */}
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-[#dcddde]">
-                    Wiki Model
-                  </label>
-                  <p className="text-xs text-[#888888]">
-                    Used for wiki article generation and updates
-                  </p>
-                  <SearchableSelect
-                    value={wikiModel}
-                    onChange={setWikiModel}
-                    options={availableModels}
-                    isLoading={isLoadingModels}
-                    placeholder="Select wiki model..."
-                  />
-                </div>
-
-                {/* Chat Model */}
-                <div className="space-y-1">
-                  <label className="block text-sm font-medium text-[#dcddde]">
-                    Chat Model
-                  </label>
-                  <p className="text-xs text-[#888888]">
-                    Used for conversational AI assistant
-                  </p>
-                  <SearchableSelect
-                    value={chatModel}
-                    onChange={setChatModel}
-                    options={availableModels}
-                    isLoading={isLoadingModels}
-                    placeholder="Select chat model..."
-                  />
-                </div>
-              </div>
-            )}
-          </div>
         </div>
-        
+
         {/* Footer */}
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-[#3d3d3d]">
           <Button variant="secondary" onClick={onClose}>
@@ -650,4 +868,3 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     document.body
   );
 }
-

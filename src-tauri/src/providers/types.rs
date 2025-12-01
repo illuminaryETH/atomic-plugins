@@ -164,11 +164,6 @@ impl StructuredOutputSchema {
             strict: true,
         }
     }
-
-    pub fn with_strict(mut self, strict: bool) -> Self {
-        self.strict = strict;
-        self
-    }
 }
 
 /// Generation parameters for LLM requests
@@ -176,7 +171,6 @@ impl StructuredOutputSchema {
 pub struct GenerationParams {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
-    pub stop_sequences: Option<Vec<String>>,
     pub structured_output: Option<StructuredOutputSchema>,
     /// Optional list of parameters supported by the model (from OpenRouter API)
     /// When set, only supported parameters will be included in the request
@@ -198,11 +192,6 @@ impl GenerationParams {
 
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = Some(max_tokens);
-        self
-    }
-
-    pub fn with_stop_sequences(mut self, sequences: Vec<String>) -> Self {
-        self.stop_sequences = Some(sequences);
         self
     }
 
@@ -235,27 +224,12 @@ impl GenerationParams {
 pub struct CompletionResponse {
     pub content: String,
     pub tool_calls: Option<Vec<ToolCall>>,
-    pub finish_reason: Option<String>,
-}
-
-impl CompletionResponse {
-    pub fn text(content: impl Into<String>) -> Self {
-        Self {
-            content: content.into(),
-            tool_calls: None,
-            finish_reason: Some("stop".to_string()),
-        }
-    }
-
-    pub fn with_tool_calls(mut self, tool_calls: Vec<ToolCall>) -> Self {
-        self.tool_calls = Some(tool_calls);
-        self.finish_reason = Some("tool_calls".to_string());
-        self
-    }
 }
 
 /// Streaming delta from LLM
+/// Note: Some variants/fields are part of the streaming interface but not yet consumed
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum StreamDelta {
     /// Content text chunk
     Content(String),

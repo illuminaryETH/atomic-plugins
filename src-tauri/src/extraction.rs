@@ -1,7 +1,6 @@
-use crate::providers::openrouter::OpenRouterProvider;
-use crate::providers::traits::{LlmConfig, LlmProvider};
+use crate::providers::traits::LlmConfig;
 use crate::providers::types::{GenerationParams, Message, StructuredOutputSchema};
-use reqwest::Client;
+use crate::providers::{create_llm_provider, ProviderConfig};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -80,8 +79,7 @@ Guidelines:
 
 /// Extract tags from a single chunk using LLM provider
 pub async fn extract_tags_from_chunk(
-    _client: &Client, // Kept for backward compatibility, not used
-    api_key: &str,
+    provider_config: &ProviderConfig,
     chunk_content: &str,
     tag_tree_json: &str,
     model: &str,
@@ -134,9 +132,10 @@ pub async fn extract_tags_from_chunk(
         params = params.with_supported_parameters(supported);
     }
 
-    let config = LlmConfig::new(model).with_params(params);
+    let llm_config = LlmConfig::new(model).with_params(params);
 
-    let provider = OpenRouterProvider::new(api_key.to_string());
+    let provider = create_llm_provider(provider_config)
+        .map_err(|e| e.to_string())?;
 
     // Retry logic with exponential backoff
     let mut last_error = String::new();
@@ -146,7 +145,7 @@ pub async fn extract_tags_from_chunk(
             tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
         }
 
-        match provider.complete(&messages, &config).await {
+        match provider.complete(&messages, &llm_config).await {
             Ok(response) => {
                 let content = &response.content;
                 if !content.is_empty() {
@@ -406,8 +405,7 @@ pub fn build_tag_info_for_consolidation(
 
 /// Consolidate tags on an atom by merging overly specific tags into broader ones
 pub async fn consolidate_atom_tags(
-    _client: &Client, // Kept for backward compatibility, not used
-    api_key: &str,
+    provider_config: &ProviderConfig,
     tag_info: String,
     model: &str,
     supported_params: Option<Vec<String>>,
@@ -460,9 +458,10 @@ pub async fn consolidate_atom_tags(
         params = params.with_supported_parameters(supported);
     }
 
-    let config = LlmConfig::new(model).with_params(params);
+    let llm_config = LlmConfig::new(model).with_params(params);
 
-    let provider = OpenRouterProvider::new(api_key.to_string());
+    let provider = create_llm_provider(provider_config)
+        .map_err(|e| e.to_string())?;
 
     // Retry logic with exponential backoff
     let mut last_error = String::new();
@@ -472,7 +471,7 @@ pub async fn consolidate_atom_tags(
             tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
         }
 
-        match provider.complete(&messages, &config).await {
+        match provider.complete(&messages, &llm_config).await {
             Ok(response) => {
                 let content = &response.content;
                 if !content.is_empty() {
