@@ -6,9 +6,11 @@ import { LoadingIndicator } from '../ui/LoadingIndicator';
 import { SettingsModal } from '../settings/SettingsModal';
 import { useAtomsStore } from '../../stores/atoms';
 import { useTagsStore } from '../../stores/tags';
+import { useTheme } from '../../hooks';
 import { resetStuckProcessing, processPendingEmbeddings, processPendingTagging, verifyProviderConfigured } from '../../lib/tauri';
 
 export function Layout() {
+  useTheme(); // Initialize theme
   const { fetchAtoms } = useAtomsStore();
   const { fetchTags } = useTagsStore();
   const [isSetupRequired, setIsSetupRequired] = useState<boolean | null>(null); // null = checking
@@ -88,8 +90,8 @@ export function Layout() {
   // Show loading while checking
   if (isSetupRequired === null) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#1e1e1e]">
-        <span className="text-[#888888]">Loading...</span>
+      <div className="flex h-screen items-center justify-center bg-[var(--color-bg-main)]">
+        <span className="text-[var(--color-text-secondary)]">Loading...</span>
       </div>
     );
   }
@@ -97,7 +99,7 @@ export function Layout() {
   // Show setup modal if required
   if (isSetupRequired) {
     return (
-      <div className="flex h-screen overflow-hidden bg-[#1e1e1e]">
+      <div className="flex h-screen overflow-hidden bg-[var(--color-bg-main)]">
         <SettingsModal
           isOpen={true}
           onClose={handleSetupComplete}
@@ -108,7 +110,7 @@ export function Layout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#1e1e1e]">
+    <div className="flex h-screen overflow-hidden bg-[var(--color-bg-main)]">
       <LeftPanel />
       <MainView />
       <RightDrawer />

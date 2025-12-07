@@ -132,8 +132,8 @@ export function TagTree() {
         <div
           className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors ${
             selectedTagId === null
-              ? 'bg-[#7c3aed]/20 text-[#dcddde]'
-              : 'text-[#888888] hover:bg-[#2d2d2d] hover:text-[#dcddde]'
+              ? 'bg-[var(--color-accent)]/20 text-[var(--color-text-primary)]'
+              : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]'
           }`}
           onClick={() => handleSelectTag(null)}
         >
@@ -145,7 +145,7 @@ export function TagTree() {
 
         {/* Tags header with compact button */}
         <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-xs font-semibold text-[#666666] uppercase tracking-wider">
+          <span className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">
             Tags
           </span>
           <button
@@ -159,7 +159,7 @@ export function TagTree() {
               }
             }}
             disabled={isCompacting}
-            className="p-1 rounded hover:bg-[#3d3d3d] text-[#666666] hover:text-[#dcddde] disabled:opacity-50 transition-colors"
+            className="p-1 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] disabled:opacity-50 transition-colors"
             title="Organize tags with AI"
           >
             {isCompacting ? (
@@ -177,7 +177,7 @@ export function TagTree() {
 
         {/* Tag tree */}
         {tags.length === 0 ? (
-          <div className="px-3 py-4 text-sm text-[#666666] text-center">
+          <div className="px-3 py-4 text-sm text-[var(--color-text-tertiary)] text-center">
             No tags yet
           </div>
         ) : (
@@ -195,7 +195,7 @@ export function TagTree() {
       </div>
 
       {/* New Tag button */}
-      <div className="p-3 border-t border-[#3d3d3d]">
+      <div className="p-3 border-t border-[var(--color-border)]">
         <Button
           variant="ghost"
           size="sm"
@@ -250,7 +250,7 @@ export function TagTree() {
         <p>
           Are you sure you want to delete the tag "{deleteModal.tag?.name}"?
           {deleteModal.tag && deleteModal.tag.children.length > 0 && (
-            <span className="block mt-2 text-[#888888]">
+            <span className="block mt-2 text-[var(--color-text-secondary)]">
               This will also affect {deleteModal.tag.children.length} child tag(s).
             </span>
           )}

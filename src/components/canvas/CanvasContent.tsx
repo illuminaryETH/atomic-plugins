@@ -50,7 +50,7 @@ export function CanvasContent({
 
   return (
     <div
-      className="relative bg-[#1e1e1e]"
+      className="relative bg-[var(--color-bg-main)]"
       style={{
         width: CANVAS_SIZE,
         height: CANVAS_SIZE,

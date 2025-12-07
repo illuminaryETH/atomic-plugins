@@ -11,14 +11,14 @@ export function LoadingIndicator() {
 
   return (
     <div
-      className="fixed bottom-5 right-5 z-40 bg-[#2d2d2d] border border-[#3d3d3d] rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
+      className="fixed bottom-5 right-5 z-40 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200"
       role="status"
       aria-live="polite"
     >
       <div className="flex items-center gap-3">
         {/* Spinner */}
         <svg
-          className="w-4 h-4 animate-spin text-[#7c3aed]"
+          className="w-4 h-4 animate-spin text-[var(--color-accent)]"
           fill="none"
           viewBox="0 0 24 24"
           aria-hidden="true"
@@ -39,11 +39,11 @@ export function LoadingIndicator() {
         </svg>
 
         {/* Message */}
-        <span className="text-sm text-[#dcddde]">{latestOp.message}</span>
+        <span className="text-sm text-[var(--color-text-primary)]">{latestOp.message}</span>
 
         {/* Count badge (if multiple) */}
         {count > 1 && (
-          <span className="text-xs px-2 py-0.5 bg-[#3d3d3d] rounded-full text-[#888888]">
+          <span className="text-xs px-2 py-0.5 bg-[var(--color-bg-hover)] rounded-full text-[var(--color-text-secondary)]">
             {count}
           </span>
         )}

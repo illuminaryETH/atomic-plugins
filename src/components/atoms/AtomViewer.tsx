@@ -1,16 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useLayoutEffect, ReactNode, useRef, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { SearchBar } from '../ui/SearchBar';
+import { MarkdownImage } from '../ui/MarkdownImage';
 import { TagChip } from '../tags/TagChip';
 import { RelatedAtoms } from './RelatedAtoms';
 import { AtomWithTags } from '../../stores/atoms';
 import { useAtomsStore } from '../../stores/atoms';
 import { useTagsStore } from '../../stores/tags';
 import { useUIStore } from '../../stores/ui';
+import { useContentSearch } from '../../hooks';
 import { formatDate } from '../../lib/date';
+import { chunkMarkdown } from '../../lib/markdown';
+
+// Benchmarking helper
+const PERF_DEBUG = true;
+const perfLog = (label: string, startTime?: number) => {
+  if (!PERF_DEBUG) return;
+  if (startTime !== undefined) {
+    console.log(`[AtomViewer] ${label}: ${(performance.now() - startTime).toFixed(2)}ms`);
+  } else {
+    console.log(`[AtomViewer] ${label}`);
+  }
+};
 
 interface AtomViewerProps {
   atom: AtomWithTags;
@@ -18,13 +33,209 @@ interface AtomViewerProps {
   onEdit: () => void;
 }
 
+// Progressive rendering configuration
+const CHUNK_SIZE = 8000; // ~8KB per chunk
+const INITIAL_CHUNKS = 1; // Render 1 chunk immediately
+const CHUNKS_PER_BATCH = 2; // Render 2 chunks at a time to reduce re-renders
+const CHUNK_DELAY = 32; // ~2 frames between batches
+
 export function AtomViewer({ atom, onClose, onEdit }: AtomViewerProps) {
+  const mountTimeRef = useRef(performance.now());
+  const renderCountRef = useRef(0);
+
   const { deleteAtom } = useAtomsStore();
   const { fetchTags } = useTagsStore();
   const { setSelectedTag, closeDrawer, openDrawer, openLocalGraph, locateOnCanvas } = useUIStore();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [metadataExpanded, setMetadataExpanded] = useState(false);
+
+  // Progressive rendering: chunk the content
+  const chunks = useMemo(() => {
+    const result = chunkMarkdown(atom.content, CHUNK_SIZE);
+    perfLog(`Content chunked: ${result.length} chunks from ${atom.content.length} chars`);
+    return result;
+  }, [atom.content]);
+
+  // Track how many chunks are currently rendered
+  const [renderedChunkCount, setRenderedChunkCount] = useState(INITIAL_CHUNKS);
+  const isFullyRendered = renderedChunkCount >= chunks.length;
+
+  // Progressive loading: render more chunks over time
+  useEffect(() => {
+    if (isFullyRendered) return;
+
+    const loadNextBatch = () => {
+      setRenderedChunkCount(prev => {
+        const next = Math.min(prev + CHUNKS_PER_BATCH, chunks.length);
+        if (next < chunks.length) {
+          perfLog(`Rendered chunks ${prev + 1}-${next}/${chunks.length}`);
+        } else {
+          perfLog(`All ${chunks.length} chunks rendered`);
+        }
+        return next;
+      });
+    };
+
+    // Use requestIdleCallback if available, otherwise setTimeout
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(loadNextBatch, { timeout: 100 });
+      return () => cancelIdleCallback(id);
+    } else {
+      const id = setTimeout(loadNextBatch, CHUNK_DELAY);
+      return () => clearTimeout(id);
+    }
+  }, [renderedChunkCount, chunks.length, isFullyRendered]);
+
+  // Reset chunk count when atom changes
+  useEffect(() => {
+    setRenderedChunkCount(INITIAL_CHUNKS);
+  }, [atom.id]);
+
+  // Track mount/unmount and render count
+  useEffect(() => {
+    perfLog(`MOUNTED (content: ${atom.content.length} chars, tags: ${atom.tags.length})`);
+    perfLog('Time from component creation to mount', mountTimeRef.current);
+
+    return () => {
+      perfLog(`UNMOUNTED after ${renderCountRef.current} renders`);
+    };
+  }, []);
+
+  // Track each render
+  useEffect(() => {
+    renderCountRef.current++;
+  });
+
+  // Track when markdown content is rendered to DOM using useLayoutEffect
+  const renderStartRef = useRef<number>(performance.now());
+  const articleRef = useRef<HTMLElement | null>(null);
+
+  // Preserve scroll position when new chunks are added
+  useLayoutEffect(() => {
+    // This runs synchronously after DOM mutations, before browser paint
+    // By doing nothing special here, we let the browser maintain scroll position naturally
+    // The key is that we're adding content at the END, not the beginning
+    if (articleRef.current) {
+      const domNodes = articleRef.current.querySelectorAll('*').length;
+      const images = articleRef.current.querySelectorAll('img').length;
+      perfLog(`DOM ready (render #${renderCountRef.current})`, renderStartRef.current);
+      perfLog(`  DOM nodes: ${domNodes}, Images: ${images}, Chunks: ${renderedChunkCount}/${chunks.length}`);
+    }
+    // Reset for next render
+    renderStartRef.current = performance.now();
+  }, [renderedChunkCount, chunks.length]);
+
+  // Content search
+  const {
+    isOpen: isSearchOpen,
+    query: searchQuery,
+    searchedQuery,
+    currentIndex,
+    totalMatches,
+    setQuery: setSearchQuery,
+    openSearch,
+    closeSearch,
+    goToNext,
+    goToPrevious,
+    processChildren,
+  } = useContentSearch(atom.content);
+
+  // Keyboard handler for Ctrl+F / Cmd+F
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        openSearch();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [openSearch]);
+
+  // Wrap children with search highlighting
+  const wrapWithHighlight = useCallback(
+    (children: ReactNode): ReactNode => {
+      if (!isSearchOpen || !searchQuery.trim()) {
+        return children;
+      }
+      return processChildren(children);
+    },
+    [isSearchOpen, searchQuery, processChildren]
+  );
+
+  // Memoize markdown components to prevent re-renders from resetting image loading states
+  const markdownComponents = useMemo(() => ({
+    p: ({ children }: { children?: ReactNode }) => (
+      <p>{wrapWithHighlight(children)}</p>
+    ),
+    li: ({ children }: { children?: ReactNode }) => (
+      <li>{wrapWithHighlight(children)}</li>
+    ),
+    td: ({ children }: { children?: ReactNode }) => (
+      <td>{wrapWithHighlight(children)}</td>
+    ),
+    th: ({ children }: { children?: ReactNode }) => (
+      <th>{wrapWithHighlight(children)}</th>
+    ),
+    strong: ({ children }: { children?: ReactNode }) => (
+      <strong>{wrapWithHighlight(children)}</strong>
+    ),
+    em: ({ children }: { children?: ReactNode }) => (
+      <em>{wrapWithHighlight(children)}</em>
+    ),
+    del: ({ children }: { children?: ReactNode }) => (
+      <del>{wrapWithHighlight(children)}</del>
+    ),
+    h1: ({ children }: { children?: ReactNode }) => (
+      <h1>{wrapWithHighlight(children)}</h1>
+    ),
+    h2: ({ children }: { children?: ReactNode }) => (
+      <h2>{wrapWithHighlight(children)}</h2>
+    ),
+    h3: ({ children }: { children?: ReactNode }) => (
+      <h3>{wrapWithHighlight(children)}</h3>
+    ),
+    h4: ({ children }: { children?: ReactNode }) => (
+      <h4>{wrapWithHighlight(children)}</h4>
+    ),
+    h5: ({ children }: { children?: ReactNode }) => (
+      <h5>{wrapWithHighlight(children)}</h5>
+    ),
+    h6: ({ children }: { children?: ReactNode }) => (
+      <h6>{wrapWithHighlight(children)}</h6>
+    ),
+    blockquote: ({ children }: { children?: ReactNode }) => (
+      <blockquote>{wrapWithHighlight(children)}</blockquote>
+    ),
+    code: ({ className, children }: { className?: string; children?: ReactNode }) => {
+      const isBlock = className?.startsWith('language-');
+      if (isBlock) {
+        return <code className={className}>{wrapWithHighlight(children)}</code>;
+      }
+      return <code>{wrapWithHighlight(children)}</code>;
+    },
+    pre: ({ children }: { children?: ReactNode }) => (
+      <pre>{children}</pre>
+    ),
+    a: ({ href, children }: { href?: string; children?: ReactNode }) => (
+      <a
+        href={href}
+        onClick={(e) => {
+          e.preventDefault();
+          if (href) {
+            openUrl(href).catch(err => console.error('Failed to open URL:', err));
+          }
+        }}
+        className="cursor-pointer"
+      >
+        {wrapWithHighlight(children)}
+      </a>
+    ),
+    img: ({ src, alt }: { src?: string; alt?: string }) => (
+      <MarkdownImage src={src} alt={alt} />
+    ),
+  }), [wrapWithHighlight]);
 
   const handleViewNeighborhood = () => {
     closeDrawer();
@@ -66,10 +277,10 @@ export function AtomViewer({ atom, onClose, onEdit }: AtomViewerProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
         <button
           onClick={onClose}
-          className="text-[#888888] hover:text-[#dcddde] transition-colors"
+          className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -114,34 +325,50 @@ export function AtomViewer({ atom, onClose, onEdit }: AtomViewerProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
-        <article className="prose prose-invert prose-sm max-w-none prose-headings:text-[#dcddde] prose-p:text-[#dcddde] prose-a:text-[#7c3aed] prose-strong:text-[#dcddde] prose-code:text-[#a78bfa] prose-code:bg-[#2d2d2d] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-[#2d2d2d] prose-pre:border prose-pre:border-[#3d3d3d] prose-blockquote:border-l-[#7c3aed] prose-blockquote:text-[#888888] prose-li:text-[#dcddde] prose-hr:border-[#3d3d3d]">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              a: ({ href, children }) => (
-                <a
-                  href={href}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (href) {
-                      openUrl(href).catch(err => console.error('Failed to open URL:', err));
-                    }
-                  }}
-                  className="cursor-pointer"
-                >
-                  {children}
-                </a>
-              ),
-            }}
-          >
-            {atom.content}
-          </ReactMarkdown>
+      <div className="flex-1 overflow-y-auto px-6 py-4 relative">
+        {/* Search bar */}
+        {isSearchOpen && (
+          <SearchBar
+            query={searchQuery}
+            searchedQuery={searchedQuery}
+            onQueryChange={setSearchQuery}
+            currentIndex={currentIndex}
+            totalMatches={totalMatches}
+            onNext={goToNext}
+            onPrevious={goToPrevious}
+            onClose={closeSearch}
+          />
+        )}
+
+        <article
+          ref={articleRef}
+          className="prose prose-invert prose-sm max-w-none prose-headings:text-[var(--color-text-primary)] prose-p:text-[var(--color-text-primary)] prose-a:text-[var(--color-accent)] prose-strong:text-[var(--color-text-primary)] prose-code:text-[var(--color-accent-light)] prose-code:bg-[var(--color-bg-card)] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-[var(--color-bg-card)] prose-pre:border prose-pre:border-[var(--color-border)] prose-blockquote:border-l-[var(--color-accent)] prose-blockquote:text-[var(--color-text-secondary)] prose-li:text-[var(--color-text-primary)] prose-hr:border-[var(--color-border)]"
+        >
+          {/* Render chunks progressively */}
+          {chunks.slice(0, renderedChunkCount).map((chunk, index) => (
+            <ReactMarkdown
+              key={index}
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+              {chunk}
+            </ReactMarkdown>
+          ))}
+
+          {/* Loading indicator for remaining chunks - fixed height to prevent layout shift */}
+          <div className="h-8">
+            {!isFullyRendered && (
+              <div className="flex items-center gap-2 text-[var(--color-text-tertiary)]">
+                <div className="w-4 h-4 border-2 border-[var(--color-text-tertiary)] border-t-transparent rounded-full animate-spin" />
+                <span className="text-sm">Loading...</span>
+              </div>
+            )}
+          </div>
         </article>
       </div>
 
       {/* Metadata */}
-      <div className="border-t border-[#3d3d3d] px-6 py-4">
+      <div className="border-t border-[var(--color-border)] px-6 py-4">
         {/* Collapsible header with tags */}
         <button
           onClick={() => setMetadataExpanded(!metadataExpanded)}
@@ -163,7 +390,7 @@ export function AtomViewer({ atom, onClose, onEdit }: AtomViewerProps) {
                   />
                 ))}
                 {hiddenCount > 0 && !metadataExpanded && (
-                  <span className="text-sm text-[#888888] px-2">
+                  <span className="text-sm text-[var(--color-text-secondary)] px-2">
                     +{hiddenCount} more
                   </span>
                 )}
@@ -171,7 +398,7 @@ export function AtomViewer({ atom, onClose, onEdit }: AtomViewerProps) {
             )}
           </div>
           <svg
-            className={`w-4 h-4 text-[#888888] transition-transform ml-2 flex-shrink-0 ${metadataExpanded ? 'rotate-180' : ''}`}
+            className={`w-4 h-4 text-[var(--color-text-secondary)] transition-transform ml-2 flex-shrink-0 ${metadataExpanded ? 'rotate-180' : ''}`}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -202,12 +429,12 @@ export function AtomViewer({ atom, onClose, onEdit }: AtomViewerProps) {
             {/* Source URL */}
             {atom.source_url && (
               <div className="flex items-center gap-2 text-sm">
-                <span className="text-[#888888]">Source:</span>
+                <span className="text-[var(--color-text-secondary)]">Source:</span>
                 <a
                   href={atom.source_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[#7c3aed] hover:underline truncate"
+                  className="text-[var(--color-accent)] hover:underline truncate"
                 >
                   {atom.source_url}
                 </a>
@@ -215,7 +442,7 @@ export function AtomViewer({ atom, onClose, onEdit }: AtomViewerProps) {
             )}
 
             {/* Dates */}
-            <div className="text-xs text-[#666666] space-y-1">
+            <div className="text-xs text-[var(--color-text-tertiary)] space-y-1">
               <p>Created: {formatDate(atom.created_at)}</p>
               <p>Updated: {formatDate(atom.updated_at)}</p>
             </div>

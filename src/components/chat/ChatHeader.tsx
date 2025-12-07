@@ -29,12 +29,12 @@ export function ChatHeader({ conversation, onBack }: ChatHeaderProps) {
   };
 
   return (
-    <div className="flex-shrink-0 border-b border-[#3d3d3d]">
+    <div className="flex-shrink-0 border-b border-[var(--color-border)]">
       {/* Top row: Back button and title */}
       <div className="flex items-center gap-3 px-4 py-3">
         <button
           onClick={onBack}
-          className="p-1.5 text-[#888888] hover:text-[#dcddde] hover:bg-[#3d3d3d] rounded transition-colors"
+          className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] rounded transition-colors"
           aria-label="Back to conversations"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -53,7 +53,7 @@ export function ChatHeader({ conversation, onBack }: ChatHeaderProps) {
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
-            className="flex-1 bg-[#1e1e1e] border border-[#3d3d3d] rounded px-2 py-1 text-[#dcddde] focus:outline-none focus:border-[#7c3aed]"
+            className="flex-1 bg-[var(--color-bg-main)] border border-[var(--color-border)] rounded px-2 py-1 text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
             autoFocus
           />
         ) : (
@@ -62,7 +62,7 @@ export function ChatHeader({ conversation, onBack }: ChatHeaderProps) {
               setEditedTitle(conversation.title || '');
               setIsEditingTitle(true);
             }}
-            className="flex-1 text-[#dcddde] font-medium cursor-pointer hover:text-[#a78bfa] transition-colors truncate"
+            className="flex-1 text-[var(--color-text-primary)] font-medium cursor-pointer hover:text-[var(--color-accent-light)] transition-colors truncate"
             title="Click to edit title"
           >
             {conversation.title || 'New Conversation'}

@@ -100,29 +100,29 @@ export function CitationPopover({ citation, anchorRect, onClose, onViewAtom }: C
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[100] w-[400px] max-w-[calc(100vw-16px)] bg-[#2d2d2d] border border-[#3d3d3d] rounded-lg shadow-xl"
+      className="fixed z-[100] w-[400px] max-w-[calc(100vw-16px)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg shadow-xl"
       style={{ top: position.top, left: position.left }}
     >
       {/* Citation number badge */}
-      <div className="px-4 py-2 border-b border-[#3d3d3d] flex items-center gap-2">
-        <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-[#7c3aed]/20 text-[#a78bfa] text-xs font-medium">
+      <div className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
+        <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-[var(--color-accent)]/20 text-[var(--color-accent-light)] text-xs font-medium">
           {citation.citation_index}
         </span>
-        <span className="text-xs text-[#888888]">Source excerpt</span>
+        <span className="text-xs text-[var(--color-text-secondary)]">Source excerpt</span>
       </div>
 
       {/* Excerpt content */}
       <div className="px-4 py-3">
-        <p className="text-sm text-[#dcddde] leading-relaxed whitespace-pre-wrap">
+        <p className="text-sm text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">
           {displayExcerpt}
         </p>
       </div>
 
       {/* Footer with link */}
-      <div className="px-4 py-2 border-t border-[#3d3d3d]">
+      <div className="px-4 py-2 border-t border-[var(--color-border)]">
         <button
           onClick={handleViewAtom}
-          className="flex items-center gap-1 text-sm text-[#7c3aed] hover:text-[#a78bfa] transition-colors"
+          className="flex items-center gap-1 text-sm text-[var(--color-accent)] hover:text-[var(--color-accent-light)] transition-colors"
         >
           View full atom
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

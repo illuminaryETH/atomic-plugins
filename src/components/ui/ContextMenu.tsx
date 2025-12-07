@@ -72,7 +72,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
   return createPortal(
     <div
       ref={menuRef}
-      className="fixed z-50 min-w-[160px] bg-[#2d2d2d] border border-[#3d3d3d] rounded-lg shadow-xl py-1 animate-in fade-in zoom-in-95 duration-100"
+      className="fixed z-50 min-w-[160px] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg shadow-xl py-1 animate-in fade-in zoom-in-95 duration-100"
       style={{
         left: adjustedPosition?.x ?? position.x,
         top: adjustedPosition?.y ?? position.y,
@@ -90,10 +90,10 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
           disabled={item.disabled}
           className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 transition-colors ${
             item.disabled
-              ? 'text-[#666666] cursor-not-allowed'
+              ? 'text-[var(--color-text-tertiary)] cursor-not-allowed'
               : item.danger
               ? 'text-red-400 hover:bg-red-500/10'
-              : 'text-[#dcddde] hover:bg-[#3d3d3d]'
+              : 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
           }`}
         >
           {item.icon && <span className="w-4 h-4">{item.icon}</span>}

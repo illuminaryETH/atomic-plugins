@@ -11,6 +11,7 @@ import { useAtomsStore, AtomWithTags, Tag } from '../../stores/atoms';
 import { useTagsStore } from '../../stores/tags';
 import { useSettingsStore } from '../../stores/settings';
 import { isValidUrl } from '../../lib/markdown';
+import { useTheme } from '../../hooks/useTheme';
 
 interface AtomEditorProps {
   atomId: string | null; // null for new atom
@@ -22,6 +23,7 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
   const { createAtom, updateAtom } = useAtomsStore();
   const { fetchTags } = useTagsStore();
   const { settings, fetchSettings } = useSettingsStore();
+  const theme = useTheme();
 
   const [content, setContent] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
@@ -100,7 +102,7 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
   // Show loading state when fetching atom for editing
   if (isEditing && isLoadingAtom) {
     return (
-      <div className="flex items-center justify-center h-full p-4 text-[#888888]">
+      <div className="flex items-center justify-center h-full p-4 text-[var(--color-text-secondary)]">
         Loading atom...
       </div>
     );
@@ -111,18 +113,18 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
   // Custom theme extension for CodeMirror
   const customTheme = EditorView.theme({
     '&': {
-      backgroundColor: '#2d2d2d',
+      backgroundColor: 'var(--color-bg-card)',
       height: '100%',
     },
     '.cm-gutters': {
-      backgroundColor: '#2d2d2d',
-      borderRight: '1px solid #3d3d3d',
+      backgroundColor: 'var(--color-bg-card)',
+      borderRight: '1px solid var(--color-border)',
     },
     '.cm-activeLineGutter': {
-      backgroundColor: '#3d3d3d',
+      backgroundColor: 'var(--color-bg-hover)',
     },
     '.cm-activeLine': {
-      backgroundColor: '#3d3d3d40',
+      backgroundColor: 'var(--color-bg-hover)',
     },
     '.cm-scroller': {
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
@@ -132,13 +134,13 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
-        <h2 className="text-lg font-semibold text-[#dcddde]">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+        <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
           {isEditing ? 'Edit Atom' : 'New Atom'}
         </h2>
         <button
           onClick={onClose}
-          className="text-[#888888] hover:text-[#dcddde] transition-colors"
+          className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -152,7 +154,7 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
           value={content}
           onChange={setContent}
           extensions={[markdown(), customTheme, EditorView.lineWrapping]}
-          theme={oneDark}
+          theme={theme === 'obsidian' ? oneDark : undefined}
           placeholder="Write your note in Markdown..."
           className="h-full"
           basicSetup={{
@@ -165,7 +167,7 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
       </div>
 
       {/* Form fields */}
-      <div className="px-6 py-4 space-y-4 border-t border-[#3d3d3d]">
+      <div className="px-6 py-4 space-y-4 border-t border-[var(--color-border)]">
         <Input
           label="Source URL (optional)"
           value={sourceUrl}
@@ -175,9 +177,9 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
         />
         <TagSelector selectedTags={selectedTags} onTagsChange={setSelectedTags} />
         {autoTaggingEnabled && (
-          <p className="text-xs text-[#888888] mt-1">
+          <p className="text-xs text-[var(--color-text-secondary)] mt-1">
             <span className="inline-flex items-center gap-1">
-              <svg className="w-3 h-3 text-[#7c3aed]" fill="currentColor" viewBox="0 0 20 20">
+              <svg className="w-3 h-3 text-[var(--color-accent)]" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
               </svg>
               Tags will be extracted automatically
@@ -187,7 +189,7 @@ export function AtomEditor({ atomId, onClose, onSaved }: AtomEditorProps) {
       </div>
 
       {/* Footer */}
-      <div className="flex justify-end gap-3 px-6 py-4 border-t border-[#3d3d3d]">
+      <div className="flex justify-end gap-3 px-6 py-4 border-t border-[var(--color-border)]">
         <Button variant="secondary" onClick={onClose}>
           Cancel
         </Button>

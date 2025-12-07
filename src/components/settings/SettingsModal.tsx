@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '../ui/Button';
 import { useSettingsStore } from '../../stores/settings';
+import { THEMES, Theme } from '../../hooks/useTheme';
 import {
   getAvailableLlmModels,
   testOllamaConnection,
@@ -48,11 +49,11 @@ function CustomSelect({ value, onChange, options }: CustomSelectProps) {
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-3 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] text-left text-sm focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150 flex items-center justify-between"
+        className="w-full px-3 py-2 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] text-left text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors duration-150 flex items-center justify-between"
       >
         <span>{selectedOption?.label || value}</span>
         <svg
-          className={`w-4 h-4 text-[#888888] transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -62,7 +63,7 @@ function CustomSelect({ value, onChange, options }: CustomSelectProps) {
       </button>
 
       {isOpen && (
-        <div className="absolute z-10 w-full mt-1 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md shadow-lg overflow-hidden">
+        <div className="absolute z-10 w-full mt-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md shadow-lg overflow-hidden">
           {options.map((option) => (
             <button
               key={option.value}
@@ -73,8 +74,8 @@ function CustomSelect({ value, onChange, options }: CustomSelectProps) {
               }}
               className={`w-full px-3 py-2 text-left text-sm transition-colors ${
                 option.value === value
-                  ? 'bg-[#7c3aed] text-white'
-                  : 'text-[#dcddde] hover:bg-[#3d3d3d]'
+                  ? 'bg-[var(--color-accent)] text-white'
+                  : 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
               }`}
             >
               {option.label}
@@ -227,13 +228,13 @@ function SearchableSelect({ value, onChange, options, isLoading, placeholder = '
         type="button"
         onClick={handleOpen}
         onKeyDown={handleKeyDown}
-        className="w-full px-3 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] text-left text-sm focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150 flex items-center justify-between"
+        className="w-full px-3 py-2 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] text-left text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors duration-150 flex items-center justify-between"
       >
-        <span className={selectedOption ? '' : 'text-[#888888]'}>
+        <span className={selectedOption ? '' : 'text-[var(--color-text-secondary)]'}>
           {isLoading ? 'Loading models...' : (selectedOption?.name || value || placeholder)}
         </span>
         <svg
-          className={`w-4 h-4 text-[#888888] transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -244,9 +245,9 @@ function SearchableSelect({ value, onChange, options, isLoading, placeholder = '
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute z-10 w-full mt-1 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md shadow-lg overflow-hidden">
+        <div className="absolute z-10 w-full mt-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md shadow-lg overflow-hidden">
           {/* Search input */}
-          <div className="p-2 border-b border-[#3d3d3d]">
+          <div className="p-2 border-b border-[var(--color-border)]">
             <input
               ref={inputRef}
               type="text"
@@ -258,14 +259,14 @@ function SearchableSelect({ value, onChange, options, isLoading, placeholder = '
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck={false}
-              className="w-full px-2 py-1.5 bg-[#1e1e1e] border border-[#3d3d3d] rounded text-[#dcddde] text-sm placeholder-[#888888] focus:outline-none focus:ring-1 focus:ring-[#7c3aed]"
+              className="w-full px-2 py-1.5 bg-[var(--color-bg-main)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] text-sm placeholder-[var(--color-text-secondary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
             />
           </div>
 
           {/* Options list */}
           <div ref={listRef} className="max-h-60 overflow-y-auto">
             {isLoading ? (
-              <div className="px-3 py-4 text-center text-sm text-[#888888]">
+              <div className="px-3 py-4 text-center text-sm text-[var(--color-text-secondary)]">
                 <svg className="w-5 h-5 animate-spin mx-auto mb-2" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
@@ -273,7 +274,7 @@ function SearchableSelect({ value, onChange, options, isLoading, placeholder = '
                 Loading models...
               </div>
             ) : filteredOptions.length === 0 ? (
-              <div className="px-3 py-4 text-center text-sm text-[#888888]">
+              <div className="px-3 py-4 text-center text-sm text-[var(--color-text-secondary)]">
                 No models found
               </div>
             ) : (
@@ -290,14 +291,14 @@ function SearchableSelect({ value, onChange, options, isLoading, placeholder = '
                   onMouseEnter={() => setHighlightedIndex(index)}
                   className={`w-full px-3 py-2 text-left text-sm transition-colors ${
                     option.id === value
-                      ? 'bg-[#7c3aed] text-white'
+                      ? 'bg-[var(--color-accent)] text-white'
                       : index === highlightedIndex
-                      ? 'bg-[#3d3d3d] text-[#dcddde]'
-                      : 'text-[#dcddde] hover:bg-[#3d3d3d]'
+                      ? 'bg-[var(--color-bg-hover)] text-[var(--color-text-primary)]'
+                      : 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
                   }`}
                 >
                   <div className="font-medium">{option.name}</div>
-                  <div className={`text-xs ${option.id === value ? 'text-white/70' : 'text-[#888888]'}`}>
+                  <div className={`text-xs ${option.id === value ? 'text-white/70' : 'text-[var(--color-text-secondary)]'}`}>
                     {option.id}
                   </div>
                 </button>
@@ -316,11 +317,11 @@ function ConnectionStatus({ status, error }: { status: 'checking' | 'connected' 
     <div className="flex items-center gap-2 text-sm">
       {status === 'checking' && (
         <>
-          <svg className="w-4 h-4 animate-spin text-[#888888]" fill="none" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 animate-spin text-[var(--color-text-secondary)]" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
-          <span className="text-[#888888]">Checking connection...</span>
+          <span className="text-[var(--color-text-secondary)]">Checking connection...</span>
         </>
       )}
       {status === 'connected' && (
@@ -347,6 +348,9 @@ interface SettingsModalProps {
 
 export function SettingsModal({ isOpen, onClose, isSetupMode = false }: SettingsModalProps) {
   const { settings, fetchSettings, setSetting, testOpenRouterConnection } = useSettingsStore();
+
+  // Theme
+  const [theme, setTheme] = useState<Theme>('obsidian');
 
   // Provider selection
   const [provider, setProvider] = useState<'openrouter' | 'ollama'>('openrouter');
@@ -421,6 +425,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
   // Load settings into state
   useEffect(() => {
     const p = settings.provider as 'openrouter' | 'ollama' | undefined;
+    setTheme((settings.theme as Theme) || 'obsidian');
     setProvider(p || 'openrouter');
     setApiKey(settings.openrouter_api_key || '');
     setAutoTaggingEnabled(settings.auto_tagging_enabled !== 'false');
@@ -501,6 +506,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
     setIsSaving(true);
     try {
       // Backend handles dimension change detection and triggers re-embedding automatically
+      await setSetting('theme', theme);
       await setSetting('provider', provider);
 
       if (provider === 'openrouter') {
@@ -550,15 +556,15 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
       onClick={handleOverlayClick}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
     >
-      <div className="bg-[#252525] rounded-lg shadow-xl border border-[#3d3d3d] w-full max-w-md mx-4 max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-[var(--color-bg-panel)] rounded-lg shadow-xl border border-[var(--color-border)] w-full max-w-md mx-4 max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
           <div>
-            <h2 className="text-lg font-semibold text-[#dcddde]">
+            <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
               {isSetupMode ? 'Welcome to Atomic' : 'Settings'}
             </h2>
             {isSetupMode && (
-              <p className="text-sm text-[#888888] mt-1">
+              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
                 Configure an AI provider to get started
               </p>
             )}
@@ -566,7 +572,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
           {!isSetupMode && (
             <button
               onClick={onClose}
-              className="text-[#888888] hover:text-[#dcddde] transition-colors"
+              className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -577,12 +583,24 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
 
         {/* Content */}
         <div className="px-6 py-4 space-y-6 overflow-y-auto flex-1">
+          {/* Theme Selector */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-[var(--color-text-primary)]">
+              Theme
+            </label>
+            <CustomSelect
+              value={theme}
+              onChange={(v) => setTheme(v as Theme)}
+              options={THEMES}
+            />
+          </div>
+
           {/* Provider Selector */}
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-[#dcddde]">
+            <label className="block text-sm font-medium text-[var(--color-text-primary)]">
               AI Provider
             </label>
-            <p className="text-xs text-[#888888]">
+            <p className="text-xs text-[var(--color-text-secondary)]">
               Choose between cloud (OpenRouter) or local (Ollama) AI models
             </p>
             <CustomSelect
@@ -599,10 +617,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
           {provider === 'openrouter' && (
             <>
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-[#dcddde]">
+                <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                   OpenRouter API Key
                 </label>
-                <p className="text-xs text-[#888888]">
+                <p className="text-xs text-[var(--color-text-secondary)]">
                   Required for AI features. Get your key at openrouter.ai
                 </p>
                 <div className="flex gap-2">
@@ -612,12 +630,12 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                       value={apiKey}
                       onChange={(e) => handleApiKeyChange(e.target.value)}
                       placeholder="sk-or-..."
-                      className="w-full px-3 py-2 pr-10 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150"
+                      className="w-full px-3 py-2 pr-10 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors duration-150"
                     />
                     <button
                       type="button"
                       onClick={() => setShowApiKey(!showApiKey)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#dcddde] transition-colors"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
                     >
                       {showApiKey ? (
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -672,7 +690,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="flex items-center gap-2 text-sm font-medium text-[#dcddde] hover:text-white transition-colors"
+                  className="flex items-center gap-2 text-sm font-medium text-[var(--color-text-primary)] hover:text-white transition-colors"
                 >
                   <svg
                     className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
@@ -686,17 +704,17 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                 </button>
 
                 {showAdvanced && (
-                  <div className="space-y-4 pl-6 border-l-2 border-[#3d3d3d]">
-                    <p className="text-xs text-[#888888]">
+                  <div className="space-y-4 pl-6 border-l-2 border-[var(--color-border)]">
+                    <p className="text-xs text-[var(--color-text-secondary)]">
                       Select models for different AI tasks.
                     </p>
 
                     {/* Embedding Model */}
                     <div className="space-y-1">
-                      <label className="block text-sm font-medium text-[#dcddde]">
+                      <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                         Embedding Model
                       </label>
-                      <p className="text-xs text-[#888888]">
+                      <p className="text-xs text-[var(--color-text-secondary)]">
                         Used for semantic search. Changing this requires re-embedding all atoms.
                       </p>
                       <CustomSelect
@@ -711,10 +729,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
 
                     {/* Tagging Model */}
                     <div className="space-y-1">
-                      <label className="block text-sm font-medium text-[#dcddde]">
+                      <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                         Tagging Model
                       </label>
-                      <p className="text-xs text-[#888888]">
+                      <p className="text-xs text-[var(--color-text-secondary)]">
                         Used for automatic tag extraction
                       </p>
                       <SearchableSelect
@@ -728,10 +746,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
 
                     {/* Wiki Model */}
                     <div className="space-y-1">
-                      <label className="block text-sm font-medium text-[#dcddde]">
+                      <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                         Wiki Model
                       </label>
-                      <p className="text-xs text-[#888888]">
+                      <p className="text-xs text-[var(--color-text-secondary)]">
                         Used for wiki article generation
                       </p>
                       <SearchableSelect
@@ -745,10 +763,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
 
                     {/* Chat Model */}
                     <div className="space-y-1">
-                      <label className="block text-sm font-medium text-[#dcddde]">
+                      <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                         Chat Model
                       </label>
-                      <p className="text-xs text-[#888888]">
+                      <p className="text-xs text-[var(--color-text-secondary)]">
                         Used for conversational AI assistant
                       </p>
                       <SearchableSelect
@@ -769,10 +787,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
           {provider === 'ollama' && (
             <>
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-[#dcddde]">
+                <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                   Ollama Server URL
                 </label>
-                <p className="text-xs text-[#888888]">
+                <p className="text-xs text-[var(--color-text-secondary)]">
                   URL of your local Ollama server (default: http://127.0.0.1:11434)
                 </p>
                 <input
@@ -780,7 +798,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                   value={ollamaHost}
                   onChange={(e) => setOllamaHost(e.target.value)}
                   placeholder="http://127.0.0.1:11434"
-                  className="w-full px-3 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors duration-150"
+                  className="w-full px-3 py-2 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors duration-150"
                 />
                 <ConnectionStatus status={ollamaStatus} error={ollamaError} />
               </div>
@@ -789,10 +807,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                 <div className="space-y-4">
                   {/* Ollama Embedding Model */}
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium text-[#dcddde]">
+                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                       Embedding Model
                     </label>
-                    <p className="text-xs text-[#888888]">
+                    <p className="text-xs text-[var(--color-text-secondary)]">
                       Used for semantic search. Pull nomic-embed-text if not available.
                     </p>
                     {ollamaEmbeddingModels.length > 0 ? (
@@ -804,7 +822,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                         placeholder="Select embedding model..."
                       />
                     ) : (
-                      <div className="px-3 py-2 bg-[#2d2d2d] border border-amber-500/50 rounded-md text-sm text-amber-400">
+                      <div className="px-3 py-2 bg-[var(--color-bg-card)] border border-amber-500/50 rounded-md text-sm text-amber-400">
                         No embedding models found. Run: ollama pull nomic-embed-text
                       </div>
                     )}
@@ -812,10 +830,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
 
                   {/* Ollama LLM Model */}
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium text-[#dcddde]">
+                    <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                       LLM Model
                     </label>
-                    <p className="text-xs text-[#888888]">
+                    <p className="text-xs text-[var(--color-text-secondary)]">
                       Used for tagging, wiki generation, and chat
                     </p>
                     {ollamaLlmModels.length > 0 ? (
@@ -827,7 +845,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                         placeholder="Select LLM model..."
                       />
                     ) : (
-                      <div className="px-3 py-2 bg-[#2d2d2d] border border-amber-500/50 rounded-md text-sm text-amber-400">
+                      <div className="px-3 py-2 bg-[var(--color-bg-card)] border border-amber-500/50 rounded-md text-sm text-amber-400">
                         No LLM models found. Run: ollama pull llama3.2
                       </div>
                     )}
@@ -836,9 +854,9 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
               )}
 
               {ollamaStatus === 'disconnected' && (
-                <div className="p-4 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md space-y-2">
-                  <p className="text-sm text-[#dcddde]">Make sure Ollama is running:</p>
-                  <ol className="text-xs text-[#888888] space-y-1 list-decimal list-inside">
+                <div className="p-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md space-y-2">
+                  <p className="text-sm text-[var(--color-text-primary)]">Make sure Ollama is running:</p>
+                  <ol className="text-xs text-[var(--color-text-secondary)] space-y-1 list-decimal list-inside">
                     <li>Install Ollama from ollama.com</li>
                     <li>Start Ollama (it runs in the background)</li>
                     <li>Pull required models: ollama pull llama3.2 && ollama pull nomic-embed-text</li>
@@ -858,10 +876,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
           {/* Auto-tagging Toggle Section */}
           <div className="flex items-center justify-between">
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-[#dcddde]">
+              <label className="block text-sm font-medium text-[var(--color-text-primary)]">
                 Automatic Tag Extraction
               </label>
-              <p className="text-xs text-[#888888]">
+              <p className="text-xs text-[var(--color-text-secondary)]">
                 Automatically suggest tags when creating atoms
               </p>
             </div>
@@ -870,8 +888,8 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
               role="switch"
               aria-checked={autoTaggingEnabled}
               onClick={() => setAutoTaggingEnabled(!autoTaggingEnabled)}
-              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:ring-offset-2 focus:ring-offset-[#252525] ${
-                autoTaggingEnabled ? 'bg-[#7c3aed]' : 'bg-[#3d3d3d]'
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2 focus:ring-offset-[var(--color-bg-panel)] ${
+                autoTaggingEnabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-bg-hover)]'
               }`}
             >
               <span
@@ -884,7 +902,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-3 px-6 py-4 border-t border-[#3d3d3d]">
+        <div className="flex justify-end gap-3 px-6 py-4 border-t border-[var(--color-border)]">
           {!isSetupMode && (
             <Button variant="secondary" onClick={onClose}>
               Cancel

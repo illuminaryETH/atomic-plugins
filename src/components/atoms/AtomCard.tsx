@@ -104,7 +104,7 @@ export function AtomCard({
     return (
       <div
         onClick={onClick}
-        className="relative flex items-center gap-4 p-4 bg-[#2d2d2d] border border-[#3d3d3d] rounded-lg cursor-pointer hover:border-[#4d4d4d] hover:bg-[#333333] transition-all duration-150"
+        className="relative flex items-center gap-4 p-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-hover)] transition-all duration-150"
       >
         <ProcessingStatusIndicator
           embeddingStatus={atom.embedding_status}
@@ -114,7 +114,7 @@ export function AtomCard({
         <div className="flex-1 min-w-0">
           <p
             className={`text-sm line-clamp-1 ${
-              matchingChunkContent ? 'text-[#a78bfa]' : 'text-[#dcddde]'
+              matchingChunkContent ? 'text-[var(--color-accent-light)]' : 'text-[var(--color-text-primary)]'
             }`}
           >
             {preview}
@@ -125,12 +125,12 @@ export function AtomCard({
                 <TagChip key={tag.id} name={tag.name} size="sm" />
               ))}
               {remainingTags > 0 && (
-                <span className="text-xs text-[#666666]">+{remainingTags} more</span>
+                <span className="text-xs text-[var(--color-text-tertiary)]">+{remainingTags} more</span>
               )}
             </div>
           )}
         </div>
-        <span className="text-xs text-[#666666] whitespace-nowrap">
+        <span className="text-xs text-[var(--color-text-tertiary)] whitespace-nowrap">
           {formatRelativeDate(atom.created_at)}
         </span>
       </div>
@@ -140,7 +140,7 @@ export function AtomCard({
   return (
     <div
       onClick={onClick}
-      className="relative flex flex-col p-4 bg-[#2d2d2d] border border-[#3d3d3d] rounded-lg cursor-pointer hover:border-[#4d4d4d] hover:bg-[#333333] transition-all duration-150 h-full"
+      className="relative flex flex-col p-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-hover)] transition-all duration-150 h-full"
     >
       <ProcessingStatusIndicator
         embeddingStatus={atom.embedding_status}
@@ -150,24 +150,24 @@ export function AtomCard({
       <div className="flex-1 min-h-0">
         <p
           className={`text-sm line-clamp-4 leading-relaxed ${
-            matchingChunkContent ? 'text-[#a78bfa]' : 'text-[#dcddde]'
+            matchingChunkContent ? 'text-[var(--color-accent-light)]' : 'text-[var(--color-text-primary)]'
           }`}
         >
           {preview}
         </p>
       </div>
-      <div className="mt-3 pt-3 border-t border-[#3d3d3d]">
+      <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
         {atom.tags.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             {visibleTags.map((tag) => (
               <TagChip key={tag.id} name={tag.name} size="sm" />
             ))}
             {remainingTags > 0 && (
-              <span className="text-xs text-[#666666]">+{remainingTags}</span>
+              <span className="text-xs text-[var(--color-text-tertiary)]">+{remainingTags}</span>
             )}
           </div>
         )}
-        <span className="text-xs text-[#666666]">
+        <span className="text-xs text-[var(--color-text-tertiary)]">
           {formatRelativeDate(atom.created_at)}
         </span>
       </div>

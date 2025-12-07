@@ -68,25 +68,26 @@ export function MainView() {
   };
 
   const handleOpenChat = () => {
-    // Open chat with current tag filter if one is selected
-    openChatDrawer(selectedTagId ?? undefined);
+    // Open chat list without pre-selecting a tag
+    // (Tag-specific chat is opened via the chat icon next to each tag)
+    openChatDrawer();
   };
 
   return (
-    <main className="flex-1 flex flex-col h-full bg-[#1e1e1e] overflow-hidden">
+    <main className="flex-1 flex flex-col h-full bg-[var(--color-bg-main)] overflow-hidden">
       {/* Header */}
-      <header className="flex items-center gap-4 px-4 py-3 border-b border-[#3d3d3d]">
+      <header className="flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border)]">
         {/* Semantic Search */}
         <SemanticSearch />
 
         {/* View Mode Toggle */}
-        <div className="flex items-center bg-[#2d2d2d] rounded-md border border-[#3d3d3d]">
+        <div className="flex items-center bg-[var(--color-bg-card)] rounded-md border border-[var(--color-border)]">
           <button
             onClick={() => setViewMode('canvas')}
             className={`p-2 rounded-l-md transition-colors ${
               viewMode === 'canvas'
-                ? 'bg-[#7c3aed] text-white'
-                : 'text-[#888888] hover:text-[#dcddde]'
+                ? 'bg-[var(--color-accent)] text-white'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
             }`}
             title="Canvas view"
           >
@@ -103,8 +104,8 @@ export function MainView() {
             onClick={() => setViewMode('grid')}
             className={`p-2 transition-colors ${
               viewMode === 'grid'
-                ? 'bg-[#7c3aed] text-white'
-                : 'text-[#888888] hover:text-[#dcddde]'
+                ? 'bg-[var(--color-accent)] text-white'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
             }`}
             title="Grid view"
           >
@@ -121,8 +122,8 @@ export function MainView() {
             onClick={() => setViewMode('list')}
             className={`p-2 rounded-r-md transition-colors ${
               viewMode === 'list'
-                ? 'bg-[#7c3aed] text-white'
-                : 'text-[#888888] hover:text-[#dcddde]'
+                ? 'bg-[var(--color-accent)] text-white'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
             }`}
             title="List view"
           >
@@ -138,7 +139,7 @@ export function MainView() {
         </div>
 
         {/* Atom count */}
-        <span className="text-sm text-[#888888]">
+        <span className="text-sm text-[var(--color-text-secondary)]">
           {displayAtoms.length} atom{displayAtoms.length !== 1 ? 's' : ''}
         </span>
 
@@ -148,7 +149,7 @@ export function MainView() {
         {/* Chat button */}
         <button
           onClick={handleOpenChat}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[#2d2d2d] border border-[#3d3d3d] text-[#888888] hover:text-[#dcddde] hover:border-[#7c3aed] transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-accent)] transition-colors"
           title="Open conversations"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -160,7 +161,7 @@ export function MainView() {
 
       {/* Search results header - only show for grid/list views */}
       {isSemanticSearch && viewMode !== 'canvas' && (
-        <div className="px-4 py-2 text-sm text-[#888888] border-b border-[#3d3d3d]">
+        <div className="px-4 py-2 text-sm text-[var(--color-text-secondary)] border-b border-[var(--color-border)]">
           {semanticSearchResults.length > 0 ? (
             <span>
               {semanticSearchResults.length} results for "{semanticSearchQuery}"

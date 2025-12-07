@@ -47,14 +47,14 @@ export const ConnectionLines = memo(function ConnectionLines({
         switch (connectionType) {
           case 'semantic':
             // Purple dashed line for semantic connections
-            strokeColor = '#7c3aed';
+            strokeColor = 'var(--color-accent)';
             strokeDasharray = '6,3';
             strokeWidth = 1 + strength;
             baseOpacity = 0.2 + strength * 0.3;
             break;
           case 'both':
             // Thicker solid purple for combined connections
-            strokeColor = '#a78bfa';
+            strokeColor = 'var(--color-accent-light)';
             strokeDasharray = undefined;
             strokeWidth = 1.5 + strength;
             baseOpacity = 0.3 + strength * 0.3;
@@ -62,7 +62,7 @@ export const ConnectionLines = memo(function ConnectionLines({
           case 'tag':
           default:
             // Gray solid line for tag connections
-            strokeColor = '#666666';
+            strokeColor = 'var(--color-text-tertiary)';
             strokeDasharray = undefined;
             strokeWidth = 1;
             baseOpacity = 0.15;

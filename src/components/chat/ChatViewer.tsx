@@ -40,15 +40,15 @@ export function ChatViewer({ initialTagId, initialConversationId }: ChatViewerPr
   }, [reset]);
 
   return (
-    <div className="h-full flex flex-col bg-[#252525]">
+    <div className="h-full flex flex-col bg-[var(--color-bg-panel)]">
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-[#3d3d3d]">
-        <h2 className="text-lg font-semibold text-[#dcddde]">
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+        <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">
           {view === 'list' ? 'Conversations' : 'Chat'}
         </h2>
         <button
           onClick={closeDrawer}
-          className="p-1 text-[#888888] hover:text-[#dcddde] transition-colors"
+          className="p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
           aria-label="Close"
         >
           <svg

@@ -14,8 +14,8 @@ export function TagChip({ name, onClick, onRemove, size = 'sm', className = '' }
 
   return (
     <span
-      className={`inline-flex items-center gap-1 bg-[#7c3aed]/20 text-[#a78bfa] rounded-full ${sizeStyles[size]} ${
-        onClick ? 'cursor-pointer hover:bg-[#7c3aed]/30 transition-colors' : ''
+      className={`inline-flex items-center gap-1 bg-[var(--color-accent)]/20 text-[var(--color-accent-light)] rounded-full ${sizeStyles[size]} ${
+        onClick ? 'cursor-pointer hover:bg-[var(--color-accent)]/30 transition-colors' : ''
       } ${className}`}
       onClick={onClick}
     >

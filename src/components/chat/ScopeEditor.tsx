@@ -60,7 +60,7 @@ function HighlightedText({ text, matchIndices }: { text: string; matchIndices: n
   for (let i = 0; i < text.length; i++) {
     if (matchSet.has(i)) {
       parts.push(
-        <span key={i} className="text-[#a78bfa] font-semibold">
+        <span key={i} className="text-[var(--color-accent-light)] font-semibold">
           {text[i]}
         </span>
       );
@@ -170,15 +170,15 @@ export function ScopeEditor({ conversation }: ScopeEditorProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-[#666666] uppercase tracking-wide">Scope:</span>
+      <span className="text-xs text-[var(--color-text-tertiary)] uppercase tracking-wide">Scope:</span>
 
       {conversation.tags.length === 0 ? (
-        <span className="text-sm text-[#888888] italic">All atoms</span>
+        <span className="text-sm text-[var(--color-text-secondary)] italic">All atoms</span>
       ) : (
         conversation.tags.map((tag) => (
           <span
             key={tag.id}
-            className="group inline-flex items-center gap-1 px-2 py-0.5 text-sm rounded bg-[#7c3aed]/20 text-[#a78bfa]"
+            className="group inline-flex items-center gap-1 px-2 py-0.5 text-sm rounded bg-[var(--color-accent)]/20 text-[var(--color-accent-light)]"
           >
             {tag.name}
             <button
@@ -208,17 +208,17 @@ export function ScopeEditor({ conversation }: ScopeEditorProps) {
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
-            className="w-40 bg-[#1e1e1e] border border-[#7c3aed] rounded px-2 py-1 text-sm text-[#dcddde] focus:outline-none placeholder-[#666666]"
+            className="w-40 bg-[var(--color-bg-main)] border border-[var(--color-accent)] rounded px-2 py-1 text-sm text-[var(--color-text-primary)] focus:outline-none placeholder-[var(--color-text-tertiary)]"
           />
 
           {/* Dropdown */}
           {filteredTags.length > 0 && (
-            <div className="absolute z-50 w-56 mt-1 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md shadow-lg max-h-48 overflow-y-auto">
+            <div className="absolute z-50 w-56 mt-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md shadow-lg max-h-48 overflow-y-auto">
               {filteredTags.map(({ tag, matchIndices }) => (
                 <button
                   key={tag.id}
                   onClick={() => handleAddTag(tag.id)}
-                  className="w-full px-3 py-2 text-left text-sm text-[#dcddde] hover:bg-[#3d3d3d] transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
                 >
                   <HighlightedText text={tag.name} matchIndices={matchIndices} />
                 </button>
@@ -227,7 +227,7 @@ export function ScopeEditor({ conversation }: ScopeEditorProps) {
           )}
 
           {searchQuery && filteredTags.length === 0 && (
-            <div className="absolute z-50 w-56 mt-1 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md shadow-lg px-3 py-2 text-sm text-[#888888]">
+            <div className="absolute z-50 w-56 mt-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md shadow-lg px-3 py-2 text-sm text-[var(--color-text-secondary)]">
               No matching tags
             </div>
           )}
@@ -235,7 +235,7 @@ export function ScopeEditor({ conversation }: ScopeEditorProps) {
       ) : (
         <button
           onClick={() => setIsAdding(true)}
-          className="inline-flex items-center gap-1 px-2 py-0.5 text-sm rounded border border-dashed border-[#3d3d3d] text-[#888888] hover:border-[#7c3aed] hover:text-[#a78bfa] transition-colors"
+          className="inline-flex items-center gap-1 px-2 py-0.5 text-sm rounded border border-dashed border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent-light)] transition-colors"
         >
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

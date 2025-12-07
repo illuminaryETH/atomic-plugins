@@ -32,12 +32,12 @@ export function WikiHeader({
   };
 
   return (
-    <div className="border-b border-[#3d3d3d]">
+    <div className="border-b border-[var(--color-border)]">
       {/* Main header */}
       <div className="flex items-center justify-between px-6 py-4">
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-semibold text-[#dcddde] truncate">{tagName}</h2>
-          <p className="text-xs text-[#888888] mt-0.5">
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)] truncate">{tagName}</h2>
+          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
             Updated {formatRelativeTime(updatedAt)} • {sourceCount} source{sourceCount !== 1 ? 's' : ''}
           </p>
         </div>
@@ -55,7 +55,7 @@ export function WikiHeader({
           </Button>
           <button
             onClick={onClose}
-            className="text-[#888888] hover:text-[#dcddde] transition-colors p-1"
+            className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors p-1"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -66,8 +66,8 @@ export function WikiHeader({
 
       {/* New atoms banner */}
       {newAtomsAvailable > 0 && (
-        <div className="flex items-center justify-between px-6 py-2 bg-[#7c3aed]/10 border-t border-[#7c3aed]/20">
-          <span className="text-sm text-[#a78bfa]">
+        <div className="flex items-center justify-between px-6 py-2 bg-[var(--color-accent)]/10 border-t border-[var(--color-accent)]/20">
+          <span className="text-sm text-[var(--color-accent-light)]">
             {newAtomsAvailable} new atom{newAtomsAvailable !== 1 ? 's' : ''} available
           </span>
           <Button
@@ -100,7 +100,7 @@ export function WikiHeader({
         confirmVariant="primary"
         onConfirm={handleRegenerate}
       >
-        <p className="text-[#dcddde]">
+        <p className="text-[var(--color-text-primary)]">
           This will regenerate the article from scratch, replacing the current content.
           Are you sure you want to continue?
         </p>

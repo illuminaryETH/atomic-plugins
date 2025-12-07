@@ -1,10 +1,12 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useChatStore } from '../../stores/chat';
 import { useUIStore } from '../../stores/ui';
 import { useChatEvents } from '../../hooks/useChatEvents';
+import { useContentSearch } from '../../hooks';
 import { ChatHeader } from './ChatHeader';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
+import { SearchBar } from '../ui/SearchBar';
 
 export function ChatView() {
   const {
@@ -24,6 +26,38 @@ export function ChatView() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
+
+  // Combine all message content for search
+  const allContent = useMemo(() => {
+    return messages.map(m => m.content).join('\n\n');
+  }, [messages]);
+
+  // Content search across all messages
+  const {
+    isOpen: isSearchOpen,
+    query: searchQuery,
+    searchedQuery,
+    currentIndex,
+    totalMatches,
+    setQuery: setSearchQuery,
+    openSearch,
+    closeSearch,
+    goToNext,
+    goToPrevious,
+    highlightText,
+  } = useContentSearch(allContent);
+
+  // Keyboard handler for Ctrl+F / Cmd+F
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        openSearch();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [openSearch]);
 
   // Subscribe to chat events for streaming
   useChatEvents(currentConversation?.id ?? null);
@@ -79,7 +113,7 @@ export function ChatView() {
 
   if (!currentConversation) {
     return (
-      <div className="flex items-center justify-center h-full text-[#888888]">
+      <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)]">
         {isLoading ? 'Loading conversation...' : 'No conversation selected'}
       </div>
     );
@@ -94,18 +128,32 @@ export function ChatView() {
       <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 space-y-4"
+        className="flex-1 overflow-y-auto p-4 space-y-4 relative"
+        style={{ overflowAnchor: 'none' }}
       >
+        {/* Search bar */}
+        {isSearchOpen && (
+          <SearchBar
+            query={searchQuery}
+            searchedQuery={searchedQuery}
+            onQueryChange={setSearchQuery}
+            currentIndex={currentIndex}
+            totalMatches={totalMatches}
+            onNext={goToNext}
+            onPrevious={goToPrevious}
+            onClose={closeSearch}
+          />
+        )}
         {messages.length === 0 && !isStreaming && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
-            <div className="w-16 h-16 rounded-full bg-[#2d2d2d] flex items-center justify-center">
-              <svg className="w-8 h-8 text-[#7c3aed]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 rounded-full bg-[var(--color-bg-card)] flex items-center justify-center">
+              <svg className="w-8 h-8 text-[var(--color-accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
               </svg>
             </div>
             <div>
-              <p className="text-[#dcddde] font-medium mb-1">Start the conversation</p>
-              <p className="text-[#888888] text-sm max-w-sm">
+              <p className="text-[var(--color-text-primary)] font-medium mb-1">Start the conversation</p>
+              <p className="text-[var(--color-text-secondary)] text-sm max-w-sm">
                 Ask questions about your knowledge base. The AI will search through your atoms to find relevant information.
               </p>
             </div>
@@ -113,7 +161,13 @@ export function ChatView() {
         )}
 
         {messages.map((message) => (
-          <ChatMessage key={message.id} message={message} onViewAtom={handleViewAtom} />
+          <ChatMessage
+            key={message.id}
+            message={message}
+            onViewAtom={handleViewAtom}
+            searchQuery={isSearchOpen ? searchQuery : ''}
+            highlightText={highlightText}
+          />
         ))}
 
         {/* Streaming message */}
@@ -131,6 +185,8 @@ export function ChatView() {
             }}
             isStreaming
             onViewAtom={handleViewAtom}
+            searchQuery={isSearchOpen ? searchQuery : ''}
+            highlightText={highlightText}
           />
         )}
 

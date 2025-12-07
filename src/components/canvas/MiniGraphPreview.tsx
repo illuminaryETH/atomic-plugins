@@ -131,7 +131,7 @@ export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
 
   if (isLoading) {
     return (
-      <div className="h-[120px] flex items-center justify-center text-sm text-[#666666] bg-[#252525] rounded-md">
+      <div className="h-[120px] flex items-center justify-center text-sm text-[var(--color-text-tertiary)] bg-[var(--color-bg-panel)] rounded-md">
         Loading graph...
       </div>
     );
@@ -139,7 +139,7 @@ export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
 
   if (!graph || graph.atoms.length <= 1) {
     return (
-      <div className="h-[80px] flex items-center justify-center text-sm text-[#666666] bg-[#252525] rounded-md">
+      <div className="h-[80px] flex items-center justify-center text-sm text-[var(--color-text-tertiary)] bg-[var(--color-bg-panel)] rounded-md">
         No connections found
       </div>
     );
@@ -148,7 +148,7 @@ export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
   return (
     <div>
       <div
-        className="relative bg-[#252525] rounded-md overflow-hidden cursor-pointer hover:bg-[#2a2a2a] transition-colors"
+        className="relative bg-[var(--color-bg-panel)] rounded-md overflow-hidden cursor-pointer hover:bg-[var(--color-bg-hover)] transition-colors"
         style={{ height: '150px' }}
         onClick={handleExpand}
       >
@@ -161,7 +161,7 @@ export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
               y1={edge.source.y}
               x2={edge.target.x}
               y2={edge.target.y}
-              stroke={edge.edge_type === 'semantic' ? '#7c3aed' : '#666666'}
+              stroke={edge.edge_type === 'semantic' ? 'var(--color-accent)' : 'var(--color-text-tertiary)'}
               strokeWidth={1}
               strokeOpacity={0.4}
               strokeDasharray={edge.edge_type === 'semantic' ? '4,2' : undefined}
@@ -175,14 +175,14 @@ export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
               <g key={node.id} transform={`translate(${node.x}, ${node.y})`}>
                 <circle
                   r={isCenter ? 8 : 6}
-                  fill={isCenter ? '#7c3aed' : '#3d3d3d'}
-                  stroke={isCenter ? '#a78bfa' : '#4d4d4d'}
+                  fill={isCenter ? 'var(--color-accent)' : 'var(--color-bg-hover)'}
+                  stroke={isCenter ? 'var(--color-accent-light)' : 'var(--color-border-hover)'}
                   strokeWidth={1}
                 />
                 <text
                   y={isCenter ? 18 : 14}
                   textAnchor="middle"
-                  fill="#888888"
+                  fill="var(--color-text-secondary)"
                   fontSize={8}
                   className="pointer-events-none"
                 >
@@ -194,7 +194,7 @@ export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
         </svg>
 
         {/* Hint overlay */}
-        <div className="absolute bottom-1 right-2 text-[10px] text-[#666666]">
+        <div className="absolute bottom-1 right-2 text-[10px] text-[var(--color-text-tertiary)]">
           Click to expand
         </div>
       </div>

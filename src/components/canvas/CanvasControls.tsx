@@ -36,8 +36,8 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
     <>
       {/* Connection options panel */}
       {showPanel && (
-        <div className="absolute bottom-16 right-4 z-10 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md p-3 w-56 shadow-lg">
-          <div className="text-xs text-[#888888] mb-3 font-medium">Connections</div>
+        <div className="absolute bottom-16 right-4 z-10 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md p-3 w-56 shadow-lg">
+          <div className="text-xs text-[var(--color-text-secondary)] mb-3 font-medium">Connections</div>
 
           {/* Tag connections toggle */}
           <label className="flex items-center gap-2 mb-2 cursor-pointer">
@@ -45,10 +45,10 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
               type="checkbox"
               checked={connectionOptions.showTagConnections}
               onChange={handleToggleTag}
-              className="w-4 h-4 rounded bg-[#1e1e1e] border-[#3d3d3d] text-[#7c3aed] focus:ring-[#7c3aed] focus:ring-offset-0"
+              className="w-4 h-4 rounded bg-[var(--color-bg-main)] border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-accent)] focus:ring-offset-0"
             />
-            <span className="text-sm text-[#dcddde] flex items-center gap-2">
-              <span className="w-4 h-0.5 bg-[#666666] inline-block" />
+            <span className="text-sm text-[var(--color-text-primary)] flex items-center gap-2">
+              <span className="w-4 h-0.5 bg-[var(--color-text-tertiary)] inline-block" />
               Tag connections
             </span>
           </label>
@@ -59,20 +59,20 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
               type="checkbox"
               checked={connectionOptions.showSemanticConnections}
               onChange={handleToggleSemantic}
-              className="w-4 h-4 rounded bg-[#1e1e1e] border-[#3d3d3d] text-[#7c3aed] focus:ring-[#7c3aed] focus:ring-offset-0"
+              className="w-4 h-4 rounded bg-[var(--color-bg-main)] border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-accent)] focus:ring-offset-0"
             />
-            <span className="text-sm text-[#dcddde] flex items-center gap-2">
-              <span className="w-4 h-0.5 bg-[#7c3aed] inline-block" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #7c3aed 0, #7c3aed 4px, transparent 4px, transparent 6px)' }} />
+            <span className="text-sm text-[var(--color-text-primary)] flex items-center gap-2">
+              <span className="w-4 h-0.5 bg-[var(--color-accent)] inline-block" style={{ backgroundImage: 'repeating-linear-gradient(90deg, var(--color-accent) 0, var(--color-accent) 4px, transparent 4px, transparent 6px)' }} />
               Semantic connections
             </span>
           </label>
 
           {/* Similarity threshold slider */}
           {connectionOptions.showSemanticConnections && (
-            <div className="pt-2 border-t border-[#3d3d3d]">
+            <div className="pt-2 border-t border-[var(--color-border)]">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-[#888888]">Min similarity</span>
-                <span className="text-xs text-[#dcddde] font-mono">{connectionOptions.minSimilarity.toFixed(2)}</span>
+                <span className="text-xs text-[var(--color-text-secondary)]">Min similarity</span>
+                <span className="text-xs text-[var(--color-text-primary)] font-mono">{connectionOptions.minSimilarity.toFixed(2)}</span>
               </div>
               <input
                 type="range"
@@ -81,9 +81,9 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
                 step="0.05"
                 value={connectionOptions.minSimilarity}
                 onChange={handleSimilarityChange}
-                className="w-full h-1.5 bg-[#3d3d3d] rounded-lg appearance-none cursor-pointer accent-[#7c3aed]"
+                className="w-full h-1.5 bg-[var(--color-bg-hover)] rounded-lg appearance-none cursor-pointer accent-[var(--color-accent)]"
               />
-              <div className="flex justify-between text-xs text-[#666666] mt-1">
+              <div className="flex justify-between text-xs text-[var(--color-text-tertiary)] mt-1">
                 <span>More</span>
                 <span>Fewer</span>
               </div>
@@ -91,20 +91,20 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
           )}
 
           {/* Legend */}
-          <div className="mt-3 pt-2 border-t border-[#3d3d3d]">
-            <div className="text-xs text-[#888888] mb-2">Legend</div>
+          <div className="mt-3 pt-2 border-t border-[var(--color-border)]">
+            <div className="text-xs text-[var(--color-text-secondary)] mb-2">Legend</div>
             <div className="space-y-1.5 text-xs">
               <div className="flex items-center gap-2">
-                <span className="w-5 h-0.5 bg-[#666666] inline-block" />
-                <span className="text-[#888888]">Shared tags</span>
+                <span className="w-5 h-0.5 bg-[var(--color-text-tertiary)] inline-block" />
+                <span className="text-[var(--color-text-secondary)]">Shared tags</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-5 h-0.5 inline-block" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #7c3aed 0, #7c3aed 4px, transparent 4px, transparent 6px)' }} />
-                <span className="text-[#888888]">Semantic similarity</span>
+                <span className="w-5 h-0.5 inline-block" style={{ backgroundImage: 'repeating-linear-gradient(90deg, var(--color-accent) 0, var(--color-accent) 4px, transparent 4px, transparent 6px)' }} />
+                <span className="text-[var(--color-text-secondary)]">Semantic similarity</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-5 h-0.5 bg-[#a78bfa] inline-block" />
-                <span className="text-[#888888]">Both</span>
+                <span className="w-5 h-0.5 bg-[var(--color-accent-light)] inline-block" />
+                <span className="text-[var(--color-text-secondary)]">Both</span>
               </div>
             </div>
           </div>
@@ -118,8 +118,8 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
           onClick={() => setShowPanel(!showPanel)}
           className={`w-8 h-8 border rounded transition-colors flex items-center justify-center ${
             showPanel
-              ? 'bg-[#7c3aed] border-[#7c3aed] text-white'
-              : 'bg-[#2d2d2d] border-[#3d3d3d] text-[#dcddde] hover:bg-[#3d3d3d]'
+              ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
+              : 'bg-[var(--color-bg-card)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
           }`}
           title="Connection options"
         >
@@ -130,11 +130,11 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
           </svg>
         </button>
 
-        <div className="h-px bg-[#3d3d3d] my-1" />
+        <div className="h-px bg-[var(--color-bg-hover)] my-1" />
 
         <button
           onClick={() => zoomIn()}
-          className="w-8 h-8 bg-[#2d2d2d] border border-[#3d3d3d] rounded text-[#dcddde] hover:bg-[#3d3d3d] transition-colors flex items-center justify-center"
+          className="w-8 h-8 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors flex items-center justify-center"
           title="Zoom in"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,7 +143,7 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
         </button>
         <button
           onClick={() => zoomOut()}
-          className="w-8 h-8 bg-[#2d2d2d] border border-[#3d3d3d] rounded text-[#dcddde] hover:bg-[#3d3d3d] transition-colors flex items-center justify-center"
+          className="w-8 h-8 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors flex items-center justify-center"
           title="Zoom out"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,7 +152,7 @@ export function CanvasControls({ connectionOptions, onConnectionOptionsChange }:
         </button>
         <button
           onClick={() => resetTransform()}
-          className="w-8 h-8 bg-[#2d2d2d] border border-[#3d3d3d] rounded text-[#dcddde] hover:bg-[#3d3d3d] transition-colors flex items-center justify-center"
+          className="w-8 h-8 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors flex items-center justify-center"
           title="Reset view"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

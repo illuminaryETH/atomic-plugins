@@ -16,7 +16,7 @@ export function ChatInput({
   placeholder = 'Type a message...',
 }: ChatInputProps) {
   return (
-    <div className="flex-shrink-0 p-4 border-t border-[#3d3d3d]">
+    <div className="flex-shrink-0 p-4 border-t border-[var(--color-border)]">
       <div className="flex items-end gap-3">
         <textarea
           value={value}
@@ -29,7 +29,7 @@ export function ChatInput({
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          className="flex-1 resize-none bg-[#1e1e1e] border border-[#3d3d3d] rounded-lg px-4 py-3 text-[#dcddde] placeholder-[#666666] focus:outline-none focus:border-[#7c3aed] disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-1 resize-none bg-[var(--color-bg-main)] border border-[var(--color-border)] rounded-lg px-4 py-3 text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
           style={{
             minHeight: '48px',
             maxHeight: '200px',
@@ -44,7 +44,7 @@ export function ChatInput({
         <button
           onClick={onSend}
           disabled={disabled || !value.trim()}
-          className="flex-shrink-0 p-3 bg-[#7c3aed] hover:bg-[#6d28d9] disabled:bg-[#3d3d3d] disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+          className="flex-shrink-0 p-3 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:bg-[var(--color-bg-hover)] disabled:cursor-not-allowed text-white rounded-lg transition-colors"
           aria-label="Send message"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -57,7 +57,7 @@ export function ChatInput({
           </svg>
         </button>
       </div>
-      <p className="mt-2 text-xs text-[#666666]">
+      <p className="mt-2 text-xs text-[var(--color-text-tertiary)]">
         Press Enter to send, Shift+Enter for new line
       </p>
     </div>

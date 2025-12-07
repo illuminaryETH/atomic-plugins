@@ -60,11 +60,11 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
   if (isLoading) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
-          <h2 className="text-lg font-semibold text-[#dcddde]">{tagName}</h2>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">{tagName}</h2>
           <button
             onClick={closeDrawer}
-            className="text-[#888888] hover:text-[#dcddde] transition-colors"
+            className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -73,7 +73,7 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="w-8 h-8 animate-spin">
-            <svg className="w-full h-full text-[#7c3aed]" fill="none" viewBox="0 0 24 24">
+            <svg className="w-full h-full text-[var(--color-accent)]" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
@@ -87,11 +87,11 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
   if (error) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
-          <h2 className="text-lg font-semibold text-[#dcddde]">{tagName}</h2>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">{tagName}</h2>
           <button
             onClick={closeDrawer}
-            className="text-[#888888] hover:text-[#dcddde] transition-colors"
+            className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -104,14 +104,14 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <p className="text-[#dcddde] mb-2">Failed to generate article</p>
-          <p className="text-sm text-[#888888] mb-4">{error}</p>
+          <p className="text-[var(--color-text-primary)] mb-2">Failed to generate article</p>
+          <p className="text-sm text-[var(--color-text-secondary)] mb-4">{error}</p>
           <button
             onClick={() => {
               clearError();
               handleGenerate();
             }}
-            className="px-4 py-2 bg-[#7c3aed] text-white rounded-lg hover:bg-[#6d28d9] transition-colors"
+            className="px-4 py-2 bg-[var(--color-accent)] text-white rounded-lg hover:bg-[var(--color-accent-hover)] transition-colors"
           >
             Retry
           </button>
@@ -124,11 +124,11 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
   if (isGenerating) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
-          <h2 className="text-lg font-semibold text-[#dcddde]">{tagName}</h2>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">{tagName}</h2>
           <button
             onClick={closeDrawer}
-            className="text-[#888888] hover:text-[#dcddde] transition-colors"
+            className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -144,11 +144,11 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
   if (!currentArticle) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
-          <h2 className="text-lg font-semibold text-[#dcddde]">{tagName}</h2>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">{tagName}</h2>
           <button
             onClick={closeDrawer}
-            className="text-[#888888] hover:text-[#dcddde] transition-colors"
+            className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

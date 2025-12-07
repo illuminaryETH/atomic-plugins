@@ -16,22 +16,22 @@ export function ConversationCard({ conversation, onClick, onDelete }: Conversati
   return (
     <div
       onClick={onClick}
-      className="group px-4 py-3 hover:bg-[#2d2d2d] cursor-pointer transition-colors"
+      className="group px-4 py-3 hover:bg-[var(--color-bg-card)] cursor-pointer transition-colors"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           {/* Title */}
-          <h3 className="text-[#dcddde] font-medium truncate mb-1">
+          <h3 className="text-[var(--color-text-primary)] font-medium truncate mb-1">
             {title}
           </h3>
 
           {/* Preview */}
-          <p className="text-[#888888] text-sm line-clamp-2 mb-2">
+          <p className="text-[var(--color-text-secondary)] text-sm line-clamp-2 mb-2">
             {preview}
           </p>
 
           {/* Meta info */}
-          <div className="flex items-center gap-3 text-xs text-[#666666]">
+          <div className="flex items-center gap-3 text-xs text-[var(--color-text-tertiary)]">
             <span>{updatedAt}</span>
             <span>•</span>
             <span>{messageCount} {messageCount === 1 ? 'message' : 'messages'}</span>
@@ -43,13 +43,13 @@ export function ConversationCard({ conversation, onClick, onDelete }: Conversati
               {conversation.tags.slice(0, 3).map((tag) => (
                 <span
                   key={tag.id}
-                  className="px-2 py-0.5 text-xs rounded bg-[#7c3aed]/20 text-[#a78bfa]"
+                  className="px-2 py-0.5 text-xs rounded bg-[var(--color-accent)]/20 text-[var(--color-accent-light)]"
                 >
                   {tag.name}
                 </span>
               ))}
               {conversation.tags.length > 3 && (
-                <span className="px-2 py-0.5 text-xs rounded bg-[#3d3d3d] text-[#888888]">
+                <span className="px-2 py-0.5 text-xs rounded bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
                   +{conversation.tags.length - 3} more
                 </span>
               )}
@@ -60,7 +60,7 @@ export function ConversationCard({ conversation, onClick, onDelete }: Conversati
         {/* Delete button */}
         <button
           onClick={onDelete}
-          className="p-1.5 text-[#666666] hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+          className="p-1.5 text-[var(--color-text-tertiary)] hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
           aria-label="Delete conversation"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

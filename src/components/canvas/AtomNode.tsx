@@ -77,14 +77,14 @@ export const AtomNode = memo(function AtomNode({
     >
       <div
         className={`
-          bg-[#2d2d2d] border rounded-md px-3 py-2
+          bg-[var(--color-bg-card)] border rounded-md px-3 py-2
           hover:scale-[1.02] transition-all duration-150
           relative overflow-hidden
           ${isHighlighted
-            ? 'border-[#22c55e] shadow-[0_0_20px_rgba(34,197,94,0.5)] animate-pulse ring-2 ring-[#22c55e] ring-opacity-50'
+            ? 'border-[var(--color-success)] shadow-[0_0_20px_rgb(var(--color-success-rgb) / 0.5)] animate-pulse ring-2 ring-[var(--color-success)] ring-opacity-50'
             : isHub
-            ? 'border-[#7c3aed] shadow-[0_0_12px_rgba(124,58,237,0.3)]'
-            : 'border-[#3d3d3d] hover:border-[#4d4d4d]'}
+            ? 'border-[var(--color-accent)] shadow-[0_0_12px_rgb(var(--color-accent-rgb) / 0.3)]'
+            : 'border-[var(--color-border)] hover:border-[var(--color-border-hover)]'}
         `}
       >
         {/* Tag color indicator */}
@@ -99,13 +99,13 @@ export const AtomNode = memo(function AtomNode({
         {isHub && (
           <div className="absolute top-1 right-1">
             <div
-              className="w-2 h-2 rounded-full bg-[#7c3aed] animate-pulse"
+              className="w-2 h-2 rounded-full bg-[var(--color-accent)] animate-pulse"
               title={`Hub: ${connectionCount} connections`}
             />
           </div>
         )}
 
-        <p className={`text-sm text-[#dcddde] line-clamp-2 break-words ${isHub ? 'font-medium' : ''}`}>
+        <p className={`text-sm text-[var(--color-text-primary)] line-clamp-2 break-words ${isHub ? 'font-medium' : ''}`}>
           {displayContent}
         </p>
 
@@ -115,8 +115,8 @@ export const AtomNode = memo(function AtomNode({
             <span
               className="text-[10px] px-1.5 py-0.5 rounded"
               style={{
-                backgroundColor: tagColor ? colorWithAlpha(tagColor, 0.35) : '#3d3d3d',
-                color: '#e0e0e0'
+                backgroundColor: tagColor ? colorWithAlpha(tagColor, 0.35) : 'var(--color-bg-hover)',
+                color: 'var(--color-text-primary)'
               }}
             >
               {atom.tags[0].name.length > 12
@@ -124,13 +124,13 @@ export const AtomNode = memo(function AtomNode({
                 : atom.tags[0].name}
             </span>
             {atom.tags.length > 1 && (
-              <span className="text-[10px] text-[#666666]">
+              <span className="text-[10px] text-[var(--color-text-tertiary)]">
                 +{atom.tags.length - 1}
               </span>
             )}
             {/* Show connection count for hubs */}
             {isHub && connectionCount > 0 && (
-              <span className="text-[10px] text-[#7c3aed] ml-auto">
+              <span className="text-[10px] text-[var(--color-accent)] ml-auto">
                 {connectionCount}
               </span>
             )}

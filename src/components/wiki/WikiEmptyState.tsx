@@ -9,24 +9,24 @@ export function WikiEmptyState({ tagName, atomCount, onGenerate, isGenerating }:
   return (
     <div className="flex flex-col items-center justify-center h-full px-6 py-12 text-center">
       {/* Document icon with plus */}
-      <div className="w-16 h-16 mb-4 rounded-full bg-[#2d2d2d] flex items-center justify-center">
-        <svg className="w-8 h-8 text-[#888888]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="w-16 h-16 mb-4 rounded-full bg-[var(--color-bg-card)] flex items-center justify-center">
+        <svg className="w-8 h-8 text-[var(--color-text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-3-3v6m-7 4h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
         </svg>
       </div>
       
-      <h3 className="text-lg font-medium text-[#dcddde] mb-2">
+      <h3 className="text-lg font-medium text-[var(--color-text-primary)] mb-2">
         No article yet for "{tagName}"
       </h3>
       
-      <p className="text-sm text-[#888888] mb-6">
+      <p className="text-sm text-[var(--color-text-secondary)] mb-6">
         Generate an article from {atomCount} atom{atomCount !== 1 ? 's' : ''}
       </p>
       
       <button
         onClick={onGenerate}
         disabled={isGenerating || atomCount === 0}
-        className="flex items-center gap-2 px-4 py-2 bg-[#7c3aed] text-white rounded-lg hover:bg-[#6d28d9] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] text-white rounded-lg hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         {isGenerating ? (
           <>
@@ -47,7 +47,7 @@ export function WikiEmptyState({ tagName, atomCount, onGenerate, isGenerating }:
       </button>
       
       {atomCount === 0 && (
-        <p className="text-xs text-[#666666] mt-4">
+        <p className="text-xs text-[var(--color-text-tertiary)] mt-4">
           Add some atoms with this tag first
         </p>
       )}

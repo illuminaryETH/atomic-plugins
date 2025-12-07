@@ -38,7 +38,7 @@ export function SemanticSearch() {
       {/* Search icon or loading spinner */}
       {isSearching ? (
         <svg
-          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888] animate-spin"
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)] animate-spin"
           fill="none"
           viewBox="0 0 24 24"
         >
@@ -58,7 +58,7 @@ export function SemanticSearch() {
         </svg>
       ) : (
         <svg
-          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888]"
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -82,7 +82,7 @@ export function SemanticSearch() {
         autoCorrect="off"
         autoCapitalize="off"
         spellCheck={false}
-        className="w-full pl-10 pr-10 py-2 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-colors text-sm"
+        className="w-full pl-10 pr-10 py-2 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors text-sm"
       />
 
       {/* Clear button */}
@@ -92,7 +92,7 @@ export function SemanticSearch() {
             setInputValue('');
             clearSemanticSearch();
           }}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#dcddde] transition-colors"
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path

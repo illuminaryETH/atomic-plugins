@@ -82,7 +82,7 @@ function HighlightedText({ text, matchIndices }: { text: string; matchIndices: n
   for (let i = 0; i < text.length; i++) {
     if (matchSet.has(i)) {
       parts.push(
-        <span key={i} className="text-[#a78bfa] font-semibold">
+        <span key={i} className="text-[var(--color-accent-light)] font-semibold">
           {text[i]}
         </span>
       );
@@ -179,7 +179,7 @@ export function TagSelector({ selectedTags, onTagsChange }: TagSelectorProps) {
 
   return (
     <div className="space-y-2">
-      <label className="block text-sm font-medium text-[#dcddde]">Tags</label>
+      <label className="block text-sm font-medium text-[var(--color-text-primary)]">Tags</label>
       
       {/* Selected tags */}
       {selectedTags.length > 0 && (
@@ -196,7 +196,7 @@ export function TagSelector({ selectedTags, onTagsChange }: TagSelectorProps) {
             {!showAllSelectedTags && hiddenSelectedCount > 0 && (
               <button
                 onClick={() => setShowAllSelectedTags(true)}
-                className="text-sm text-[#888888] hover:text-[#a78bfa] transition-colors px-2"
+                className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-colors px-2"
               >
                 +{hiddenSelectedCount} more
               </button>
@@ -205,7 +205,7 @@ export function TagSelector({ selectedTags, onTagsChange }: TagSelectorProps) {
           {showAllSelectedTags && selectedTags.length > MAX_VISIBLE_TAGS && (
             <button
               onClick={() => setShowAllSelectedTags(false)}
-              className="text-sm text-[#888888] hover:text-[#a78bfa] transition-colors"
+              className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-colors"
             >
               Show less
             </button>
@@ -229,14 +229,14 @@ export function TagSelector({ selectedTags, onTagsChange }: TagSelectorProps) {
 
         {/* Dropdown */}
         {inputValue && (filteredTags.length > 0 || showCreateOption) && (
-          <div className="absolute z-10 w-full mt-1 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md shadow-lg max-h-48 overflow-y-auto">
+          <div className="absolute z-10 w-full mt-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md shadow-lg max-h-48 overflow-y-auto">
             {filteredTags.map((tag) => {
               const matchIndices = matchIndicesMap.get(tag.id) || [];
               return (
                 <button
                   key={tag.id}
                   onClick={() => handleAddTag(tag)}
-                  className="w-full px-3 py-2 text-left text-sm text-[#dcddde] hover:bg-[#3d3d3d] transition-colors"
+                  className="w-full px-3 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
                 >
                   <HighlightedText text={tag.name} matchIndices={matchIndices} />
                 </button>
@@ -246,7 +246,7 @@ export function TagSelector({ selectedTags, onTagsChange }: TagSelectorProps) {
               <button
                 onClick={handleCreateTag}
                 disabled={isCreating}
-                className="w-full px-3 py-2 text-left text-sm text-[#7c3aed] hover:bg-[#3d3d3d] transition-colors flex items-center gap-2"
+                className="w-full px-3 py-2 text-left text-sm text-[var(--color-accent)] hover:bg-[var(--color-bg-hover)] transition-colors flex items-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

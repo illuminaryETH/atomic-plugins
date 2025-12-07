@@ -49,7 +49,7 @@ export function TagSearch() {
   };
 
   return (
-    <div className="px-4 py-3 border-b border-[#3d3d3d]">
+    <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="relative">
         <input
           type="text"
@@ -60,10 +60,10 @@ export function TagSearch() {
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          className="w-full px-3 py-1.5 pl-8 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md text-sm text-[#dcddde] placeholder-[#888888] focus:outline-none focus:ring-1 focus:ring-[#7c3aed] focus:border-transparent"
+          className="w-full px-3 py-1.5 pl-8 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] focus:border-transparent"
         />
         <svg
-          className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888]"
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -74,24 +74,24 @@ export function TagSearch() {
 
       {/* Search Results Dropdown */}
       {searchQuery.trim() && (
-        <div className="absolute left-4 right-4 mt-1 bg-[#2d2d2d] border border-[#3d3d3d] rounded-md shadow-lg z-50 max-h-[300px] overflow-y-auto">
+        <div className="absolute left-4 right-4 mt-1 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md shadow-lg z-50 max-h-[300px] overflow-y-auto">
           {filteredTags.length > 0 ? (
             <div className="py-1">
               {filteredTags.map((tag) => (
                 <button
                   key={tag.id}
                   onClick={() => handleSelectTag(tag.id)}
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-[#3d3d3d] transition-colors flex items-center justify-between"
+                  className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-bg-hover)] transition-colors flex items-center justify-between"
                 >
-                  <span className="text-[#dcddde]">{tag.name}</span>
-                  <span className="text-xs text-[#888888]">
+                  <span className="text-[var(--color-text-primary)]">{tag.name}</span>
+                  <span className="text-xs text-[var(--color-text-secondary)]">
                     {tag.atom_count} {tag.atom_count === 1 ? 'atom' : 'atoms'}
                   </span>
                 </button>
               ))}
             </div>
           ) : (
-            <div className="px-3 py-2 text-sm text-[#888888]">
+            <div className="px-3 py-2 text-sm text-[var(--color-text-secondary)]">
               No tags found
             </div>
           )}

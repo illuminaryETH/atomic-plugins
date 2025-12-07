@@ -60,23 +60,23 @@ export function Modal({
       data-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
     >
-      <div className="bg-[#252525] rounded-lg shadow-xl border border-[#3d3d3d] w-full max-w-md mx-4 animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#3d3d3d]">
-          <h2 className="text-lg font-semibold text-[#dcddde]">{title}</h2>
+      <div className="bg-[var(--color-bg-panel)] rounded-lg shadow-xl border border-[var(--color-border)] w-full max-w-md mx-4 animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)]">{title}</h2>
           <button
             onClick={onClose}
-            className="text-[#888888] hover:text-[#dcddde] transition-colors"
+            className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-        <div className="px-6 py-4 text-[#dcddde]">
+        <div className="px-6 py-4 text-[var(--color-text-primary)]">
           {children}
         </div>
         {showFooter && (
-          <div className="flex justify-end gap-3 px-6 py-4 border-t border-[#3d3d3d]">
+          <div className="flex justify-end gap-3 px-6 py-4 border-t border-[var(--color-border)]">
             <Button variant="secondary" onClick={onClose}>
               {cancelLabel}
             </Button>

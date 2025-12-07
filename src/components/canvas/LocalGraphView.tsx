@@ -141,15 +141,15 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
   if (!localGraph.isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#1e1e1e] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-[var(--color-bg-main)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#3d3d3d]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
         <div className="flex items-center gap-3">
           {/* Back button */}
           {localGraph.navigationHistory.length > 1 && (
             <button
               onClick={goBackLocalGraph}
-              className="p-1.5 rounded hover:bg-[#3d3d3d] text-[#888888] hover:text-[#dcddde]"
+              className="p-1.5 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
               title="Go back"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -157,7 +157,7 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
               </svg>
             </button>
           )}
-          <h2 className="text-[#dcddde] font-medium">
+          <h2 className="text-[var(--color-text-primary)] font-medium">
             Neighborhood: {centerAtomTitle || 'Loading...'}
           </h2>
         </div>
@@ -165,16 +165,16 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
         <div className="flex items-center gap-4">
           {/* Depth toggle */}
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-[#888888]">Depth:</span>
+            <span className="text-[var(--color-text-secondary)]">Depth:</span>
             <button
               onClick={() => setLocalGraphDepth(1)}
-              className={`px-2 py-1 rounded ${localGraph.depth === 1 ? 'bg-[#7c3aed] text-white' : 'bg-[#3d3d3d] text-[#888888]'}`}
+              className={`px-2 py-1 rounded ${localGraph.depth === 1 ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'}`}
             >
               1
             </button>
             <button
               onClick={() => setLocalGraphDepth(2)}
-              className={`px-2 py-1 rounded ${localGraph.depth === 2 ? 'bg-[#7c3aed] text-white' : 'bg-[#3d3d3d] text-[#888888]'}`}
+              className={`px-2 py-1 rounded ${localGraph.depth === 2 ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'}`}
             >
               2
             </button>
@@ -183,7 +183,7 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
           {/* Close button */}
           <button
             onClick={closeLocalGraph}
-            className="p-1.5 rounded hover:bg-[#3d3d3d] text-[#888888] hover:text-[#dcddde]"
+            className="p-1.5 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
             title="Close"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -195,7 +195,7 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
 
       {/* Breadcrumb */}
       {localGraph.navigationHistory.length > 1 && graph && (
-        <div className="px-4 py-2 border-b border-[#3d3d3d] text-sm flex items-center gap-1 overflow-x-auto">
+        <div className="px-4 py-2 border-b border-[var(--color-border)] text-sm flex items-center gap-1 overflow-x-auto">
           {localGraph.navigationHistory.map((atomId, idx) => {
             const atom = graph.atoms.find(a => a.id === atomId);
             const title = atom?.content.split('\n')[0].substring(0, 30) || 'Unknown';
@@ -203,9 +203,9 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
 
             return (
               <span key={atomId} className="flex items-center gap-1 whitespace-nowrap">
-                {idx > 0 && <span className="text-[#666666]">›</span>}
+                {idx > 0 && <span className="text-[var(--color-text-tertiary)]">›</span>}
                 <span
-                  className={`${isLast ? 'text-[#dcddde]' : 'text-[#888888]'}`}
+                  className={`${isLast ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}
                 >
                   {title}{title.length >= 30 ? '...' : ''}
                 </span>
@@ -218,13 +218,13 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
       {/* Graph content */}
       <div className="flex-1 relative overflow-hidden">
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e]/80 z-10">
-            <div className="text-[#888888]">Loading neighborhood...</div>
+          <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-bg-main)]/80 z-10">
+            <div className="text-[var(--color-text-secondary)]">Loading neighborhood...</div>
           </div>
         )}
 
         {error && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e]/80 z-10">
+          <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-bg-main)]/80 z-10">
             <div className="text-red-500">{error}</div>
           </div>
         )}
@@ -250,10 +250,10 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
                     if (!sourceNode || !targetNode) return null;
 
                     const strokeColor = edge.edge_type === 'semantic'
-                      ? '#7c3aed'
+                      ? 'var(--color-accent)'
                       : edge.edge_type === 'both'
-                      ? '#a78bfa'
-                      : '#666666';
+                      ? 'var(--color-accent-light)'
+                      : 'var(--color-text-tertiary)';
 
                     const strokeDash = edge.edge_type === 'semantic' ? '6,3' : undefined;
 
@@ -301,14 +301,14 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
                     >
                       <div
                         className={`
-                          bg-[#2d2d2d] border rounded-md px-3 py-2
+                          bg-[var(--color-bg-card)] border rounded-md px-3 py-2
                           hover:scale-[1.02] transition-all duration-150
                           relative overflow-hidden
                           ${isCenter
-                            ? 'border-[#7c3aed] shadow-[0_0_12px_rgba(124,58,237,0.4)] ring-2 ring-[#7c3aed] ring-opacity-50'
+                            ? 'border-[var(--color-accent)] shadow-[0_0_12px_rgb(var(--color-accent-rgb) / 0.4)] ring-2 ring-[var(--color-accent)] ring-opacity-50'
                             : node.depth === 2
-                            ? 'border-[#4d4d4d] border-dashed'
-                            : 'border-[#3d3d3d] hover:border-[#4d4d4d]'}
+                            ? 'border-[var(--color-border-hover)] border-dashed'
+                            : 'border-[var(--color-border)] hover:border-[var(--color-border-hover)]'}
                         `}
                       >
                         {/* Tag color indicator */}
@@ -322,11 +322,11 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
                         {/* Center indicator */}
                         {isCenter && (
                           <div className="absolute top-1 right-1">
-                            <div className="w-2 h-2 rounded-full bg-[#7c3aed]" />
+                            <div className="w-2 h-2 rounded-full bg-[var(--color-accent)]" />
                           </div>
                         )}
 
-                        <p className={`text-sm text-[#dcddde] line-clamp-2 break-words ${isCenter ? 'font-medium' : ''}`}>
+                        <p className={`text-sm text-[var(--color-text-primary)] line-clamp-2 break-words ${isCenter ? 'font-medium' : ''}`}>
                           {displayText || 'Empty atom'}
                         </p>
 
@@ -336,8 +336,8 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
                             <span
                               className="text-[10px] px-1.5 py-0.5 rounded"
                               style={{
-                                backgroundColor: tagColor ? `${tagColor.replace(')', ', 0.35)')}` : '#3d3d3d',
-                                color: '#e0e0e0'
+                                backgroundColor: tagColor ? `${tagColor.replace(')', ', 0.35)')}` : 'var(--color-bg-hover)',
+                                color: 'var(--color-text-primary)'
                               }}
                             >
                               {primaryTag.name.length > 12
@@ -345,7 +345,7 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
                                 : primaryTag.name}
                             </span>
                             {node.atom.tags.length > 1 && (
-                              <span className="text-[10px] text-[#666666]">
+                              <span className="text-[10px] text-[var(--color-text-tertiary)]">
                                 +{node.atom.tags.length - 1}
                               </span>
                             )}
@@ -362,24 +362,24 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
       </div>
 
       {/* Legend */}
-      <div className="px-4 py-2 border-t border-[#3d3d3d] flex items-center gap-6 text-xs text-[#888888]">
+      <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center gap-6 text-xs text-[var(--color-text-secondary)]">
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded border-2 border-[#7c3aed] bg-[#2d2d2d]" />
+          <div className="w-3 h-3 rounded border-2 border-[var(--color-accent)] bg-[var(--color-bg-card)]" />
           <span>Center atom</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-0.5 bg-[#666666]" />
+          <div className="w-6 h-0.5 bg-[var(--color-text-tertiary)]" />
           <span>Tag connection</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-0.5 bg-[#7c3aed]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #7c3aed 0, #7c3aed 6px, transparent 6px, transparent 9px)' }} />
+          <div className="w-6 h-0.5 bg-[var(--color-accent)]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, var(--color-accent) 0, var(--color-accent) 6px, transparent 6px, transparent 9px)' }} />
           <span>Semantic connection</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-0.5 bg-[#a78bfa]" />
+          <div className="w-6 h-0.5 bg-[var(--color-accent-light)]" />
           <span>Both</span>
         </div>
-        <div className="ml-auto text-[#666666]">
+        <div className="ml-auto text-[var(--color-text-tertiary)]">
           Click to navigate • Double-click to view
         </div>
       </div>

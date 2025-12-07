@@ -7,7 +7,7 @@ interface FABProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 export function FAB({ icon, className = '', ...props }: FABProps) {
   return (
     <button
-      className={`fixed bottom-6 right-6 w-14 h-14 bg-[#7c3aed] hover:bg-[#6d28d9] text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:ring-offset-2 focus:ring-offset-[#1e1e1e] ${className}`}
+      className={`fixed bottom-6 right-6 w-14 h-14 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white rounded-full shadow-lg flex items-center justify-center transition-all duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2 focus:ring-offset-[var(--color-bg-main)] ${className}`}
       {...props}
     >
       {icon || (

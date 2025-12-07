@@ -6,7 +6,7 @@ export function SettingsButton({ onClick }: SettingsButtonProps) {
   return (
     <button
       onClick={onClick}
-      className="p-1.5 text-[#888888] hover:text-[#dcddde] hover:bg-[#3d3d3d] rounded transition-colors"
+      className="p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] rounded transition-colors"
       title="Settings"
     >
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

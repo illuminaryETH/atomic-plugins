@@ -9,9 +9,21 @@ import { useAtomsStore, type AtomWithTags } from '../../stores/atoms';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { useKeyboard } from '../../hooks/useKeyboard';
 
+// Benchmarking helper
+const PERF_DEBUG = true;
+const perfLog = (label: string, startTime?: number) => {
+  if (!PERF_DEBUG) return;
+  if (startTime !== undefined) {
+    console.log(`[RightDrawer] ${label}: ${(performance.now() - startTime).toFixed(2)}ms`);
+  } else {
+    console.log(`[RightDrawer] ${label}`);
+  }
+};
+
 export function RightDrawer() {
   const { drawerState, closeDrawer, openDrawer } = useUIStore();
   const drawerRef = useRef<HTMLDivElement>(null);
+  const openTimeRef = useRef<number | null>(null);
 
   const { isOpen, mode, atomId, tagId, tagName, conversationId } = drawerState;
 
@@ -23,17 +35,47 @@ export function RightDrawer() {
     atomId ? s.atoms.find((a) => a.id === atomId) : undefined
   );
 
+  // Track drawer open/close timing
+  const closeStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isOpen) {
+      openTimeRef.current = performance.now();
+      perfLog(`Drawer OPENING (mode=${mode}, atomId=${atomId?.slice(0, 8)}...)`);
+    } else if (openTimeRef.current !== null) {
+      perfLog('Drawer CLOSED, total open duration', openTimeRef.current);
+      openTimeRef.current = null;
+    }
+  }, [isOpen, mode, atomId]);
+
+  // Track when isOpen changes to false (close initiated)
+  useEffect(() => {
+    if (!isOpen && closeStartRef.current === null && drawerState.mode) {
+      closeStartRef.current = performance.now();
+      perfLog('Close INITIATED - starting render cycle');
+    } else if (isOpen) {
+      closeStartRef.current = null;
+    }
+  });
+
   // Fetch atom from database when viewing
   useEffect(() => {
     if (mode === 'viewer' && atomId) {
+      const fetchStart = performance.now();
+      perfLog('Atom fetch START');
       setIsLoadingAtom(true);
       invoke<AtomWithTags | null>('get_atom_by_id', { id: atomId })
         .then((fetchedAtom) => {
+          perfLog('Atom fetch COMPLETE', fetchStart);
+          if (fetchedAtom) {
+            perfLog(`  Content length: ${fetchedAtom.content.length} chars`);
+            perfLog(`  Tags: ${fetchedAtom.tags.length}`);
+          }
           setAtom(fetchedAtom);
           setIsLoadingAtom(false);
         })
         .catch((error) => {
           console.error('Failed to fetch atom:', error);
+          perfLog('Atom fetch FAILED', fetchStart);
           setAtom(null);
           setIsLoadingAtom(false);
         });
@@ -74,40 +116,78 @@ export function RightDrawer() {
   }, [atomId, openDrawer]);
 
   const renderContent = () => {
+    const renderStart = performance.now();
+    let result: React.ReactNode = null;
+    let contentType = 'unknown';
+
     switch (mode) {
       case 'editor':
-        return <AtomEditor atomId={atomId} onClose={closeDrawer} />;
+        if (!isOpen) {
+          contentType = 'editor-closing';
+          result = null;
+          break;
+        }
+        contentType = 'editor';
+        result = <AtomEditor atomId={atomId} onClose={closeDrawer} />;
+        break;
       case 'viewer':
+        // Don't render heavy content when drawer is closing - allows smooth animation
+        if (!isOpen) {
+          contentType = 'viewer-closing';
+          result = null;
+          break;
+        }
         if (isLoadingAtom) {
-          return (
-            <div className="flex items-center justify-center h-full text-[#888888]">
+          contentType = 'viewer-loading';
+          result = (
+            <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)]">
               Loading...
             </div>
           );
+          break;
         }
         if (!atom) {
-          return (
-            <div className="flex items-center justify-center h-full text-[#888888]">
+          contentType = 'viewer-not-found';
+          result = (
+            <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)]">
               Atom not found
             </div>
           );
+          break;
         }
-        return <AtomViewer atom={atom} onClose={closeDrawer} onEdit={handleEdit} />;
+        contentType = 'viewer-atom';
+        result = <AtomViewer atom={atom} onClose={closeDrawer} onEdit={handleEdit} />;
+        break;
       case 'wiki':
+        if (!isOpen) {
+          contentType = 'wiki-closing';
+          result = null;
+          break;
+        }
         if (!tagId || !tagName) {
-          return (
-            <div className="flex items-center justify-center h-full text-[#888888]">
+          contentType = 'wiki-no-tag';
+          result = (
+            <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)]">
               No tag selected
             </div>
           );
+          break;
         }
-        return <WikiViewer tagId={tagId} tagName={tagName} />;
+        contentType = 'wiki';
+        result = <WikiViewer tagId={tagId} tagName={tagName} />;
+        break;
       case 'chat':
+        contentType = 'chat';
         // Only render when open to ensure proper initialization on each open
-        return isOpen ? <ChatViewer initialTagId={tagId} initialConversationId={conversationId} /> : null;
+        result = isOpen ? <ChatViewer initialTagId={tagId} initialConversationId={conversationId} /> : null;
+        break;
       default:
-        return null;
+        contentType = 'null';
+        result = null;
     }
+
+    perfLog(`renderContent (${contentType}) JSX creation`, renderStart);
+    return result;
   };
 
   return (
@@ -122,9 +202,10 @@ export function RightDrawer() {
       {/* Drawer */}
       <div
         ref={drawerRef}
-        className={`fixed top-0 right-0 h-full w-[75vw] min-w-[600px] max-w-[1200px] bg-[#252525] border-l border-[#3d3d3d] shadow-2xl z-50 transition-transform duration-200 ease-out ${
+        className={`fixed top-0 right-0 h-full w-[75vw] min-w-[600px] max-w-[1200px] bg-[var(--color-bg-panel)] border-l border-[var(--color-border)] shadow-2xl z-50 transition-transform duration-200 ease-out ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
+        style={{ backdropFilter: 'blur(var(--backdrop-blur))' }}
       >
         {renderContent()}
       </div>
