@@ -4,6 +4,15 @@ A personal knowledge base with AI-powered semantic search, wiki synthesis, and c
 
 Atomic stores knowledge as "atoms" — markdown notes that are automatically embedded for semantic search. Your atoms can be synthesized into wiki articles, explored on an interactive canvas, and queried through a conversational chat interface.
 
+![Canvas View](./docs/images/canvas.png)
+*Canvas view with spatial arrangement based on semantic similarity*
+
+![Wiki Synthesis](./docs/images/wiki.png)
+*Auto-generated wiki articles with inline citations*
+
+![Chat Interface](./docs/images/chat.png)
+*Conversational RAG interface with tool-calling agent*
+
 ## Features
 
 - **Atoms** — Markdown notes as atomic units of knowledge with hierarchical tagging
@@ -94,7 +103,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
     chat.rs         # Chat/conversation management
     agent.rs        # Agentic chat loop with tool calling
     /mcp            # MCP server implementation
-    /providers      # AI provider abstraction (OpenRouter)
+    /providers      # AI provider abstraction (OpenRouter, Ollama)
 /src                # React frontend
   /components
     /layout         # LeftPanel, MainView, RightDrawer
