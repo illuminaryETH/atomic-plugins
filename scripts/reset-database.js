@@ -125,7 +125,8 @@ function clearDatabase(db, dryRun = false) {
 function insertDefaultTags(db) {
   console.log('\nInserting default tags...');
 
-  const defaultTags = ['People', 'Concepts', 'Places', 'Organizations'];
+  // Must match categories in db.rs and scripts/reset-tags.js
+  const defaultTags = ['Topics', 'People', 'Locations', 'Organizations', 'Events'];
   const now = new Date().toISOString();
 
   const insertTag = db.prepare('INSERT INTO tags (id, name, parent_id, created_at) VALUES (?, ?, ?, ?)');

@@ -231,6 +231,12 @@ impl Database {
         // Create vec_chunks virtual table for sqlite-vec similarity search
         Self::create_vec_chunks_table(conn)?;
 
+        // Create FTS5 virtual table for keyword search
+        Self::create_fts_table(conn)?;
+
+        // Backfill FTS5 table with existing chunks (if any)
+        Self::backfill_fts_table(conn)?;
+
         // Insert default top-level tags if they don't exist
         Self::insert_default_tags(conn)?;
 
@@ -322,9 +328,55 @@ impl Database {
         Ok(())
     }
 
+    fn create_fts_table(conn: &Connection) -> Result<(), String> {
+        // Create FTS5 virtual table for keyword/BM25 search
+        // Using porter tokenizer for English stemming (matches "run", "running", "ran")
+        // unicode61 handles non-ASCII characters properly
+        // UNINDEXED columns are stored but not searchable
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS atom_chunks_fts USING fts5(
+                chunk_id UNINDEXED,
+                atom_id UNINDEXED,
+                content,
+                chunk_index UNINDEXED,
+                tokenize = 'porter unicode61'
+            )",
+            [],
+        )
+        .map_err(|e| format!("Failed to create atom_chunks_fts table: {}", e))?;
+
+        Ok(())
+    }
+
+    fn backfill_fts_table(conn: &Connection) -> Result<(), String> {
+        // Check if FTS table needs backfilling by comparing counts
+        let fts_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM atom_chunks_fts", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let chunks_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM atom_chunks", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        // Only backfill if FTS is empty but chunks exist
+        if fts_count == 0 && chunks_count > 0 {
+            conn.execute(
+                "INSERT INTO atom_chunks_fts (chunk_id, atom_id, content, chunk_index)
+                 SELECT id, atom_id, content, chunk_index FROM atom_chunks",
+                [],
+            )
+            .map_err(|e| format!("Failed to backfill FTS table: {}", e))?;
+
+            eprintln!("Backfilled {} chunks into FTS5 table", chunks_count);
+        }
+
+        Ok(())
+    }
+
     fn insert_default_tags(conn: &Connection) -> Result<(), String> {
-        // Default top-level tags to guide the LLM when creating new tags
-        let default_tags = vec!["People", "Concepts", "Places", "Organizations"];
+        // Default top-level category tags for auto-tagging
+        // These must match the categories in scripts/reset-tags.js and scripts/reset-database.js
+        let default_tags = vec!["Topics", "People", "Locations", "Organizations", "Events"];
         let now = chrono::Utc::now().to_rfc3339();
 
         for tag_name in default_tags {
@@ -418,6 +470,10 @@ pub fn recreate_vec_chunks_with_dimension(conn: &Connection, dimension: usize) -
     // Clear all existing chunk data since it's invalid with new dimensions
     conn.execute("DELETE FROM atom_chunks", [])
         .map_err(|e| format!("Failed to clear atom_chunks: {}", e))?;
+
+    // Clear FTS5 table since it mirrors atom_chunks
+    conn.execute("DELETE FROM atom_chunks_fts", [])
+        .map_err(|e| format!("Failed to clear atom_chunks_fts: {}", e))?;
 
     // Clear semantic edges since they depend on embeddings
     conn.execute("DELETE FROM semantic_edges", [])

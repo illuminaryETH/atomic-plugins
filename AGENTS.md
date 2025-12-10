@@ -28,16 +28,30 @@ Atomic is a Tauri v2 desktop application for note-taking with a React frontend. 
     main.rs           # Tauri entry point
     lib.rs            # App setup, command registration
     db.rs             # SQLite setup, migrations
-    commands.rs       # All Tauri command implementations
     models.rs         # Rust structs for data
     chunking.rs       # Content chunking algorithm
     embedding.rs      # Embedding generation + tag extraction pipeline
     extraction.rs     # Tag extraction logic using provider abstraction
+    search.rs         # Unified search (semantic, keyword, hybrid)
     wiki.rs           # Wiki article generation and update logic
     settings.rs       # Settings CRUD operations
     chat.rs           # Conversation CRUD and scope management
     agent.rs          # Agentic chat loop with tool calling and streaming
     clustering.rs     # Atom clustering for canvas visualization
+    compaction.rs     # Tag compaction using LLM
+    /commands         # Tauri command implementations (organized by domain)
+      mod.rs          # Re-exports all commands
+      helpers.rs      # Shared helper functions
+      atoms.rs        # Atom CRUD operations
+      tags.rs         # Tag CRUD operations
+      embedding.rs    # Embedding and search commands
+      settings.rs     # Settings and model discovery
+      wiki.rs         # Wiki article operations
+      canvas.rs       # Canvas position management
+      graph.rs        # Semantic graph operations
+      clustering.rs   # Clustering commands
+      ollama.rs       # Ollama-specific commands
+      utils.rs        # Utility commands (sqlite-vec check, tag compaction)
     /providers        # Pluggable AI provider abstraction
       mod.rs          # Module exports
       types.rs        # Message, ToolCall, CompletionResponse, StreamDelta, etc.
@@ -247,6 +261,33 @@ CREATE TABLE chat_citations (
   relevance_score REAL
 );
 
+-- Semantic edges for graph visualization (pre-computed during embedding)
+CREATE TABLE semantic_edges (
+  id TEXT PRIMARY KEY,
+  source_atom_id TEXT NOT NULL REFERENCES atoms(id) ON DELETE CASCADE,
+  target_atom_id TEXT NOT NULL REFERENCES atoms(id) ON DELETE CASCADE,
+  similarity_score REAL NOT NULL,
+  source_chunk_index INTEGER,
+  target_chunk_index INTEGER,
+  created_at TEXT NOT NULL,
+  UNIQUE(source_atom_id, target_atom_id)
+);
+
+-- Atom cluster assignments for visual grouping
+CREATE TABLE atom_clusters (
+  atom_id TEXT PRIMARY KEY REFERENCES atoms(id) ON DELETE CASCADE,
+  cluster_id INTEGER NOT NULL,
+  computed_at TEXT NOT NULL
+);
+
+-- FTS5 virtual table for keyword search
+CREATE VIRTUAL TABLE atom_chunks_fts USING fts5(
+  chunk_id,
+  content,
+  content='atom_chunks',
+  content_rowid='rowid'
+);
+
 ```
 
 ### Settings Keys
@@ -280,11 +321,15 @@ Note: LLM models are restricted to those supporting structured outputs via OpenR
 - `update_tag(id, name, parent_id?)` → `Tag`
 - `delete_tag(id)` → `()`
 
-### Embedding Operations
+### Embedding & Search Operations
 - `find_similar_atoms(atom_id, limit, threshold)` → `Vec<SimilarAtomResult>`
-- `search_atoms_semantic(query, limit, threshold)` → `Vec<SemanticSearchResult>`
+- `search_atoms_semantic(query, limit, threshold)` → `Vec<SemanticSearchResult>` (vector similarity)
+- `search_atoms_keyword(query, limit)` → `Vec<SemanticSearchResult>` (FTS5/BM25)
+- `search_atoms_hybrid(query, limit, threshold)` → `Vec<SemanticSearchResult>` (combined BM25 + vector)
 - `retry_embedding(atom_id)` → `()` (retriggers embedding for failed atoms)
+- `reset_stuck_processing()` → `i32` (reset atoms stuck in 'processing' state)
 - `process_pending_embeddings()` → `i32` (processes all pending atoms, returns count)
+- `process_pending_tagging()` → `i32` (processes pending tag extraction)
 - `get_embedding_status(atom_id)` → `String`
 
 ### Wiki Operations
@@ -298,6 +343,7 @@ Note: LLM models are restricted to those supporting structured outputs via OpenR
 - `get_settings()` → `HashMap<String, String>` (all settings)
 - `set_setting(key, value)` → `()` (upsert a setting)
 - `test_openrouter_connection(apiKey)` → `Result<bool, String>` (validates API key)
+- `get_available_llm_models()` → `Vec<AvailableModel>` (fetch models supporting structured outputs)
 
 ### Canvas Operations
 - `get_atom_positions()` → `Vec<AtomPosition>` (returns all stored canvas positions)
@@ -315,8 +361,26 @@ Note: LLM models are restricted to those supporting structured outputs via OpenR
 - `remove_tag_from_scope(conversation_id, tag_id)` → `ConversationWithTags` (remove single tag from scope)
 - `send_chat_message(conversation_id, content)` → `ChatMessageWithContext` (send message, triggers agent loop)
 
-### Utility
+### Semantic Graph Operations
+- `get_semantic_edges(min_similarity)` → `Vec<SemanticEdge>` (all edges above threshold)
+- `get_atom_neighborhood(atom_id, depth, min_similarity)` → `NeighborhoodGraph` (local graph view)
+- `rebuild_semantic_edges()` → `i32` (rebuild all edges, for migrations)
+
+### Clustering Operations
+- `compute_clusters(min_similarity?, min_cluster_size?)` → `Vec<AtomCluster>` (compute and cache clusters)
+- `get_clusters()` → `Vec<AtomCluster>` (get cached clusters or compute if missing)
+- `get_connection_counts(min_similarity?)` → `HashMap<String, i32>` (hub identification)
+
+### Ollama Operations
+- `test_ollama(host)` → `bool` (test connection to Ollama server)
+- `get_ollama_models(host)` → `Vec<OllamaModel>` (all models with categorization)
+- `get_ollama_embedding_models_cmd(host)` → `Vec<AvailableModel>` (embedding models only)
+- `get_ollama_llm_models_cmd(host)` → `Vec<AvailableModel>` (LLM models only)
+- `verify_provider_configured()` → `bool` (check if provider has required settings)
+
+### Utility Operations
 - `check_sqlite_vec()` → `String` (version check)
+- `compact_tags()` → `CompactionResult` (LLM-assisted tag categorization and merging)
 
 ## Tauri Events
 

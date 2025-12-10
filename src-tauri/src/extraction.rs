@@ -52,19 +52,22 @@ Examples:
 
 Be conservative - only consolidate when truly warranted."#;
 
-const SYSTEM_PROMPT: &str = r#"You are a knowledge management assistant that categorizes text into a tag hierarchy.
+const SYSTEM_PROMPT: &str = r#"You are a knowledge management assistant that categorizes text with tags.
+
+PURPOSE OF TAGS:
+Tags help users navigate and filter their content. Users can browse by tag and generate wiki articles that synthesize all content under a tag. Only add a tag if you believe strongly that the user would want this content categorized and filterable by that tag.
 
 IMPORTANT:
-- Return ALL tags that apply to this text
-- Each tag has a name and optional parent_name. 
+- Each tag MUST have a parent_name set to one of the existing top-level categories shown below
+- DO NOT create new top-level categories - only use the ones provided
 - Tag names are case-insensitive and globally unique
-- Use existing tags from the hierarchy when applicable
-- Always prefer adding specific tags to existing categories rather than adding them as top-level tags.
+
+The tags listed below are a sample of commonly-used tags included as a point of reference for the kinds of tags in this system.
 
 HIERARCHY STRUCTURE:
-- Level 1: Categories (e.g., "Topics", "People", "Locations", "Organizations", "Events")
+- Level 1: Categories (shown below) - use ONLY these existing categories as parent_name
 - Level 2: Specific tags (e.g., "AI", "John Smith", "San Francisco")
-- Keep it flat: 2 levels maximum
+- Maximum 2 levels - no deeper nesting
 
 EXAMPLES:
 - {"name": "AI", "parent_name": "Topics"}
@@ -72,10 +75,9 @@ EXAMPLES:
 - {"name": "San Francisco", "parent_name": "Locations"}
 
 Guidelines:
-- Use existing tags from the provided hierarchy when possible
-- Create new tags only when needed
+- Create new Level 2 tags under existing categories when needed
 - Prefer broad tags like "John Smith" rather than overly specific tags such as "Early Life of John Smith"
-- Only include tags you're confident are relevant"#;
+- Every tag must have a valid parent_name from the top-level categories"#;
 
 /// Extract tags from a single chunk using LLM provider
 pub async fn extract_tags_from_chunk(
@@ -179,73 +181,71 @@ pub async fn extract_tags_from_chunk(
 }
 
 /// Get simplified tag tree for LLM (tree format like `tree` CLI)
-/// This exposes only tag names to the LLM without internal database IDs
+/// This exposes only tag names to the LLM without internal database IDs.
+///
+/// To reduce LLM confusion with large tag hierarchies, this function:
+/// 1. Shows only top-level category tags (parent_id IS NULL)
+/// 2. For each category, shows only the top 10 most-used child tags (by atom count)
+/// 3. Excludes any tags at Level 3 or deeper
 pub fn get_tag_tree_for_llm(conn: &Connection) -> Result<String, String> {
-    // Get all tags
-    let mut stmt = conn
-        .prepare("SELECT id, name, parent_id FROM tags ORDER BY name")
-        .map_err(|e| format!("Failed to prepare tag query: {}", e))?;
+    // Step 1: Get top-level category tags
+    let mut top_level_stmt = conn
+        .prepare("SELECT id, name FROM tags WHERE parent_id IS NULL ORDER BY name")
+        .map_err(|e| format!("Failed to prepare top-level tag query: {}", e))?;
 
-    let tags: Vec<(String, String, Option<String>)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .map_err(|e| format!("Failed to query tags: {}", e))?
+    let top_level_tags: Vec<(String, String)> = top_level_stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| format!("Failed to query top-level tags: {}", e))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to collect tags: {}", e))?;
+        .map_err(|e| format!("Failed to collect top-level tags: {}", e))?;
 
-    if tags.is_empty() {
+    if top_level_tags.is_empty() {
         return Ok("(no existing tags)".to_string());
     }
 
-    // Build tree string in `tree` CLI format
-    fn get_children(tags: &[(String, String, Option<String>)], parent_id: Option<&str>) -> Vec<(String, String)> {
-        tags.iter()
-            .filter(|(_, _, pid)| pid.as_deref() == parent_id)
-            .map(|(id, name, _)| (id.clone(), name.clone()))
-            .collect()
-    }
+    // Step 2: For each top-level tag, get top 10 most-used child tags by atom count
+    let mut result = String::new();
 
-    fn build_tree_string(
-        tags: &[(String, String, Option<String>)],
-        parent_id: Option<&str>,
-        prefix: &str,
-        is_root: bool,
-    ) -> String {
-        let children = get_children(tags, parent_id);
-        let mut result = String::new();
+    for (i, (parent_id, parent_name)) in top_level_tags.iter().enumerate() {
+        // Add the top-level category
+        result.push_str(parent_name);
+        result.push('\n');
 
-        for (i, (id, name)) in children.iter().enumerate() {
-            let is_last_child = i == children.len() - 1;
+        // Query top 10 children by atom count
+        let mut children_stmt = conn
+            .prepare(
+                "SELECT t.name, COUNT(at.atom_id) as atom_count
+                 FROM tags t
+                 LEFT JOIN atom_tags at ON t.id = at.tag_id
+                 WHERE t.parent_id = ?1
+                 GROUP BY t.id
+                 ORDER BY atom_count DESC, t.name ASC
+                 LIMIT 10",
+            )
+            .map_err(|e| format!("Failed to prepare children query: {}", e))?;
 
-            if is_root {
-                // Root level tags have no prefix
-                result.push_str(name);
-                result.push('\n');
-            } else {
-                // Child tags use tree characters
-                let connector = if is_last_child { "└── " } else { "├── " };
-                result.push_str(prefix);
-                result.push_str(connector);
-                result.push_str(name);
-                result.push('\n');
-            }
+        let children: Vec<String> = children_stmt
+            .query_map([parent_id], |row| row.get(0))
+            .map_err(|e| format!("Failed to query children: {}", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to collect children: {}", e))?;
 
-            // Recurse for children
-            let new_prefix = if is_root {
-                "".to_string()
-            } else if is_last_child {
-                format!("{}    ", prefix)
-            } else {
-                format!("{}│   ", prefix)
-            };
-
-            result.push_str(&build_tree_string(tags, Some(id), &new_prefix, false));
+        // Add children with tree formatting
+        for (j, child_name) in children.iter().enumerate() {
+            let is_last_child = j == children.len() - 1;
+            let connector = if is_last_child { "└── " } else { "├── " };
+            result.push_str(connector);
+            result.push_str(child_name);
+            result.push('\n');
         }
 
-        result
+        // Add blank line between categories (except after the last one)
+        if i < top_level_tags.len() - 1 && !children.is_empty() {
+            // No extra blank line needed, tree structure is clear
+        }
     }
 
-    let tree_string = build_tree_string(&tags, None, "", true);
-    Ok(tree_string.trim_end().to_string())
+    Ok(result.trim_end().to_string())
 }
 
 /// Link tags to an atom (append to existing tags)
@@ -294,8 +294,12 @@ pub fn tag_names_to_ids(conn: &Connection, names: &[String]) -> Result<TagLookup
     })
 }
 
-/// Get tag ID by name, or create it if it doesn't exist
-/// Also ensures parent tag exists if parent_name is provided (recursive)
+/// Get tag ID by name, or create it if it doesn't exist.
+///
+/// For new tags:
+/// - `parent_name` is REQUIRED and must be an existing top-level category
+/// - No new top-level categories can be created
+/// - Returns an error if parent is missing or invalid (caller handles gracefully)
 pub fn get_or_create_tag(
     conn: &Connection,
     tag_name: &str,
@@ -308,38 +312,50 @@ pub fn get_or_create_tag(
         return Err(format!("Invalid tag name: '{}'", tag_name));
     }
 
-    // Try to find existing tag
-    if let Ok(existing_id) = conn
-        .query_row(
-            "SELECT id FROM tags WHERE LOWER(name) = LOWER(?1)",
-            [trimmed_name],
-            |row| row.get(0),
-        )
-    {
+    // Try to find existing tag (case-insensitive)
+    if let Ok(existing_id) = conn.query_row(
+        "SELECT id FROM tags WHERE LOWER(name) = LOWER(?1)",
+        [trimmed_name],
+        |row| row.get::<_, String>(0),
+    ) {
         return Ok(existing_id);
     }
 
-    // Tag doesn't exist, create it
-    let parent_id = if let Some(parent) = parent_name {
-        let trimmed_parent = parent.trim();
-        // Skip invalid parent names
-        if !trimmed_parent.is_empty() && !trimmed_parent.eq_ignore_ascii_case("null") {
-            // Ensure parent exists (recursively create if needed)
-            Some(get_or_create_tag(conn, trimmed_parent, &None)?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    // Tag doesn't exist - require a valid parent for new tags
+    let parent = parent_name
+        .as_ref()
+        .ok_or_else(|| format!("New tag '{}' requires a parent category", trimmed_name))?;
 
-    // Create the tag
+    let trimmed_parent = parent.trim();
+    if trimmed_parent.is_empty() || trimmed_parent.eq_ignore_ascii_case("null") {
+        return Err(format!(
+            "New tag '{}' requires a valid parent category",
+            trimmed_name
+        ));
+    }
+
+    // Parent must be an existing top-level tag (parent_id IS NULL)
+    // No recursive creation - parent must already exist as a category
+    let parent_id: String = conn
+        .query_row(
+            "SELECT id FROM tags WHERE LOWER(name) = LOWER(?1) AND parent_id IS NULL",
+            [trimmed_parent],
+            |row| row.get(0),
+        )
+        .map_err(|_| {
+            format!(
+                "Parent '{}' is not a valid top-level category for tag '{}'",
+                trimmed_parent, trimmed_name
+            )
+        })?;
+
+    // Create the tag under the validated parent
     let tag_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
         "INSERT INTO tags (id, name, parent_id, created_at) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![&tag_id, trimmed_name, parent_id, &now],
+        rusqlite::params![&tag_id, trimmed_name, &parent_id, &now],
     )
     .map_err(|e| format!("Failed to create tag '{}': {}", trimmed_name, e))?;
 

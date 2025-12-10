@@ -1,6 +1,5 @@
-export function truncateContent(content: string, maxLength: number = 150): string {
-  // Remove markdown syntax for preview
-  const plainText = content
+function stripMarkdown(text: string): string {
+  return text
     .replace(/#{1,6}\s/g, '') // Remove headers
     .replace(/\*\*([^*]+)\*\*/g, '$1') // Remove bold
     .replace(/\*([^*]+)\*/g, '$1') // Remove italic
@@ -8,14 +7,40 @@ export function truncateContent(content: string, maxLength: number = 150): strin
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Remove links
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, '') // Remove images
     .replace(/```[\s\S]*?```/g, '') // Remove code blocks
-    .replace(/\n+/g, ' ') // Replace newlines with spaces
     .trim();
+}
+
+export function truncateContent(content: string, maxLength: number = 150): string {
+  const plainText = stripMarkdown(content).replace(/\n+/g, ' ').trim();
 
   if (plainText.length <= maxLength) {
     return plainText;
   }
 
   return plainText.slice(0, maxLength).trim() + '...';
+}
+
+export function extractTitleAndSnippet(content: string, snippetMaxLength: number = 120): { title: string; snippet: string } {
+  const lines = content.split('\n').filter(line => line.trim().length > 0);
+
+  if (lines.length === 0) {
+    return { title: '', snippet: '' };
+  }
+
+  const title = stripMarkdown(lines[0]).trim();
+
+  if (lines.length === 1) {
+    return { title, snippet: '' };
+  }
+
+  const restContent = lines.slice(1).join(' ');
+  const snippet = stripMarkdown(restContent).replace(/\n+/g, ' ').trim();
+
+  if (snippet.length <= snippetMaxLength) {
+    return { title, snippet };
+  }
+
+  return { title, snippet: snippet.slice(0, snippetMaxLength).trim() + '...' };
 }
 
 export function isValidUrl(url: string): boolean {

@@ -97,9 +97,11 @@ export function CitationPopover({ citation, anchorRect, onClose, onViewAtom }: C
   }
 
   // Render in a portal to avoid transform containment issues
+  // data-modal="true" prevents RightDrawer's useClickOutside from closing the drawer
   return createPortal(
     <div
       ref={popoverRef}
+      data-modal="true"
       className="fixed z-[100] w-[400px] max-w-[calc(100vw-16px)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg shadow-xl"
       style={{ top: position.top, left: position.left }}
     >

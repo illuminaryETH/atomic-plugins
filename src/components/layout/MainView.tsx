@@ -12,6 +12,7 @@ export function MainView() {
     atoms,
     semanticSearchResults,
     semanticSearchQuery,
+    searchMode,
     retryEmbedding,
   } = useAtomsStore();
   const { viewMode, setViewMode, searchQuery, selectedTagId, openDrawer, openChatDrawer, highlightedAtomId, setHighlightedAtom } = useUIStore();
@@ -52,9 +53,21 @@ export function MainView() {
   };
 
   const handleAtomClick = (atomId: string) => {
-    // Pass matching chunk content for highlighting when coming from semantic search
-    const matchingContent = getMatchingChunkContent(atomId);
-    openDrawer('viewer', atomId, matchingContent);
+    // Pass highlight text based on search mode:
+    // - Keyword: highlight the search query terms
+    // - Semantic: highlight the matching chunk content
+    // - Hybrid: highlight the search query (prioritize keywords over chunk)
+    let highlightText: string | undefined;
+    if (isSemanticSearch) {
+      if (searchMode === 'keyword' || searchMode === 'hybrid') {
+        // For keyword/hybrid, highlight the actual search terms
+        highlightText = semanticSearchQuery;
+      } else {
+        // For semantic, highlight the matching chunk
+        highlightText = getMatchingChunkContent(atomId);
+      }
+    }
+    openDrawer('viewer', atomId, highlightText);
   };
 
   const handleNewAtom = () => {
@@ -82,8 +95,13 @@ export function MainView() {
         {/* Semantic Search */}
         <SemanticSearch />
 
+        {/* Atom count */}
+        <span className="text-sm text-[var(--color-text-secondary)] shrink-0">
+          {displayAtoms.length} atom{displayAtoms.length !== 1 ? 's' : ''}
+        </span>
+
         {/* View Mode Toggle */}
-        <div className="flex items-center bg-[var(--color-bg-card)] rounded-md border border-[var(--color-border)]">
+        <div className="flex items-center bg-[var(--color-bg-card)] rounded-md border border-[var(--color-border)] shrink-0 ml-auto">
           <button
             onClick={() => setViewMode('canvas')}
             className={`p-2 rounded-l-md transition-colors ${
@@ -139,14 +157,6 @@ export function MainView() {
             </svg>
           </button>
         </div>
-
-        {/* Atom count */}
-        <span className="text-sm text-[var(--color-text-secondary)]">
-          {displayAtoms.length} atom{displayAtoms.length !== 1 ? 's' : ''}
-        </span>
-
-        {/* Spacer */}
-        <div className="flex-1" />
 
         {/* Chat button */}
         <button

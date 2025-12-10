@@ -11,6 +11,7 @@ mod http_server;
 mod mcp;
 mod models;
 mod providers;
+mod search;
 mod settings;
 mod wiki;
 
@@ -80,6 +81,8 @@ pub fn run() {
             commands::check_sqlite_vec,
             commands::find_similar_atoms,
             commands::search_atoms_semantic,
+            commands::search_atoms_keyword,
+            commands::search_atoms_hybrid,
             commands::retry_embedding,
             commands::reset_stuck_processing,
             commands::process_pending_embeddings,

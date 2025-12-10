@@ -9,6 +9,7 @@ use crate::providers::traits::{
 use crate::providers::types::{CompletionResponse, Message, ToolDefinition};
 use async_trait::async_trait;
 use reqwest::Client;
+use std::time::Duration;
 
 /// OpenRouter provider implementation
 /// Supports embeddings, chat completions, streaming, tool calling, and structured outputs
@@ -20,8 +21,13 @@ pub struct OpenRouterProvider {
 
 impl OpenRouterProvider {
     pub fn new(api_key: String) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client: Client::new(),
+            client,
             api_key,
             base_url: "https://openrouter.ai/api/v1".to_string(),
         }

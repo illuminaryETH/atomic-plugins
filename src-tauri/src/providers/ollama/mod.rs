@@ -9,6 +9,7 @@ use crate::providers::traits::{
 use crate::providers::types::{CompletionResponse, Message, ToolDefinition};
 use async_trait::async_trait;
 use reqwest::Client;
+use std::time::Duration;
 
 /// Default Ollama server URL
 pub const DEFAULT_OLLAMA_HOST: &str = "http://127.0.0.1:11434";
@@ -22,8 +23,13 @@ pub struct OllamaProvider {
 
 impl OllamaProvider {
     pub fn new(base_url: Option<String>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
         Self {
-            client: Client::new(),
+            client,
             base_url: base_url.unwrap_or_else(|| DEFAULT_OLLAMA_HOST.to_string()),
         }
     }

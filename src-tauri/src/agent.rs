@@ -90,7 +90,10 @@ async fn execute_search_atoms(
     limit: i32,
     scope_tag_ids: &[String],
 ) -> Result<Vec<SemanticSearchResult>, String> {
-    crate::commands::search_atoms_semantic_impl(db, query, limit, 0.3, scope_tag_ids).await
+    let options = crate::search::SearchOptions::new(query, crate::search::SearchMode::Semantic, limit)
+        .with_threshold(0.3)
+        .with_scope(scope_tag_ids.to_vec());
+    crate::search::search_atoms(db, options).await
 }
 
 fn execute_get_atom(db: &Database, atom_id: &str) -> Result<Option<String>, String> {

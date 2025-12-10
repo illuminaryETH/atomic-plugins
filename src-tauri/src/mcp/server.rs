@@ -42,16 +42,12 @@ impl AtomicMcpServer {
         let limit = params.limit.unwrap_or(10).min(50);
         let threshold = params.threshold.unwrap_or(0.3).clamp(0.0, 1.0);
 
-        // Use existing search implementation
-        let results = commands::search_atoms_semantic_impl(
-            &self.db,
-            &params.query,
-            limit,
-            threshold,
-            &[], // No scope filtering for MCP
-        )
-        .await
-        .map_err(|e| ErrorData::internal_error(e, None))?;
+        // Use unified search module
+        let options = crate::search::SearchOptions::new(&params.query, crate::search::SearchMode::Semantic, limit)
+            .with_threshold(threshold);
+        let results = crate::search::search_atoms(&self.db, options)
+            .await
+            .map_err(|e| ErrorData::internal_error(e, None))?;
 
         let search_results: Vec<SearchResult> = results
             .into_iter()

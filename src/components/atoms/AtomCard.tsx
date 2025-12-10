@@ -1,6 +1,6 @@
 import { AtomWithTags } from '../../stores/atoms';
 import { TagChip } from '../tags/TagChip';
-import { truncateContent } from '../../lib/markdown';
+import { extractTitleAndSnippet } from '../../lib/markdown';
 import { formatRelativeDate } from '../../lib/date';
 
 interface AtomCardProps {
@@ -90,15 +90,11 @@ export function AtomCard({
   matchingChunkContent,
   onRetryEmbedding,
 }: AtomCardProps) {
-  // Use matching chunk content for search results, otherwise use truncated content
-  const preview = matchingChunkContent
-    ? matchingChunkContent.length > 200
-      ? matchingChunkContent.slice(0, 200) + '...'
-      : matchingChunkContent
-    : truncateContent(atom.content, 150);
+  const { title, snippet } = extractTitleAndSnippet(atom.content, 120);
 
-  const visibleTags = atom.tags.slice(0, 3);
-  const remainingTags = atom.tags.length - 3;
+  const maxVisibleTags = viewMode === 'grid' ? 2 : 3;
+  const visibleTags = atom.tags.slice(0, maxVisibleTags);
+  const remainingTags = atom.tags.length - maxVisibleTags;
 
   if (viewMode === 'list') {
     return (
@@ -113,11 +109,11 @@ export function AtomCard({
         />
         <div className="flex-1 min-w-0">
           <p
-            className={`text-sm line-clamp-1 ${
+            className={`text-sm font-medium line-clamp-1 ${
               matchingChunkContent ? 'text-[var(--color-accent-light)]' : 'text-[var(--color-text-primary)]'
             }`}
           >
-            {preview}
+            {title || 'Untitled'}
           </p>
           {atom.tags.length > 0 && (
             <div className="flex items-center gap-1.5 mt-2">
@@ -149,21 +145,26 @@ export function AtomCard({
       />
       <div className="flex-1 min-h-0">
         <p
-          className={`text-sm line-clamp-4 leading-relaxed ${
+          className={`text-sm font-medium line-clamp-2 ${
             matchingChunkContent ? 'text-[var(--color-accent-light)]' : 'text-[var(--color-text-primary)]'
           }`}
         >
-          {preview}
+          {title || 'Untitled'}
         </p>
+        {snippet && (
+          <p className="text-sm text-[var(--color-text-secondary)] line-clamp-2 mt-1 leading-relaxed">
+            {snippet}
+          </p>
+        )}
       </div>
       <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
         {atom.tags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+          <div className="flex items-center gap-1.5 mb-2">
             {visibleTags.map((tag) => (
               <TagChip key={tag.id} name={tag.name} size="sm" />
             ))}
             {remainingTags > 0 && (
-              <span className="text-xs text-[var(--color-text-tertiary)]">+{remainingTags}</span>
+              <span className="text-xs text-[var(--color-text-tertiary)] shrink-0">+{remainingTags}</span>
             )}
           </div>
         )}

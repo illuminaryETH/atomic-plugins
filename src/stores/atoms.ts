@@ -50,12 +50,15 @@ export interface SimilarAtomResult {
   matching_chunk_index: number;
 }
 
+export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
+
 interface AtomsStore {
   atoms: AtomWithTags[];
   isLoading: boolean;
   error: string | null;
-  
-  // New search state
+
+  // Search state
+  searchMode: SearchMode;
   semanticSearchQuery: string;
   semanticSearchResults: SemanticSearchResult[] | null;  // null = not searching
   isSearching: boolean;
@@ -71,18 +74,20 @@ interface AtomsStore {
   // New methods
   updateAtomStatus: (atomId: string, status: string) => void;
   addAtom: (atom: AtomWithTags) => void;
-  searchSemantic: (query: string) => Promise<void>;
+  search: (query: string) => Promise<void>;
   clearSemanticSearch: () => void;
   setSemanticSearchQuery: (query: string) => void;
+  setSearchMode: (mode: SearchMode) => void;
   retryEmbedding: (atomId: string) => Promise<void>;
 }
 
-export const useAtomsStore = create<AtomsStore>((set) => ({
+export const useAtomsStore = create<AtomsStore>((set, get) => ({
   atoms: [],
   isLoading: false,
   error: null,
-  
-  // New search state
+
+  // Search state
+  searchMode: 'hybrid' as SearchMode,
   semanticSearchQuery: '',
   semanticSearchResults: null,
   isSearching: false,
@@ -175,29 +180,55 @@ export const useAtomsStore = create<AtomsStore>((set) => ({
     }));
   },
   
-  searchSemantic: async (query: string) => {
+  search: async (query: string) => {
+    const { searchMode } = get();
     set({ isSearching: true, error: null, semanticSearchQuery: query });
     try {
-      const results = await invoke<SemanticSearchResult[]>('search_atoms_semantic', {
-        query,
-        limit: 20,
-        threshold: 0.4,
-      });
+      let results: SemanticSearchResult[];
+
+      switch (searchMode) {
+        case 'keyword':
+          results = await invoke<SemanticSearchResult[]>('search_atoms_keyword', {
+            query,
+            limit: 20,
+          });
+          break;
+        case 'semantic':
+          results = await invoke<SemanticSearchResult[]>('search_atoms_semantic', {
+            query,
+            limit: 20,
+            threshold: 0.4,
+          });
+          break;
+        case 'hybrid':
+        default:
+          results = await invoke<SemanticSearchResult[]>('search_atoms_hybrid', {
+            query,
+            limit: 20,
+            threshold: 0.4,
+          });
+          break;
+      }
+
       set({ semanticSearchResults: results, isSearching: false });
     } catch (error) {
       set({ error: String(error), isSearching: false });
     }
   },
-  
+
   clearSemanticSearch: () => {
     set({
       semanticSearchResults: null,
       semanticSearchQuery: '',
     });
   },
-  
+
   setSemanticSearchQuery: (query: string) => {
     set({ semanticSearchQuery: query });
+  },
+
+  setSearchMode: (mode: SearchMode) => {
+    set({ searchMode: mode });
   },
   
   retryEmbedding: async (atomId: string) => {
