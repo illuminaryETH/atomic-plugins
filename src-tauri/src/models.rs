@@ -120,6 +120,16 @@ pub struct WikiArticleStatus {
     pub updated_at: Option<String>,
 }
 
+/// Summary of a wiki article for list view (includes tag name)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiArticleSummary {
+    pub id: String,
+    pub tag_id: String,
+    pub tag_name: String,
+    pub updated_at: String,
+    pub atom_count: i32,
+}
+
 /// Chunk with context for wiki generation
 #[derive(Debug, Clone)]
 pub struct ChunkWithContext {

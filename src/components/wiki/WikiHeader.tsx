@@ -12,6 +12,7 @@ interface WikiHeaderProps {
   onRegenerate: () => void;
   onClose: () => void;
   isUpdating: boolean;
+  onBack?: () => void;
 }
 
 export function WikiHeader({
@@ -23,6 +24,7 @@ export function WikiHeader({
   onRegenerate,
   onClose,
   isUpdating,
+  onBack,
 }: WikiHeaderProps) {
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
 
@@ -35,11 +37,24 @@ export function WikiHeader({
     <div className="border-b border-[var(--color-border)]">
       {/* Main header */}
       <div className="flex items-center justify-between px-6 py-4">
-        <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-semibold text-[var(--color-text-primary)] truncate">{tagName}</h2>
-          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-            Updated {formatRelativeTime(updatedAt)} • {sourceCount} source{sourceCount !== 1 ? 's' : ''}
-          </p>
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+              aria-label="Back to list"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+          )}
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] truncate">{tagName}</h2>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+              Updated {formatRelativeTime(updatedAt)} • {sourceCount} source{sourceCount !== 1 ? 's' : ''}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2 ml-4">
           <Button

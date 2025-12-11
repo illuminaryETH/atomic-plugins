@@ -1,11 +1,18 @@
 //! Wiki article operations
 
 use crate::db::Database;
-use crate::models::WikiArticleWithCitations;
+use crate::models::{WikiArticleSummary, WikiArticleWithCitations};
 use crate::providers::{ProviderConfig, ProviderType};
 use crate::settings;
 use crate::wiki;
 use tauri::State;
+
+/// Get all wiki articles (for list view)
+#[tauri::command]
+pub fn get_all_wiki_articles(db: State<Database>) -> Result<Vec<WikiArticleSummary>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    wiki::load_all_wiki_articles(&conn)
+}
 
 /// Get a wiki article for a tag (if it exists)
 #[tauri::command]

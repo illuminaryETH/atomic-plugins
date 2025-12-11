@@ -1,7 +1,8 @@
-use crate::models::{ChunkWithContext, WikiArticle, WikiArticleWithCitations, WikiCitation};
-use crate::providers::traits::{EmbeddingConfig, LlmConfig};
+use crate::models::{ChunkWithContext, WikiArticle, WikiArticleSummary, WikiArticleWithCitations, WikiCitation};
+use crate::providers::traits::LlmConfig;
 use crate::providers::types::{GenerationParams, Message, StructuredOutputSchema};
-use crate::providers::{create_embedding_provider, create_llm_provider, ProviderConfig};
+use crate::providers::{create_llm_provider, ProviderConfig};
+use crate::search::{search_chunks, SearchMode, SearchOptions};
 use chrono::Utc;
 use rusqlite::{Connection, params_from_iter};
 use serde::Deserialize;
@@ -54,44 +55,45 @@ pub struct WikiUpdateInput {
 }
 
 /// Prepare data for wiki article generation
-/// Restructured to avoid holding db connection across await
+/// Uses hybrid search (keyword + semantic) scoped to the tag hierarchy
 pub async fn prepare_wiki_generation(
     db: &crate::db::Database,
-    provider_config: &ProviderConfig,
+    _provider_config: &ProviderConfig,
     tag_id: &str,
     tag_name: &str,
 ) -> Result<WikiGenerationInput, String> {
-    // Generate embedding for tag name first (no db lock)
-    let embedding_provider = create_embedding_provider(provider_config)
-        .map_err(|e| format!("Failed to create embedding provider: {}", e))?;
-    let embed_config = EmbeddingConfig::new(provider_config.embedding_model());
-
-    let embeddings = embedding_provider
-        .embed_batch(&[tag_name.to_string()], &embed_config)
-        .await
-        .map_err(|e| format!("Failed to generate tag embedding: {}", e))?;
-
-    let tag_embedding = crate::embedding::f32_vec_to_blob_public(&embeddings[0]);
-
-    // Now get chunks from database with the pre-generated embedding
-    let (chunks, atom_count) = {
+    // Get all descendant tag IDs (including the tag itself) for scoping
+    let all_tag_ids = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        get_tag_hierarchy(&conn, tag_id)?
+    };
 
-        let chunks = get_relevant_chunks_for_article_sync(&conn, &tag_embedding, tag_id, 30, 0.3)?;
+    // Use hybrid search scoped to this tag hierarchy
+    let options = SearchOptions::new(tag_name, SearchMode::Hybrid, 30)
+        .with_threshold(0.3)
+        .with_scope(all_tag_ids.clone());
 
-        if chunks.is_empty() {
-            return Err("No content found for this tag".to_string());
-        }
+    let chunk_results = search_chunks(db, options).await?;
 
-        let atom_count: i32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM atom_tags WHERE tag_id = ?1",
-                [tag_id],
-                |row| row.get(0),
-            )
-            .map_err(|e| format!("Failed to count atoms: {}", e))?;
+    if chunk_results.is_empty() {
+        return Err("No content found for this tag".to_string());
+    }
 
-        (chunks, atom_count)
+    // Convert ChunkResult to ChunkWithContext
+    let chunks: Vec<ChunkWithContext> = chunk_results
+        .into_iter()
+        .map(|cr| ChunkWithContext {
+            atom_id: cr.atom_id,
+            chunk_index: cr.chunk_index,
+            content: cr.content,
+            similarity_score: cr.score,
+        })
+        .collect();
+
+    // Count atoms with this tag hierarchy
+    let atom_count = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        count_atoms_with_tags(&conn, &all_tag_ids)?
     };
 
     Ok(WikiGenerationInput {
@@ -100,6 +102,41 @@ pub async fn prepare_wiki_generation(
         tag_id: tag_id.to_string(),
         tag_name: tag_name.to_string(),
     })
+}
+
+/// Get all tag IDs in hierarchy (tag + all descendants)
+fn get_tag_hierarchy(conn: &Connection, tag_id: &str) -> Result<Vec<String>, String> {
+    let mut all_tag_ids = vec![tag_id.to_string()];
+    let mut to_process = vec![tag_id.to_string()];
+
+    while let Some(current_id) = to_process.pop() {
+        let mut child_stmt = conn
+            .prepare("SELECT id FROM tags WHERE parent_id = ?1")
+            .map_err(|e| format!("Failed to prepare child query: {}", e))?;
+
+        let children: Vec<String> = child_stmt
+            .query_map([&current_id], |row| row.get(0))
+            .map_err(|e| format!("Failed to query children: {}", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to collect children: {}", e))?;
+
+        for child_id in children {
+            all_tag_ids.push(child_id.clone());
+            to_process.push(child_id);
+        }
+    }
+    Ok(all_tag_ids)
+}
+
+/// Count atoms with any of the given tags
+fn count_atoms_with_tags(conn: &Connection, tag_ids: &[String]) -> Result<i32, String> {
+    let placeholders = tag_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let query = format!(
+        "SELECT COUNT(DISTINCT atom_id) FROM atom_tags WHERE tag_id IN ({})",
+        placeholders
+    );
+    conn.query_row(&query, rusqlite::params_from_iter(tag_ids), |row| row.get(0))
+        .map_err(|e| format!("Failed to count atoms: {}", e))
 }
 
 /// Prepare data for wiki article update (sync, needs db connection)
@@ -274,140 +311,6 @@ pub async fn update_wiki_content(
     let citations = extract_citations(&article.id, &result.article_content, &all_chunks)?;
 
     Ok(WikiArticleWithCitations { article, citations })
-}
-
-/// Get relevant chunks (sync version that takes pre-generated embedding)
-fn get_relevant_chunks_for_article_sync(
-    conn: &Connection,
-    tag_embedding: &[u8],
-    tag_id: &str,
-    max_chunks: usize,
-    similarity_threshold: f32,
-) -> Result<Vec<ChunkWithContext>, String> {
-
-    // 2. Get all descendant tag IDs (including the tag itself)
-    let mut all_tag_ids = vec![tag_id.to_string()];
-    let mut to_process = vec![tag_id.to_string()];
-
-    while let Some(current_id) = to_process.pop() {
-        let mut child_stmt = conn
-            .prepare("SELECT id FROM tags WHERE parent_id = ?1")
-            .map_err(|e| format!("Failed to prepare child query: {}", e))?;
-
-        let children: Vec<String> = child_stmt
-            .query_map([&current_id], |row| row.get(0))
-            .map_err(|e| format!("Failed to query children: {}", e))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Failed to collect children: {}", e))?;
-
-        for child_id in children {
-            all_tag_ids.push(child_id.clone());
-            to_process.push(child_id);
-        }
-    }
-
-    // 3. Get all atom IDs with any of these tags (deduplicated)
-    let tag_placeholders = all_tag_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let atom_query = format!(
-        "SELECT DISTINCT atom_id FROM atom_tags WHERE tag_id IN ({})",
-        tag_placeholders
-    );
-
-    let mut atom_stmt = conn
-        .prepare(&atom_query)
-        .map_err(|e| format!("Failed to prepare atom query: {}", e))?;
-
-    let atom_ids: Vec<String> = atom_stmt
-        .query_map(rusqlite::params_from_iter(all_tag_ids.iter()), |row| row.get(0))
-        .map_err(|e| format!("Failed to query atoms: {}", e))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to collect atom IDs: {}", e))?;
-
-    if atom_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // 3. Get all chunk IDs for these atoms
-    let placeholders: String = atom_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let query = format!(
-        "SELECT id, atom_id, chunk_index, content FROM atom_chunks WHERE atom_id IN ({})",
-        placeholders
-    );
-    
-    let mut chunk_stmt = conn
-        .prepare(&query)
-        .map_err(|e| format!("Failed to prepare chunk query: {}", e))?;
-    
-    let chunks: Vec<(String, String, i32, String)> = chunk_stmt
-        .query_map(rusqlite::params_from_iter(atom_ids.iter()), |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .map_err(|e| format!("Failed to query chunks: {}", e))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to collect chunks: {}", e))?;
-
-    if chunks.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // 4. Query vec_chunks for similarity to tag name embedding
-    // We need to get similarity scores for all chunks
-    let mut results: Vec<ChunkWithContext> = Vec::new();
-    
-    let mut vec_stmt = conn
-        .prepare(
-            "SELECT chunk_id, distance 
-             FROM vec_chunks 
-             WHERE embedding MATCH ?1
-             ORDER BY distance
-             LIMIT ?2",
-        )
-        .map_err(|e| format!("Failed to prepare vec query: {}", e))?;
-
-    let similar_chunks: Vec<(String, f32)> = vec_stmt
-        .query_map(rusqlite::params![&tag_embedding, max_chunks * 3], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .map_err(|e| format!("Failed to query similar chunks: {}", e))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to collect similar chunks: {}", e))?;
-
-    // 5. Filter to only chunks from our tagged atoms and apply threshold
-    let chunk_map: std::collections::HashMap<String, (String, i32, String)> = chunks
-        .into_iter()
-        .map(|(id, atom_id, chunk_index, content)| (id, (atom_id, chunk_index, content)))
-        .collect();
-
-    for (chunk_id, distance) in similar_chunks {
-        let similarity = distance_to_similarity(distance);
-        
-        if similarity < similarity_threshold {
-            continue;
-        }
-
-        if let Some((atom_id, chunk_index, content)) = chunk_map.get(&chunk_id) {
-            results.push(ChunkWithContext {
-                atom_id: atom_id.clone(),
-                chunk_index: *chunk_index,
-                content: content.clone(),
-                similarity_score: similarity,
-            });
-        }
-
-        if results.len() >= max_chunks {
-            break;
-        }
-    }
-
-    // Sort by similarity score descending
-    results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap_or(std::cmp::Ordering::Equal));
-
-    Ok(results)
-}
-
-/// Convert L2 distance to cosine similarity for normalized vectors
-fn distance_to_similarity(distance: f32) -> f32 {
-    (1.0 - (distance * distance / 2.0)).clamp(-1.0, 1.0)
 }
 
 /// Call LLM provider for wiki generation
@@ -704,5 +607,33 @@ pub fn delete_article(conn: &Connection, tag_id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM wiki_articles WHERE tag_id = ?1", [tag_id])
         .map_err(|e| format!("Failed to delete article: {}", e))?;
     Ok(())
+}
+
+/// Load all wiki articles with tag names for list view
+pub fn load_all_wiki_articles(conn: &Connection) -> Result<Vec<WikiArticleSummary>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT w.id, w.tag_id, t.name as tag_name, w.updated_at, w.atom_count
+             FROM wiki_articles w
+             JOIN tags t ON w.tag_id = t.id
+             ORDER BY w.updated_at DESC"
+        )
+        .map_err(|e| format!("Failed to prepare wiki articles query: {}", e))?;
+
+    let articles: Vec<WikiArticleSummary> = stmt
+        .query_map([], |row| {
+            Ok(WikiArticleSummary {
+                id: row.get(0)?,
+                tag_id: row.get(1)?,
+                tag_name: row.get(2)?,
+                updated_at: row.get(3)?,
+                atom_count: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query wiki articles: {}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to collect wiki articles: {}", e))?;
+
+    Ok(articles)
 }
 

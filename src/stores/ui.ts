@@ -40,6 +40,7 @@ interface UIStore {
   setSelectedTag: (tagId: string | null) => void;
   openDrawer: (mode: DrawerMode, atomId?: string, highlightText?: string) => void;
   openWikiDrawer: (tagId: string, tagName: string) => void;
+  openWikiListDrawer: () => void;
   openChatDrawer: (tagId?: string, conversationId?: string) => void;
   closeDrawer: () => void;
   setViewMode: (mode: ViewMode) => void;
@@ -104,6 +105,19 @@ export const useUIStore = create<UIStore>()(
             atomId: null,
             tagId,
             tagName,
+            conversationId: null,
+            highlightText: null,
+          },
+        }),
+
+      openWikiListDrawer: () =>
+        set({
+          drawerState: {
+            isOpen: true,
+            mode: 'wiki',
+            atomId: null,
+            tagId: null,
+            tagName: null,
             conversationId: null,
             highlightText: null,
           },

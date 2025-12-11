@@ -535,12 +535,16 @@ The simulation uses multiple forces to position atoms:
 
 ## Chunking Algorithm
 
-Content is chunked for optimal embedding generation:
-1. Split by double newlines (paragraphs)
-2. For paragraphs > 1500 chars, split by sentence boundaries (`. `, `! `, `? `)
-3. Merge chunks < 100 chars with previous chunk
-4. Skip final chunks < 50 chars
-5. Cap chunks at 2000 chars max
+Content is chunked using a markdown-aware, overlapping strategy optimized for RAG:
+1. Parse markdown structure (code blocks, headers, lists, paragraphs)
+2. Never split code blocks (kept atomic even if exceeding max size)
+3. Headers create natural chunk boundaries
+4. Split at paragraph boundaries, then sentence boundaries if needed
+5. Target chunk size: 2500 tokens (~10,000 chars)
+6. Overlap: 200 tokens from next chunk appended to each chunk
+7. Minimum chunk: 100 tokens (smaller merged with adjacent)
+8. Maximum chunk: 3000 tokens (hard limit, except code blocks)
+9. Token counting via tiktoken (cl100k_base encoding, matches OpenAI models)
 
 ## Key Dependencies
 
@@ -557,6 +561,7 @@ Content is chunked for optimal embedding generation:
 - `tokio` = { version = "1", features = ["full"] }
 - `reqwest` = { version = "0.12", features = ["json"] }
 - `regex` = "1"
+- `tiktoken-rs` = "0.6"
 
 ### Frontend (package.json)
 - `@tauri-apps/api` = "^2.0.0"

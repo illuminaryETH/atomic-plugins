@@ -76,3 +76,93 @@ You can override this with the `--db` flag.
 2. **Disable auto-tagging**: If you don't need tags, disable auto-tagging in settings to speed up processing
 3. **Start small**: Test with 50-100 articles first to estimate processing time
 
+---
+
+## Chunk Reset Script
+
+The `reset-chunks.js` script deletes all chunks and related data, then marks atoms for re-embedding. This is useful after changing the chunking strategy or embedding model.
+
+### What It Deletes
+
+- All chat conversations, messages, tool calls, and citations
+- All wiki articles and citations
+- All semantic edges and atom clusters
+- All atom positions (canvas will re-simulate)
+- All vector chunks and FTS entries
+- All atom chunks
+
+### What It Preserves
+
+- All atoms (content is preserved)
+- All tags and tag associations
+
+### Usage
+
+```bash
+# Preview what would be deleted (recommended first step)
+node scripts/reset-chunks.js --dry-run
+
+# Reset with backup (recommended)
+node scripts/reset-chunks.js --backup
+
+# Reset without confirmation
+node scripts/reset-chunks.js --force --backup
+
+# Specify custom database path
+node scripts/reset-chunks.js --db /path/to/atomic.db
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Show what would happen without making changes |
+| `--backup` | Create a backup before resetting |
+| `--force` | Skip confirmation prompt |
+| `--db <path>` | Custom database path |
+| `--help` | Show help message |
+
+### After Reset
+
+1. Start the Atomic app
+2. Go to Settings and click "Process Pending Embeddings"
+3. Wait for all atoms to be re-embedded with the new chunking strategy
+
+---
+
+## Tag Reset Script
+
+The `reset-tags.js` script resets all tags to default top-level categories and marks atoms for re-tagging.
+
+### Usage
+
+```bash
+# Preview what would be deleted
+node scripts/reset-tags.js --dry-run
+
+# Reset with backup
+node scripts/reset-tags.js --backup
+
+# Reset without confirmation
+node scripts/reset-tags.js --force --backup
+```
+
+### What It Does
+
+1. Deletes all wiki articles and citations
+2. Deletes all atom-tag associations
+3. Deletes all tags and recreates default categories
+4. Marks all atoms for re-tagging
+
+---
+
+## Database Location
+
+All scripts automatically detect the database location based on your OS:
+
+- **macOS**: `~/Library/Application Support/com.atomic.app/atomic.db`
+- **Linux**: `~/.local/share/com.atomic.app/atomic.db`
+- **Windows**: `%APPDATA%/com.atomic.app/atomic.db`
+
+You can override this with the `--db` flag on any script.
+

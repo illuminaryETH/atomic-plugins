@@ -92,6 +92,7 @@ pub fn run() {
             commands::set_setting,
             commands::test_openrouter_connection,
             commands::get_available_llm_models,
+            commands::get_all_wiki_articles,
             commands::get_wiki_article,
             commands::get_wiki_article_status,
             commands::generate_wiki_article,

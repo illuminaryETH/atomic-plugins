@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { AtomEditor } from '../atoms/AtomEditor';
 import { AtomViewer } from '../atoms/AtomViewer';
 import { WikiViewer } from '../wiki/WikiViewer';
+import { WikiListViewer } from '../wiki/WikiListViewer';
 import { ChatViewer } from '../chat/ChatViewer';
 import { useUIStore } from '../../stores/ui';
 import { useAtomsStore, type AtomWithTags } from '../../stores/atoms';
@@ -164,7 +165,13 @@ export function RightDrawer() {
           result = null;
           break;
         }
-        if (!tagId || !tagName) {
+        // If no tagId, show wiki list view; otherwise show specific wiki article
+        if (!tagId) {
+          contentType = 'wiki-list';
+          result = <WikiListViewer />;
+          break;
+        }
+        if (!tagName) {
           contentType = 'wiki-no-tag';
           result = (
             <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)]">

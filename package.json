@@ -17,6 +17,8 @@
     "db:reset:force": "node scripts/reset-database.js --force --backup",
     "db:reset-tags": "node scripts/reset-tags.js",
     "db:reset-tags:force": "node scripts/reset-tags.js --force --backup",
+    "db:reset-chunks": "node scripts/reset-chunks.js",
+    "db:reset-chunks:force": "node scripts/reset-chunks.js --force --backup",
     "db:drop": "node scripts/drop-database.js",
     "db:drop:force": "node scripts/drop-database.js --force --backup"
   },

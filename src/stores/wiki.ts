@@ -32,18 +32,44 @@ export interface WikiArticleStatus {
   updated_at: string | null;
 }
 
+export interface WikiArticleSummary {
+  id: string;
+  tag_id: string;
+  tag_name: string;
+  updated_at: string;
+  atom_count: number;
+}
+
+type WikiView = 'list' | 'article';
+
 interface WikiStore {
+  // View state
+  view: WikiView;
+  currentTagId: string | null;
+  currentTagName: string | null;
+
+  // Articles list state
+  articles: WikiArticleSummary[];
+  isLoadingList: boolean;
+
   // Current article state
   currentArticle: WikiArticleWithCitations | null;
   articleStatus: WikiArticleStatus | null;
-  
+
   // Loading states
   isLoading: boolean;
   isGenerating: boolean;
   isUpdating: boolean;
   error: string | null;
-  
-  // Actions
+
+  // List actions
+  fetchAllArticles: () => Promise<void>;
+  showList: () => void;
+  openArticle: (tagId: string, tagName: string) => void;
+  openAndGenerate: (tagId: string, tagName: string) => void;
+  goBack: () => void;
+
+  // Article actions
   fetchArticle: (tagId: string) => Promise<void>;
   fetchArticleStatus: (tagId: string) => Promise<void>;
   generateArticle: (tagId: string, tagName: string) => Promise<void>;
@@ -51,15 +77,93 @@ interface WikiStore {
   deleteArticle: (tagId: string) => Promise<void>;
   clearArticle: () => void;
   clearError: () => void;
+  reset: () => void;
 }
 
 export const useWikiStore = create<WikiStore>((set, get) => ({
+  // View state
+  view: 'list',
+  currentTagId: null,
+  currentTagName: null,
+
+  // Articles list state
+  articles: [],
+  isLoadingList: false,
+
+  // Current article state
   currentArticle: null,
   articleStatus: null,
   isLoading: false,
   isGenerating: false,
   isUpdating: false,
   error: null,
+
+  fetchAllArticles: async () => {
+    set({ isLoadingList: true, error: null });
+    try {
+      const articles = await invoke<WikiArticleSummary[]>('get_all_wiki_articles');
+      set({ articles, isLoadingList: false });
+    } catch (error) {
+      set({ error: String(error), isLoadingList: false });
+    }
+  },
+
+  showList: () => {
+    set({
+      view: 'list',
+      currentTagId: null,
+      currentTagName: null,
+      currentArticle: null,
+      articleStatus: null,
+      error: null,
+    });
+  },
+
+  openArticle: (tagId: string, tagName: string) => {
+    set({
+      view: 'article',
+      currentTagId: tagId,
+      currentTagName: tagName,
+      currentArticle: null,
+      articleStatus: null,
+      isLoading: true,
+      error: null,
+    });
+    // Fetch article and status
+    get().fetchArticle(tagId);
+    get().fetchArticleStatus(tagId);
+  },
+
+  // Open article view and immediately start generating (for new wikis)
+  openAndGenerate: (tagId: string, tagName: string) => {
+    set({
+      view: 'article',
+      currentTagId: tagId,
+      currentTagName: tagName,
+      currentArticle: null,
+      articleStatus: null,
+      isLoading: false,
+      isGenerating: true,
+      error: null,
+    });
+    // Fetch status for display during generation
+    get().fetchArticleStatus(tagId);
+    // Start generation
+    get().generateArticle(tagId, tagName);
+  },
+
+  goBack: () => {
+    set({
+      view: 'list',
+      currentTagId: null,
+      currentTagName: null,
+      currentArticle: null,
+      articleStatus: null,
+      error: null,
+    });
+    // Refresh list in case changes were made
+    get().fetchAllArticles();
+  },
 
   fetchArticle: async (tagId: string) => {
     set({ isLoading: true, error: null });
@@ -87,6 +191,8 @@ export const useWikiStore = create<WikiStore>((set, get) => ({
       set({ currentArticle: article, isGenerating: false });
       // Refresh status after generation
       get().fetchArticleStatus(tagId);
+      // Also refresh the list to include the new article
+      get().fetchAllArticles();
     } catch (error) {
       set({ error: String(error), isGenerating: false });
     }
@@ -99,6 +205,8 @@ export const useWikiStore = create<WikiStore>((set, get) => ({
       set({ currentArticle: article, isUpdating: false });
       // Refresh status after update
       get().fetchArticleStatus(tagId);
+      // Also refresh the list
+      get().fetchAllArticles();
     } catch (error) {
       set({ error: String(error), isUpdating: false });
     }
@@ -108,6 +216,8 @@ export const useWikiStore = create<WikiStore>((set, get) => ({
     try {
       await invoke('delete_wiki_article', { tagId });
       set({ currentArticle: null, articleStatus: null });
+      // Refresh the list
+      get().fetchAllArticles();
     } catch (error) {
       set({ error: String(error) });
     }
@@ -120,5 +230,20 @@ export const useWikiStore = create<WikiStore>((set, get) => ({
   clearError: () => {
     set({ error: null });
   },
-}));
 
+  reset: () => {
+    set({
+      view: 'list',
+      currentTagId: null,
+      currentTagName: null,
+      articles: [],
+      isLoadingList: false,
+      currentArticle: null,
+      articleStatus: null,
+      isLoading: false,
+      isGenerating: false,
+      isUpdating: false,
+      error: null,
+    });
+  },
+}));
