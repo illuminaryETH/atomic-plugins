@@ -597,12 +597,14 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
 
   useEffect(() => {
     if (isOpen) {
-      // Load saved server config
+      // Load saved server config, defaulting to current origin
       const saved = localStorage.getItem('atomic-server-config');
       if (saved) {
         const config: HttpTransportConfig = JSON.parse(saved);
         setServerUrl(config.baseUrl);
         setServerToken(config.authToken);
+      } else {
+        setServerUrl(window.location.origin);
       }
       setIsRemoteMode(getTransport().mode === 'http');
       // Only fetch settings/models if transport is actually connected
