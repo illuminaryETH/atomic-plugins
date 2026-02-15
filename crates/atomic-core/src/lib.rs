@@ -1963,6 +1963,41 @@ fn build_neighborhood_graph(
 
 // ==================== Helper Functions ====================
 
+/// Strip image markdown from text: ![alt](url) -> empty
+fn strip_images_from_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '!' && chars.peek() == Some(&'[') {
+            chars.next(); // consume '['
+            let mut depth = 1;
+            while depth > 0 {
+                match chars.next() {
+                    Some('[') => depth += 1,
+                    Some(']') => depth -= 1,
+                    None => break,
+                    _ => {}
+                }
+            }
+            if chars.peek() == Some(&'(') {
+                chars.next();
+                let mut depth = 1;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('(') => depth += 1,
+                        Some(')') => depth -= 1,
+                        None => break,
+                        _ => {}
+                    }
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Simple markdown stripping for snippets (server-side).
 fn strip_markdown_simple(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
@@ -2040,7 +2075,9 @@ fn strip_markdown_simple(text: &str) -> String {
                         _ => {}
                     }
                 }
-                out.push_str(&text_buf);
+                // Strip nested images from link text: ![alt](url) -> empty
+                let cleaned = strip_images_from_text(&text_buf);
+                out.push_str(cleaned.trim());
             } else {
                 out.push('[');
                 out.push_str(&text_buf);

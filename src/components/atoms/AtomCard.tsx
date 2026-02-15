@@ -98,7 +98,7 @@ export const AtomCard = memo(function AtomCard({
   const hasContent = 'content' in atom;
   const { title, snippet } = hasContent
     ? extractTitleAndSnippet((atom as any).content, 120)
-    : { title: (atom as AtomSummary).snippet, snippet: '' };
+    : extractTitleAndSnippet((atom as AtomSummary).snippet, 120);
 
   const maxVisibleTags = viewMode === 'grid' ? 2 : 3;
   const visibleTags = atom.tags.slice(0, maxVisibleTags);
@@ -144,7 +144,7 @@ export const AtomCard = memo(function AtomCard({
   return (
     <div
       onClick={handleClick}
-      className="relative flex flex-col p-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-hover)] transition-all duration-150 h-full"
+      className="relative flex flex-col p-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-hover)] transition-all duration-150 h-full min-w-0 overflow-hidden break-words"
     >
       <ProcessingStatusIndicator
         embeddingStatus={atom.embedding_status}
