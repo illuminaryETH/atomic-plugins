@@ -1,7 +1,5 @@
-import { getTransport } from './transport';
-
 export async function openExternalUrl(url: string): Promise<void> {
-  if (getTransport().mode === 'tauri') {
+  if (isTauri()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(url);
   } else {
@@ -10,7 +8,7 @@ export async function openExternalUrl(url: string): Promise<void> {
 }
 
 export async function pickDirectory(title?: string): Promise<string | null> {
-  if (getTransport().mode === 'tauri') {
+  if (isTauri()) {
     const { open } = await import('@tauri-apps/plugin-dialog');
     return await open({ directory: true, multiple: false, title }) as string | null;
   }

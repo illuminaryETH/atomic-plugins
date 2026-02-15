@@ -15,31 +15,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-atomic-core = { path = "../crates/atomic-core" }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
+atomic-core = { path = "../crates/atomic-core" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
-sqlite-vec = "0.1.6"
-uuid = { version = "1", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
-zerocopy = { version = "0.8", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
-futures = "0.3"
-regex = "1"
-tiktoken-rs = "0.6"
-glob = "0.3"
-yaml-rust2 = "0.11"
-urlencoding = "2"
-actix-web = "4.9"
-actix-cors = "0.7"
-async-trait = "0.1"
-
-# MCP Server
-rmcp = { version = "0.10", features = ["server", "macros", "transport-streamable-http-server-session"] }
-rmcp-actix-web = "0.8"
-schemars = "1.0"
-
-
+reqwest = { version = "0.12", features = ["blocking"] }

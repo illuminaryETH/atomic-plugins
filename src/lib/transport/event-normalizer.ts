@@ -32,6 +32,8 @@ export function normalizeServerEvent(data: Record<string, unknown>): NormalizedE
       return { event: 'atom-created', payload: data.atom };
     case 'EmbeddingsReset':
       return { event: 'embeddings-reset', payload: data };
+    case 'ImportProgress':
+      return { event: 'import-progress', payload: { current: data.current, total: data.total, current_file: data.current_file, status: data.status } };
     default:
       console.warn('Unknown server event type:', type);
       return null;

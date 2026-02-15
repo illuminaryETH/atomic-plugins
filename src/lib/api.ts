@@ -313,19 +313,21 @@ export async function revokeApiToken(id: string): Promise<void> {
   return getTransport().invoke('revoke_api_token', { id });
 }
 
-// MCP Bridge commands
+// MCP config — now HTTP-based via the server's /mcp endpoint
 export interface McpConfig {
   mcpServers: {
     atomic: {
-      command: string;
+      url: string;
     };
   };
 }
 
-export async function getMcpBridgePath(): Promise<string> {
-  return getTransport().invoke('get_mcp_bridge_path');
-}
-
-export async function getMcpConfig(): Promise<McpConfig> {
-  return getTransport().invoke('get_mcp_config');
+export function getMcpConfig(serverBaseUrl: string): McpConfig {
+  return {
+    mcpServers: {
+      atomic: {
+        url: `${serverBaseUrl}/mcp`,
+      },
+    },
+  };
 }

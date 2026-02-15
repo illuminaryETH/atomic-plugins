@@ -355,11 +355,15 @@ export const COMMAND_MAP: Record<string, CommandSpec> = {
     method: 'POST',
     path: '/api/utils/compact-tags',
   },
-};
 
-// Desktop-only commands that cannot work via HTTP
-export const DESKTOP_ONLY_COMMANDS = new Set([
-  'import_obsidian_vault',
-  'get_mcp_bridge_path',
-  'get_mcp_config',
-]);
+  // ==================== Import ====================
+  import_obsidian_vault: {
+    method: 'POST',
+    path: '/api/import/obsidian',
+    argsMode: 'body',
+    transformArgs: (a) => ({
+      vault_path: a.vaultPath,
+      max_notes: a.maxNotes ?? null,
+    }),
+  },
+};

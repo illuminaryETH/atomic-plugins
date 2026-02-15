@@ -4,7 +4,7 @@ export interface Transport {
   connect(): Promise<void>;
   disconnect(): void;
   isConnected(): boolean;
-  readonly mode: 'tauri' | 'http';
+  readonly mode: 'http';
   onConnectionChange?: (connected: boolean) => void;
 }
 

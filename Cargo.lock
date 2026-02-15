@@ -52,7 +52,7 @@ dependencies = [
  "derive_more 2.1.0",
  "encoding_rs",
  "flate2",
- "foldhash 0.1.5",
+ "foldhash",
  "futures-core",
  "h2 0.3.27",
  "http 0.2.12",
@@ -166,7 +166,7 @@ dependencies = [
  "cookie 0.16.2",
  "derive_more 2.1.0",
  "encoding_rs",
- "foldhash 0.1.5",
+ "foldhash",
  "futures-core",
  "futures-util",
  "impl-more",
@@ -528,33 +528,14 @@ dependencies = [
 name = "atomic"
 version = "0.16.0"
 dependencies = [
- "actix-cors",
- "actix-web",
- "async-trait",
  "atomic-core",
- "chrono",
- "futures",
- "glob",
- "regex",
  "reqwest",
- "rmcp 0.10.0",
- "rmcp-actix-web 0.8.19",
- "rusqlite",
- "schemars 1.1.0",
  "serde",
- "serde_json",
- "sqlite-vec",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-shell",
- "tiktoken-rs",
- "tokio",
- "urlencoding",
- "uuid",
- "yaml-rust2 0.11.0",
- "zerocopy",
 ]
 
 [[package]]
@@ -580,7 +561,7 @@ dependencies = [
  "tokio",
  "urlencoding",
  "uuid",
- "yaml-rust2 0.9.0",
+ "yaml-rust2",
  "zerocopy",
 ]
 
@@ -629,7 +610,7 @@ dependencies = [
  "rand 0.8.5",
  "reqwest",
  "rmcp 0.15.0",
- "rmcp-actix-web 0.11.1",
+ "rmcp-actix-web",
  "rusqlite",
  "schemars 1.1.0",
  "serde",
@@ -1684,12 +1665,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "foldhash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
-
-[[package]]
 name = "foreign-types"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2210,9 +2185,6 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
-dependencies = [
- "foldhash 0.2.0",
-]
 
 [[package]]
 name = "hashlink"
@@ -2221,15 +2193,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
 dependencies = [
  "hashbrown 0.14.5",
-]
-
-[[package]]
-name = "hashlink"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
-dependencies = [
- "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -4018,6 +3981,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2 0.4.12",
@@ -4093,37 +4057,6 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38b18323edc657390a6ed4d7a9110b0dec2dc3ed128eb2a123edfbafabdbddc5"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "futures",
- "http 1.4.0",
- "http-body",
- "http-body-util",
- "pastey",
- "pin-project-lite",
- "rand 0.9.2",
- "rmcp-macros 0.10.0",
- "schemars 1.1.0",
- "serde",
- "serde_json",
- "sse-stream",
- "thiserror 2.0.17",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower-service",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "rmcp"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5df440eaa43f8573491ed4a5899719b6d29099500774abba12214a095a4083ed"
@@ -4178,24 +4111,6 @@ dependencies = [
 
 [[package]]
 name = "rmcp-actix-web"
-version = "0.8.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dbc014fd3e9ff9414607f1edf03e624f725710e8fa8a5ee93ed116cf072b61c"
-dependencies = [
- "actix-web",
- "async-stream",
- "bon",
- "futures",
- "rmcp 0.10.0",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
-name = "rmcp-actix-web"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f88703b727576959ccb3abc4b818b16881aaa79c57c6b225cfca1f710fa38e7a"
@@ -4210,19 +4125,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
-]
-
-[[package]]
-name = "rmcp-macros"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c75d0a62676bf8c8003c4e3c348e2ceb6a7b3e48323681aaf177fdccdac2ce50"
-dependencies = [
- "darling 0.21.3",
- "proc-macro2",
- "quote",
- "serde_json",
- "syn 2.0.111",
 ]
 
 [[package]]
@@ -4260,7 +4162,7 @@ dependencies = [
  "bitflags 2.10.0",
  "fallible-iterator",
  "fallible-streaming-iterator",
- "hashlink 0.9.1",
+ "hashlink",
  "libsqlite3-sys",
  "smallvec",
 ]
@@ -6831,18 +6733,7 @@ checksum = "2a1a1c0bc9823338a3bdf8c61f994f23ac004c6fa32c08cd152984499b445e8d"
 dependencies = [
  "arraydeque",
  "encoding_rs",
- "hashlink 0.9.1",
-]
-
-[[package]]
-name = "yaml-rust2"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "631a50d867fafb7093e709d75aaee9e0e0d5deb934021fcea25ac2fe09edc51e"
-dependencies = [
- "arraydeque",
- "encoding_rs",
- "hashlink 0.11.0",
+ "hashlink",
 ]
 
 [[package]]

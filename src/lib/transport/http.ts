@@ -1,5 +1,5 @@
 import type { Transport, HttpTransportConfig } from './types';
-import { COMMAND_MAP, DESKTOP_ONLY_COMMANDS } from './command-map';
+import { COMMAND_MAP } from './command-map';
 import { normalizeServerEvent } from './event-normalizer';
 
 export class HttpTransport implements Transport {
@@ -17,6 +17,10 @@ export class HttpTransport implements Transport {
 
   constructor(config: HttpTransportConfig) {
     this.config = config;
+  }
+
+  getConfig(): HttpTransportConfig {
+    return this.config;
   }
 
   async connect(): Promise<void> {
@@ -107,10 +111,6 @@ export class HttpTransport implements Transport {
 
     if (!this.config.baseUrl) {
       throw new Error('Not connected to a server');
-    }
-
-    if (DESKTOP_ONLY_COMMANDS.has(command)) {
-      throw new Error(`"${command}" is not available in remote/web mode`);
     }
 
     const spec = COMMAND_MAP[command];

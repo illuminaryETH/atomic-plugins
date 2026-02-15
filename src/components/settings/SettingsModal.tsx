@@ -21,7 +21,7 @@ import {
   type ApiTokenInfo,
   type CreateTokenResponse,
 } from '../../lib/api';
-import { getTransport, switchTransport, switchToLocal, type HttpTransportConfig } from '../../lib/transport';
+import { getTransport, switchTransport, switchToLocal, isDesktopApp, isLocalServer, type HttpTransportConfig } from '../../lib/transport';
 import { pickDirectory } from '../../lib/platform';
 
 interface SelectOption {
@@ -418,7 +418,6 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
   const [isTestingServer, setIsTestingServer] = useState(false);
   const [serverTestResult, setServerTestResult] = useState<'success' | 'error' | null>(null);
   const [serverTestError, setServerTestError] = useState<string | null>(null);
-  const [isRemoteMode, setIsRemoteMode] = useState(getTransport().mode === 'http');
   const [showChangeServer, setShowChangeServer] = useState(false);
 
   // API Token management state
@@ -432,6 +431,10 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
 
   const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Derived: whether we're connected to a remote (non-local) server
+  // Desktop + local sidecar → false; Desktop + remote override → true; Web → always true
+  const isRemoteMode = isDesktopApp() ? !isLocalServer() : true;
 
   // Check Ollama connection
   const checkOllamaConnection = useCallback(async (host: string) => {
@@ -482,7 +485,6 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
   const handleConnectServer = async () => {
     try {
       await switchTransport({ baseUrl: serverUrl.trim().replace(/\/$/, ''), authToken: serverToken.trim() });
-      setIsRemoteMode(true);
       setShowChangeServer(false);
       // In setup mode, close to let Layout re-check and initialize
       if (isSetupMode) {
@@ -502,7 +504,6 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
   const handleDisconnectServer = async () => {
     try {
       await switchToLocal();
-      setIsRemoteMode(false);
       // Refresh data from local source
       fetchSettings();
       fetchAtoms();
@@ -606,10 +607,9 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
       } else {
         setServerUrl(window.location.origin);
       }
-      setIsRemoteMode(getTransport().mode === 'http');
       // Only fetch settings/models if transport is actually connected
       const transport = getTransport();
-      if (transport.mode === 'tauri' || transport.isConnected()) {
+      if (transport.isConnected()) {
         fetchSettings();
         // Fetch OpenRouter models
         setIsLoadingModels(true);
@@ -618,8 +618,8 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
           .catch(err => console.error('Failed to load models:', err))
           .finally(() => setIsLoadingModels(false));
       }
-      // Load API tokens when in remote mode and connected
-      if (transport.mode === 'http' && transport.isConnected()) {
+      // Load API tokens when connected to a non-local server
+      if (!isLocalServer() && transport.isConnected()) {
         loadApiTokens();
       }
       // Reset token creation state
@@ -770,16 +770,13 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
   };
 
   // Handle MCP setup expand
-  const handleMcpExpand = async () => {
+  const handleMcpExpand = () => {
     const newState = !showMcpSetup;
     setShowMcpSetup(newState);
     if (newState && !mcpConfig) {
-      try {
-        const config = await getMcpConfig();
-        setMcpConfig(config);
-      } catch (e) {
-        console.error('Failed to get MCP config:', e);
-      }
+      const transport = getTransport() as import('../../lib/transport/http').HttpTransport;
+      const config = getMcpConfig(transport.getConfig().baseUrl);
+      setMcpConfig(config);
     }
   };
 
@@ -838,7 +835,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
     .map(m => ({ id: m.id, name: m.name }));
 
   // In web mode during setup, we need to connect to a server first
-  const needsServerConnection = getTransport().mode === 'http' && !getTransport().isConnected();
+  const needsServerConnection = !isDesktopApp() && !getTransport().isConnected();
 
   if (!isOpen) return null;
 
@@ -1243,17 +1240,28 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
             </button>
           </div>
 
-          {/* Connect to Server Section */}
-          {!isSetupMode && !isRemoteMode && (
+          {/* Connect to Server Section — desktop + local server */}
+          {!isSetupMode && isDesktopApp() && isLocalServer() && (
             <div className="space-y-3 pt-4 border-t border-[var(--color-border)]">
-              <div className="space-y-1">
-                <label className="block text-sm font-medium text-[var(--color-text-primary)]">
-                  Remote Server
-                </label>
-                <p className="text-xs text-[var(--color-text-secondary)]">
-                  Connect to a remote atomic-server instance
-                </p>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-[var(--color-text-primary)]">
+                    Server
+                  </label>
+                  <p className="text-xs text-green-500 flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                    Local
+                  </p>
+                </div>
+                <Button variant="secondary" onClick={() => setShowChangeServer(!showChangeServer)}>
+                  {showChangeServer ? 'Cancel' : 'Connect to Custom Server'}
+                </Button>
               </div>
+              {showChangeServer && (
+              <div className="space-y-3 pt-2">
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Connect to a remote atomic-server instance
+              </p>
               <input
                 type="text"
                 value={serverUrl}
@@ -1282,11 +1290,13 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
               {serverTestResult === 'error' && (
                 <div className="text-sm text-red-500">{serverTestError}</div>
               )}
+              </div>
+              )}
             </div>
           )}
 
           {/* Connected to remote — show status with change/disconnect options */}
-          {isRemoteMode && (
+          {!isSetupMode && isRemoteMode && getTransport().isConnected() && (
             <div className="space-y-3 pt-4 border-t border-[var(--color-border)]">
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
@@ -1302,9 +1312,9 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                   <Button variant="secondary" onClick={() => setShowChangeServer(!showChangeServer)}>
                     {showChangeServer ? 'Cancel' : 'Change'}
                   </Button>
-                  {(typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) ? (
+                  {isDesktopApp() ? (
                     <Button variant="secondary" onClick={handleDisconnectServer}>
-                      Disconnect
+                      Switch to Local
                     </Button>
                   ) : (
                     <Button variant="secondary" onClick={() => {
@@ -1351,8 +1361,8 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
             </div>
           )}
 
-          {/* API Tokens Section — remote mode only */}
-          {isRemoteMode && getTransport().isConnected() && (
+          {/* API Tokens Section — remote/web only (auto-managed for local sidecar) */}
+          {!isLocalServer() && getTransport().isConnected() && (
             <div className="space-y-3 pt-4 border-t border-[var(--color-border)]">
               <button
                 type="button"
@@ -1502,8 +1512,8 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
             </div>
           )}
 
-          {/* Import Section — desktop/local only */}
-          {!isSetupMode && !isRemoteMode && (
+          {/* Import Section — desktop + local server only (requires filesystem access) */}
+          {!isSetupMode && isDesktopApp() && isLocalServer() && (
             <div className="space-y-3 pt-4 border-t border-[var(--color-border)]">
               <div className="space-y-1">
                 <label className="block text-sm font-medium text-[var(--color-text-primary)]">
@@ -1564,8 +1574,8 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
             </div>
           )}
 
-          {/* MCP Server Setup Section — desktop/local only */}
-          {!isSetupMode && !isRemoteMode && (
+          {/* MCP Server Setup Section — available when connected */}
+          {!isSetupMode && getTransport().isConnected() && (
             <div className="space-y-3 pt-4 border-t border-[var(--color-border)]">
               <button
                 type="button"
@@ -1634,7 +1644,7 @@ export function SettingsModal({ isOpen, onClose, isSetupMode = false }: Settings
                   </ol>
 
                   <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-md text-xs text-green-400">
-                    <strong>Note:</strong> The MCP server runs independently and connects directly to your Atomic database. Atomic doesn't need to be running for Claude to access your notes.
+                    <strong>Note:</strong> The MCP server is served over HTTP by the Atomic server. The server must be running for Claude to access your notes.
                   </div>
                 </div>
               )}

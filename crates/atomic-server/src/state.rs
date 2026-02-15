@@ -45,6 +45,14 @@ pub enum ServerEvent {
         atom: atomic_core::AtomWithTags,
     },
 
+    // Import progress events
+    ImportProgress {
+        current: i32,
+        total: i32,
+        current_file: String,
+        status: String,
+    },
+
     // Chat streaming events
     ChatStreamDelta {
         conversation_id: String,

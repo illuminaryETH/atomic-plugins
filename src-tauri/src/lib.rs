@@ -1,10 +1,61 @@
-mod commands;
-mod event_bridge;
-mod http_server;
-mod mcp;
-mod models;
-
+use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use tauri::Manager;
+use tauri_plugin_shell::ShellExt;
+
+const SIDECAR_PORT: u16 = 44380;
+const HEALTH_POLL_INTERVAL_MS: u64 = 100;
+const HEALTH_TIMEOUT_MS: u64 = 10_000;
+
+/// Config returned to the frontend so it can connect to the sidecar
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalServerConfig {
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    #[serde(rename = "authToken")]
+    pub auth_token: String,
+}
+
+/// Holds the sidecar child process for cleanup on exit
+struct SidecarChild(tauri_plugin_shell::process::CommandChild);
+
+struct SidecarState {
+    child: Mutex<Option<SidecarChild>>,
+}
+
+#[tauri::command]
+fn get_local_server_config(
+    config: tauri::State<'_, LocalServerConfig>,
+) -> LocalServerConfig {
+    config.inner().clone()
+}
+
+/// Read or create the local server auth token.
+/// This is the ONLY remaining use of atomic-core in the Tauri crate.
+fn ensure_local_token(app_data_dir: &std::path::Path, db_path: &std::path::Path) -> String {
+    let token_file = app_data_dir.join("local_server_token");
+
+    // Try to read existing token
+    if let Ok(token) = std::fs::read_to_string(&token_file) {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return token;
+        }
+    }
+
+    // Create a new token via atomic-core
+    let core = atomic_core::AtomicCore::open_or_create(db_path)
+        .expect("Failed to open database for token bootstrap");
+
+    let (_info, raw_token) = core
+        .create_api_token("desktop")
+        .expect("Failed to create API token");
+
+    std::fs::write(&token_file, &raw_token)
+        .expect("Failed to write local server token file");
+
+    raw_token
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,97 +79,114 @@ pub fn run() {
             let db_path = app_data_dir.join(&db_name);
             eprintln!("Using database: {:?}", db_path);
 
-            let core = atomic_core::AtomicCore::open_or_create(&db_path)
-                .expect("Failed to initialize AtomicCore");
+            // Bootstrap auth token (only use of atomic-core)
+            let auth_token = ensure_local_token(&app_data_dir, &db_path);
 
-            app.manage(core.clone());
+            let base_url = format!("http://127.0.0.1:{}", SIDECAR_PORT);
+            let config = LocalServerConfig {
+                base_url: base_url.clone(),
+                auth_token: auth_token.clone(),
+            };
+            app.manage(config.clone());
 
-            // Start HTTP server in background for browser extension
-            let server_core = core;
-            let server_app_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-                rt.block_on(async move {
-                    if let Err(e) =
-                        http_server::start_server(server_core, server_app_handle).await
-                    {
-                        eprintln!("HTTP server error: {}", e);
+            // Check if an Atomic server is already running on the port
+            let health_url = format!("{}/health", base_url);
+            let already_running = reqwest::blocking::Client::new()
+                .get(&health_url)
+                .timeout(std::time::Duration::from_millis(500))
+                .send()
+                .is_ok_and(|r| r.status().is_success());
+
+            if already_running {
+                eprintln!("Atomic server already running at {}, reusing it", base_url);
+                app.manage(SidecarState {
+                    child: Mutex::new(None),
+                });
+            } else {
+                // Spawn atomic-server as a sidecar
+                let shell = app.shell();
+                let sidecar_cmd = shell
+                    .sidecar("atomic-server")
+                    .expect("Failed to create sidecar command")
+                    .args([
+                        "--db-path",
+                        db_path.to_str().unwrap(),
+                        "serve",
+                        "--port",
+                        &SIDECAR_PORT.to_string(),
+                    ]);
+
+                let (mut rx, child) =
+                    sidecar_cmd.spawn().expect("Failed to spawn atomic-server sidecar");
+
+                // Log sidecar output
+                tauri::async_runtime::spawn(async move {
+                    use tauri_plugin_shell::process::CommandEvent;
+                    while let Some(event) = rx.recv().await {
+                        match event {
+                            CommandEvent::Stdout(line) => {
+                                eprintln!("[sidecar stdout] {}", String::from_utf8_lossy(&line));
+                            }
+                            CommandEvent::Stderr(line) => {
+                                eprintln!("[sidecar stderr] {}", String::from_utf8_lossy(&line));
+                            }
+                            CommandEvent::Terminated(payload) => {
+                                eprintln!("[sidecar] terminated: {:?}", payload);
+                                break;
+                            }
+                            CommandEvent::Error(err) => {
+                                eprintln!("[sidecar] error: {}", err);
+                            }
+                            _ => {}
+                        }
                     }
                 });
-            });
+
+                app.manage(SidecarState {
+                    child: Mutex::new(Some(SidecarChild(child))),
+                });
+
+                // Poll health endpoint until ready
+                let start = std::time::Instant::now();
+                loop {
+                    if start.elapsed().as_millis() as u64 > HEALTH_TIMEOUT_MS {
+                        eprintln!("Warning: sidecar health check timed out after {}ms", HEALTH_TIMEOUT_MS);
+                        break;
+                    }
+                    match reqwest::blocking::Client::new()
+                        .get(&health_url)
+                        .timeout(std::time::Duration::from_millis(500))
+                        .send()
+                    {
+                        Ok(resp) if resp.status().is_success() => {
+                            eprintln!("Sidecar ready at {} ({}ms)", base_url, start.elapsed().as_millis());
+                            break;
+                        }
+                        _ => {
+                            std::thread::sleep(std::time::Duration::from_millis(HEALTH_POLL_INTERVAL_MS));
+                        }
+                    }
+                }
+            }
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_all_atoms,
-            commands::get_atom_by_id,
-            commands::create_atom,
-            commands::update_atom,
-            commands::delete_atom,
-            commands::list_atoms,
-            commands::get_all_tags,
-            commands::create_tag,
-            commands::update_tag,
-            commands::delete_tag,
-            commands::get_atoms_by_tag,
-            commands::check_sqlite_vec,
-            commands::find_similar_atoms,
-            commands::search_atoms_semantic,
-            commands::search_atoms_keyword,
-            commands::search_atoms_hybrid,
-            commands::retry_embedding,
-            commands::reset_stuck_processing,
-            commands::process_pending_embeddings,
-            commands::process_pending_tagging,
-            commands::get_embedding_status,
-            commands::get_settings,
-            commands::set_setting,
-            commands::test_openrouter_connection,
-            commands::get_available_llm_models,
-            commands::get_all_wiki_articles,
-            commands::get_wiki_article,
-            commands::get_wiki_article_status,
-            commands::generate_wiki_article,
-            commands::update_wiki_article,
-            commands::delete_wiki_article,
-            commands::get_atom_positions,
-            commands::save_atom_positions,
-            commands::get_atoms_with_embeddings,
-            commands::get_canvas_level,
-            // Semantic graph commands
-            commands::get_semantic_edges,
-            commands::get_atom_neighborhood,
-            commands::rebuild_semantic_edges,
-            // Clustering commands
-            commands::compute_clusters,
-            commands::get_clusters,
-            commands::get_connection_counts,
-            // Ollama commands
-            commands::test_ollama,
-            commands::get_ollama_models,
-            commands::get_ollama_embedding_models_cmd,
-            commands::get_ollama_llm_models_cmd,
-            // Setup command
-            commands::verify_provider_configured,
-            // Chat commands
-            commands::create_conversation,
-            commands::get_conversations,
-            commands::get_conversation,
-            commands::update_conversation,
-            commands::delete_conversation,
-            commands::set_conversation_scope,
-            commands::add_tag_to_scope,
-            commands::remove_tag_from_scope,
-            // Agent/messaging
-            commands::send_chat_message,
-            // Tag compaction
-            commands::compact_tags,
-            // Import commands
-            commands::import_obsidian_vault,
-            // MCP bridge commands
-            commands::get_mcp_bridge_path,
-            commands::get_mcp_config,
+            get_local_server_config,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill sidecar on app exit
+                if let Some(state) = app.try_state::<SidecarState>() {
+                    if let Ok(mut child_opt) = state.child.lock() {
+                        if let Some(SidecarChild(child)) = child_opt.take() {
+                            eprintln!("Shutting down sidecar...");
+                            let _ = child.kill();
+                        }
+                    }
+                }
+            }
+        });
 }

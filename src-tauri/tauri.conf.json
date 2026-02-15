@@ -40,7 +40,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/atomic-mcp"
+      "binaries/atomic-server"
     ]
   }
 }
