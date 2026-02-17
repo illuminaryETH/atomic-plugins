@@ -9,8 +9,10 @@ gen/
 atomic.db
 atomic.db-journal
 atomic.db-wal
+atomic.db-shm
 docker-compose.prod.yml
 
 # iOS
 ios/AtomicMobile.xcodeproj/
 ios/DerivedData/
+ios/build/
