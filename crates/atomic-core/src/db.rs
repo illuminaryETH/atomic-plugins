@@ -8,6 +8,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const READ_POOL_SIZE: usize = 4;
+const SERVER_READ_POOL_SIZE: usize = 16;
+
+/// Statement cache capacity per connection (default is 16, too small for our query variety)
+const STMT_CACHE_CAPACITY: usize = 64;
+
+/// Base PRAGMAs applied to every connection
+const BASE_PRAGMAS: &str = "\
+    PRAGMA journal_mode=WAL; \
+    PRAGMA synchronous=NORMAL; \
+    PRAGMA busy_timeout=5000; \
+    PRAGMA cache_size=-64000; \
+    PRAGMA mmap_size=268435456; \
+    PRAGMA temp_store=MEMORY; \
+";
 
 /// A read-only connection handle — either borrowed from the pool or a temporary connection.
 pub enum ReadConn<'a> {
@@ -46,6 +60,14 @@ impl Database {
     }
 
     fn open_internal(path: &Path, create: bool) -> Result<Self, AtomicCoreError> {
+        Self::open_with_pool_size(path, create, READ_POOL_SIZE)
+    }
+
+    fn open_with_pool_size(
+        path: &Path,
+        create: bool,
+        pool_size: usize,
+    ) -> Result<Self, AtomicCoreError> {
         // Register sqlite-vec extension
         unsafe {
             #[allow(clippy::missing_transmute_annotations)]
@@ -60,10 +82,16 @@ impl Database {
         }
 
         let conn = Connection::open(path)?;
+        conn.set_prepared_statement_cache_capacity(STMT_CACHE_CAPACITY);
 
-        // Enable WAL mode for concurrent reads with single writer
-        // busy_timeout prevents SQLITE_BUSY when another connection holds a write lock
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-64000; PRAGMA mmap_size=268435456;")?;
+        // Base PRAGMAs + WAL size limit (64 MB) to prevent unbounded WAL growth
+        conn.execute_batch(&format!(
+            "{} PRAGMA journal_size_limit=67108864;",
+            BASE_PRAGMAS
+        ))?;
+
+        // Checkpoint any WAL from a previous run to start clean
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
         if create {
             Self::run_migrations(&conn)?;
@@ -72,10 +100,11 @@ impl Database {
         let db_path = path.to_path_buf();
 
         // Pre-open read connections for the pool
-        let mut read_pool = Vec::with_capacity(READ_POOL_SIZE);
-        for _ in 0..READ_POOL_SIZE {
+        let mut read_pool = Vec::with_capacity(pool_size);
+        for _ in 0..pool_size {
             let rc = Connection::open(&db_path)?;
-            rc.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-64000; PRAGMA mmap_size=268435456; PRAGMA query_only=ON;")?;
+            rc.set_prepared_statement_cache_capacity(STMT_CACHE_CAPACITY);
+            rc.execute_batch(&format!("{} PRAGMA query_only=ON;", BASE_PRAGMAS))?;
             read_pool.push(Mutex::new(rc));
         }
 
@@ -96,7 +125,8 @@ impl Database {
         }
         // All pool slots busy — create a temporary connection
         let conn = Connection::open(&self.db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-64000; PRAGMA mmap_size=268435456; PRAGMA query_only=ON;")?;
+        conn.set_prepared_statement_cache_capacity(STMT_CACHE_CAPACITY);
+        conn.execute_batch(&format!("{} PRAGMA query_only=ON;", BASE_PRAGMAS))?;
         Ok(ReadConn::Temp(conn))
     }
 
@@ -106,8 +136,23 @@ impl Database {
         // sqlite-vec is registered via sqlite3_auto_extension in open_internal,
         // which applies to all connections opened after that call.
         let conn = Connection::open(&self.db_path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-64000; PRAGMA mmap_size=268435456;")?;
+        conn.set_prepared_statement_cache_capacity(STMT_CACHE_CAPACITY);
+        conn.execute_batch(BASE_PRAGMAS)?;
         Ok(conn)
+    }
+
+    /// Open with a larger read pool sized for server workloads.
+    pub fn open_for_server(path: impl AsRef<Path>) -> Result<Self, AtomicCoreError> {
+        Self::open_with_pool_size(path.as_ref(), false, SERVER_READ_POOL_SIZE)
+    }
+
+    /// Run PRAGMA optimize to update query planner statistics.
+    /// Call this on graceful shutdown for best effect.
+    pub fn optimize(&self) {
+        if let Ok(conn) = self.conn.lock() {
+            // 0x10002 = analyze tables that haven't been analyzed + merge FTS
+            let _ = conn.execute_batch("PRAGMA optimize=0x10002;");
+        }
     }
 
     /// Run database migrations

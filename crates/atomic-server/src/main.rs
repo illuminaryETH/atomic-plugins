@@ -34,22 +34,26 @@ async fn health() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize atomic-core
-    let core = atomic_core::AtomicCore::open_or_create(&cli.db_path)
-        .expect("Failed to open database");
-
     match cli.command {
         // Token management subcommands (no server needed)
         Some(Command::Token { action }) => {
+            let core = atomic_core::AtomicCore::open_or_create(&cli.db_path)
+                .expect("Failed to open database");
             run_token_command(&core, action);
             Ok(())
         }
 
-        // Server mode (default)
+        // Server mode — use larger read pool
         Some(Command::Serve { port, bind, public_url }) => {
+            let core = atomic_core::AtomicCore::open_for_server(&cli.db_path)
+                .expect("Failed to open database");
             run_server(core, &cli.db_path, port, &bind, public_url).await
         }
-        None => run_server(core, &cli.db_path, 8080, "127.0.0.1", None).await,
+        None => {
+            let core = atomic_core::AtomicCore::open_for_server(&cli.db_path)
+                .expect("Failed to open database");
+            run_server(core, &cli.db_path, 8080, "127.0.0.1", None).await
+        }
     }
 }
 
@@ -204,6 +208,7 @@ async fn run_server(
     }
 
     let bind_owned = bind.to_string();
+    let shutdown_core = core.clone();
 
     HttpServer::new(move || {
         let cors = Cors::permissive();
@@ -259,5 +264,11 @@ async fn run_server(
     .workers(4)
     .bind((bind_owned.as_str(), port))?
     .run()
-    .await
+    .await?;
+
+    // Graceful shutdown: update query planner statistics
+    println!("Shutting down — running PRAGMA optimize...");
+    shutdown_core.optimize();
+
+    Ok(())
 }

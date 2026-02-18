@@ -93,6 +93,17 @@ impl AtomicCore {
         Ok(Self { db: Arc::new(db) })
     }
 
+    /// Open an existing database with a larger read pool sized for server workloads.
+    pub fn open_for_server(db_path: impl AsRef<Path>) -> Result<Self, AtomicCoreError> {
+        let db = Database::open_for_server(db_path)?;
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Run PRAGMA optimize — call on graceful shutdown.
+    pub fn optimize(&self) {
+        self.db.optimize();
+    }
+
     /// Open an existing database or create a new one
     pub fn open_or_create(db_path: impl AsRef<Path>) -> Result<Self, AtomicCoreError> {
         let db = Database::open_or_create(db_path)?;
