@@ -1,6 +1,6 @@
 //! Wiki article routes
 
-use crate::error::ok_or_error;
+use crate::error::{blocking_ok, ok_or_error};
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
@@ -23,12 +23,14 @@ pub async fn get_all_wiki_articles(state: web::Data<AppState>) -> HttpResponse {
 
 pub async fn get_wiki(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let tag_id = path.into_inner();
-    ok_or_error(state.core.get_wiki(&tag_id))
+    let core = state.core.clone();
+    blocking_ok(move || core.get_wiki(&tag_id)).await
 }
 
 pub async fn get_wiki_status(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let tag_id = path.into_inner();
-    ok_or_error(state.core.get_wiki_status(&tag_id))
+    let core = state.core.clone();
+    blocking_ok(move || core.get_wiki_status(&tag_id)).await
 }
 
 #[derive(Deserialize)]
@@ -156,7 +158,8 @@ pub async fn update_wiki(
 
 pub async fn delete_wiki(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let tag_id = path.into_inner();
-    ok_or_error(state.core.delete_wiki(&tag_id))
+    let core = state.core.clone();
+    blocking_ok(move || core.delete_wiki(&tag_id)).await
 }
 
 #[derive(Deserialize)]
@@ -170,12 +173,15 @@ pub async fn get_related_tags(
     query: web::Query<RelatedTagsQuery>,
 ) -> HttpResponse {
     let tag_id = path.into_inner();
-    ok_or_error(state.core.get_related_tags(&tag_id, query.limit.unwrap_or(10)))
+    let limit = query.limit.unwrap_or(10);
+    let core = state.core.clone();
+    blocking_ok(move || core.get_related_tags(&tag_id, limit)).await
 }
 
 pub async fn get_wiki_links(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let tag_id = path.into_inner();
-    ok_or_error(state.core.get_wiki_links(&tag_id))
+    let core = state.core.clone();
+    blocking_ok(move || core.get_wiki_links(&tag_id)).await
 }
 
 #[derive(Deserialize)]
@@ -187,7 +193,9 @@ pub async fn get_wiki_suggestions(
     state: web::Data<AppState>,
     query: web::Query<SuggestionsQuery>,
 ) -> HttpResponse {
-    ok_or_error(state.core.get_suggested_wiki_articles(query.limit.unwrap_or(10)))
+    let limit = query.limit.unwrap_or(10);
+    let core = state.core.clone();
+    blocking_ok(move || core.get_suggested_wiki_articles(limit)).await
 }
 
 pub async fn recompute_all_tag_embeddings(state: web::Data<AppState>) -> HttpResponse {

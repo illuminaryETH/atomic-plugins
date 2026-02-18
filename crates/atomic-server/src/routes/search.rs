@@ -1,6 +1,6 @@
 //! Search routes
 
-use crate::error::ok_or_error;
+use crate::error::{blocking_ok, ok_or_error};
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
 use atomic_core::{SearchMode, SearchOptions};
@@ -50,5 +50,6 @@ pub async fn find_similar(
     let atom_id = path.into_inner();
     let limit = query.limit.unwrap_or(10);
     let threshold = query.threshold.unwrap_or(0.7);
-    ok_or_error(state.core.find_similar(&atom_id, limit, threshold))
+    let core = state.core.clone();
+    blocking_ok(move || core.find_similar(&atom_id, limit, threshold)).await
 }

@@ -464,8 +464,10 @@ impl AtomicCore {
     pub fn delete_atom(&self, id: &str) -> Result<(), AtomicCoreError> {
         let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
 
-        conn.execute("DELETE FROM atoms WHERE id = ?1", [id])
-            ?;
+        // Explicit delete from atom_tags so the trigger decrements tags.atom_count.
+        // (FK CASCADE is off, so this won't happen automatically.)
+        conn.execute("DELETE FROM atom_tags WHERE atom_id = ?1", [id])?;
+        conn.execute("DELETE FROM atoms WHERE id = ?1", [id])?;
 
         Ok(())
     }
@@ -537,43 +539,51 @@ impl AtomicCore {
         let conn = self.db.read_conn()?;
         let use_cursor = cursor.is_some() && cursor_id.is_some();
 
-        // For tag-scoped queries, drive from atom_tags index (sequential scan)
-        // instead of scanning atoms and probing atom_tags per row (random I/O).
+        // Tag-scoped queries use EXISTS so SQLite walks idx_atoms_updated_id
+        // in ORDER BY order and stops after LIMIT rows — no full materialization.
+        // Tags are ≤2 levels deep, so flat OR replaces recursive CTE.
         //
-        // Non-cursor tag queries fold the count into the fetch via COUNT(*) OVER()
-        // to avoid evaluating the recursive CTE twice.
+        // Count: leaf tags read the denormalized atom_count column (instant).
+        // Root tags (with children) fall back to COUNT(DISTINCT) since atoms
+        // can be tagged with multiple children, making SUM overcount.
         type AtomRow = (String, String, Option<String>, String, String, String, String);
         let (total_count, atoms): (i32, Vec<AtomRow>) = if let Some(tid) = tag_id {
-            if use_cursor {
-                // Cursor pages: separate count (cursor doesn't affect total)
-                let count: i32 = conn.query_row(
-                    "WITH RECURSIVE descendant_tags(id) AS (
-                        SELECT ?1
-                        UNION ALL
-                        SELECT t.id FROM tags t
-                        INNER JOIN descendant_tags dt ON t.parent_id = dt.id
-                    )
-                    SELECT COUNT(DISTINCT at.atom_id)
-                    FROM atom_tags at
-                    WHERE at.tag_id IN (SELECT id FROM descendant_tags)",
+            let has_children: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM tags WHERE parent_id = ?1)",
+                rusqlite::params![tid],
+                |row| row.get(0),
+            )?;
+            let count: i32 = if has_children {
+                conn.query_row(
+                    "SELECT COUNT(DISTINCT at.atom_id)
+                     FROM atom_tags at
+                     WHERE at.tag_id IN (
+                         SELECT id FROM tags WHERE id = ?1 OR parent_id = ?1
+                     )",
                     rusqlite::params![tid],
                     |row| row.get(0),
-                )?;
+                )?
+            } else {
+                conn.query_row(
+                    "SELECT atom_count FROM tags WHERE id = ?1",
+                    rusqlite::params![tid],
+                    |row| row.get(0),
+                )?
+            };
+            let rows = if use_cursor {
                 let mut stmt = conn.prepare(
-                    "WITH RECURSIVE descendant_tags(id) AS (
-                        SELECT ?1
-                        UNION ALL
-                        SELECT t.id FROM tags t
-                        INNER JOIN descendant_tags dt ON t.parent_id = dt.id
-                    )
-                    SELECT a.id, SUBSTR(a.content, 1, 250), a.source_url,
+                    "SELECT a.id, SUBSTR(a.content, 1, 250), a.source_url,
                         a.created_at, a.updated_at,
                         COALESCE(a.embedding_status, 'pending'), COALESCE(a.tagging_status, 'pending')
-                    FROM atom_tags at
-                    INNER JOIN atoms a ON a.id = at.atom_id
-                    WHERE at.tag_id IN (SELECT id FROM descendant_tags)
+                    FROM atoms a
+                    WHERE EXISTS (
+                        SELECT 1 FROM atom_tags at
+                        WHERE at.atom_id = a.id
+                        AND at.tag_id IN (
+                            SELECT id FROM tags WHERE id = ?1 OR parent_id = ?1
+                        )
+                    )
                     AND (a.updated_at, a.id) < (?2, ?3)
-                    GROUP BY a.id
                     ORDER BY a.updated_at DESC, a.id DESC
                     LIMIT ?4",
                 )?;
@@ -581,37 +591,29 @@ impl AtomicCore {
                     rusqlite::params![tid, cursor.unwrap(), cursor_id.unwrap(), limit],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
                 )?.collect::<Result<Vec<_>, _>>()?;
-                (count, rows)
+                rows
             } else {
-                // First page: single query with COUNT(*) OVER() for total
                 let mut stmt = conn.prepare(
-                    "WITH RECURSIVE descendant_tags(id) AS (
-                        SELECT ?1
-                        UNION ALL
-                        SELECT t.id FROM tags t
-                        INNER JOIN descendant_tags dt ON t.parent_id = dt.id
-                    )
-                    SELECT a.id, SUBSTR(a.content, 1, 250), a.source_url,
+                    "SELECT a.id, SUBSTR(a.content, 1, 250), a.source_url,
                         a.created_at, a.updated_at,
-                        COALESCE(a.embedding_status, 'pending'), COALESCE(a.tagging_status, 'pending'),
-                        COUNT(*) OVER () as total_count
-                    FROM atom_tags at
-                    INNER JOIN atoms a ON a.id = at.atom_id
-                    WHERE at.tag_id IN (SELECT id FROM descendant_tags)
-                    GROUP BY a.id
+                        COALESCE(a.embedding_status, 'pending'), COALESCE(a.tagging_status, 'pending')
+                    FROM atoms a
+                    WHERE EXISTS (
+                        SELECT 1 FROM atom_tags at
+                        WHERE at.atom_id = a.id
+                        AND at.tag_id IN (
+                            SELECT id FROM tags WHERE id = ?1 OR parent_id = ?1
+                        )
+                    )
                     ORDER BY a.updated_at DESC, a.id DESC
                     LIMIT ?2 OFFSET ?3",
                 )?;
-                let rows_with_count: Vec<(String, String, Option<String>, String, String, String, String, i32)> =
-                    stmt.query_map(rusqlite::params![tid, limit, offset], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?))
-                    })?.collect::<Result<Vec<_>, _>>()?;
-                let count = rows_with_count.first().map(|r| r.7).unwrap_or(0);
-                let rows = rows_with_count.into_iter()
-                    .map(|(a, b, c, d, e, f, g, _)| (a, b, c, d, e, f, g))
-                    .collect();
-                (count, rows)
-            }
+                let rows = stmt.query_map(rusqlite::params![tid, limit, offset], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
+                })?.collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+            (count, rows)
         } else if use_cursor {
             let count: i32 = conn.query_row("SELECT COUNT(*) FROM atoms", [], |row| row.get(0))?;
             let mut stmt = conn.prepare(
@@ -694,7 +696,7 @@ impl AtomicCore {
     }
 
     /// Get direct children of a specific tag with pagination.
-    /// Returns direct children only (with recursive atom counts); grandchildren
+    /// Returns direct children only (with denormalized atom counts); grandchildren
     /// are loaded lazily via subsequent calls.
     pub fn get_tag_children(
         &self,
@@ -716,36 +718,14 @@ impl AtomicCore {
             return Ok(PaginatedTagChildren { children: Vec::new(), total: 0 });
         }
 
-        // Get direct children with recursive atom counts and children_total.
-        // The CTE walks each direct child's subtree, tracking which root child it belongs to,
-        // so we can sum atom counts per root child without loading the full subtree into Rust.
+        // atom_count is denormalized on the tags table (maintained by triggers),
+        // so no JOIN or GROUP BY needed — just read the column directly.
         let mut stmt = conn.prepare(
-            "WITH RECURSIVE child_descendants(id, root_child_id) AS (
-                SELECT id, id FROM tags WHERE parent_id = ?1
-                UNION ALL
-                SELECT t.id, cd.root_child_id
-                FROM tags t
-                JOIN child_descendants cd ON t.parent_id = cd.id
-            )
-            SELECT
-                t.id, t.name, t.parent_id, t.created_at,
-                COALESCE(counts.atom_count, 0) AS atom_count,
-                COALESCE(cc.children_count, 0) AS children_total
+            "SELECT t.id, t.name, t.parent_id, t.created_at, t.atom_count,
+                (SELECT COUNT(*) FROM tags c WHERE c.parent_id = t.id) AS children_total
             FROM tags t
-            LEFT JOIN (
-                SELECT cd.root_child_id, COUNT(DISTINCT at.atom_id) AS atom_count
-                FROM child_descendants cd
-                JOIN atom_tags at ON at.tag_id = cd.id
-                GROUP BY cd.root_child_id
-            ) counts ON counts.root_child_id = t.id
-            LEFT JOIN (
-                SELECT parent_id, COUNT(*) AS children_count
-                FROM tags
-                WHERE parent_id IN (SELECT id FROM tags WHERE parent_id = ?1)
-                GROUP BY parent_id
-            ) cc ON cc.parent_id = t.id
             WHERE t.parent_id = ?1
-            ORDER BY atom_count DESC
+            ORDER BY t.atom_count DESC
             LIMIT ?2 OFFSET ?3"
         )?;
 
@@ -773,32 +753,25 @@ impl AtomicCore {
     }
 
     /// Load all tags and their direct counts from the database.
+    /// Reads the denormalized atom_count column instead of scanning atom_tags.
     fn load_tags_and_counts(conn: &Connection) -> Result<(Vec<Tag>, HashMap<String, i32>), AtomicCoreError> {
         let mut stmt = conn
-            .prepare("SELECT id, name, parent_id, created_at FROM tags ORDER BY name")?;
+            .prepare("SELECT id, name, parent_id, created_at, atom_count FROM tags ORDER BY name")?;
 
+        let mut direct_counts: HashMap<String, i32> = HashMap::new();
         let all_tags: Vec<Tag> = stmt
             .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let count: i32 = row.get(4)?;
+                direct_counts.insert(id.clone(), count);
                 Ok(Tag {
-                    id: row.get(0)?,
+                    id,
                     name: row.get(1)?,
                     parent_id: row.get(2)?,
                     created_at: row.get(3)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-
-        let mut count_stmt = conn
-            .prepare("SELECT tag_id, COUNT(*) FROM atom_tags GROUP BY tag_id")?;
-        let mut direct_counts: HashMap<String, i32> = HashMap::new();
-        let count_rows = count_stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
-            })?;
-        for row in count_rows {
-            let (tag_id, count) = row?;
-            direct_counts.insert(tag_id, count);
-        }
 
         Ok((all_tags, direct_counts))
     }

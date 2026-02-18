@@ -1,12 +1,13 @@
 //! Settings routes
 
-use crate::error::ok_or_error;
+use crate::error::{blocking_ok, ok_or_error};
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
 
 pub async fn get_settings(state: web::Data<AppState>) -> HttpResponse {
-    ok_or_error(state.core.get_settings())
+    let core = state.core.clone();
+    blocking_ok(move || core.get_settings()).await
 }
 
 #[derive(Deserialize)]
@@ -20,33 +21,32 @@ pub async fn set_setting(
     body: web::Json<SetSettingBody>,
 ) -> HttpResponse {
     let key = path.into_inner();
+    let value = body.into_inner().value;
 
     // Handle dimension-affecting settings
     let dimension_keys = ["provider", "embedding_model", "ollama_embedding_model"];
     if dimension_keys.contains(&key.as_str()) {
         let db = state.core.database();
-        let conn = match db.conn.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                return HttpResponse::InternalServerError()
-                    .json(serde_json::json!({"error": e.to_string()}));
+        let core = state.core.clone();
+        let key2 = key.clone();
+        let value2 = value.clone();
+        match web::block(move || {
+            let conn = db.conn.lock().map_err(|e| atomic_core::AtomicCoreError::Lock(e.to_string()))?;
+            let (will_change, new_dim) =
+                atomic_core::db::will_dimension_change(&conn, &key2, &value2);
+            if will_change {
+                atomic_core::db::recreate_vec_chunks_with_dimension(&conn, new_dim)?;
             }
-        };
-
-        let (will_change, new_dim) =
-            atomic_core::db::will_dimension_change(&conn, &key, &body.value);
-
-        if will_change {
-            if let Err(e) =
-                atomic_core::db::recreate_vec_chunks_with_dimension(&conn, new_dim)
-            {
-                return HttpResponse::InternalServerError()
-                    .json(serde_json::json!({"error": e.to_string()}));
-            }
+            core.set_setting(&key, &value)
+        }).await {
+            Ok(result) => ok_or_error(result),
+            Err(e) => HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": e.to_string()})),
         }
+    } else {
+        let core = state.core.clone();
+        blocking_ok(move || core.set_setting(&key, &value)).await
     }
-
-    ok_or_error(state.core.set_setting(&key, &body.value))
 }
 
 #[derive(Deserialize)]

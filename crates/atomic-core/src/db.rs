@@ -176,6 +176,7 @@ impl Database {
                 name TEXT NOT NULL COLLATE NOCASE,
                 parent_id TEXT REFERENCES tags(id) ON DELETE SET NULL,
                 created_at TEXT NOT NULL,
+                atom_count INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(name COLLATE NOCASE)
             );
 
@@ -311,6 +312,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_semantic_edges_target ON semantic_edges(target_atom_id);
             CREATE INDEX IF NOT EXISTS idx_semantic_edges_similarity ON semantic_edges(similarity_score DESC);
             CREATE INDEX IF NOT EXISTS idx_tags_parent_id ON tags(parent_id);
+            CREATE INDEX IF NOT EXISTS idx_tags_parent_count ON tags(parent_id, atom_count DESC);
             CREATE INDEX IF NOT EXISTS idx_wiki_citations_article ON wiki_citations(wiki_article_id);
 
             -- Indexes for chat tables
@@ -375,6 +377,43 @@ impl Database {
                 updated_at TEXT NOT NULL
             );
             "#,
+        )?;
+
+        // Migrate: add atom_count column to tags if missing (existing DBs)
+        let has_atom_count: bool = conn
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('tags') WHERE name='atom_count'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if !has_atom_count {
+            conn.execute_batch(
+                "ALTER TABLE tags ADD COLUMN atom_count INTEGER NOT NULL DEFAULT 0;
+                 UPDATE tags SET atom_count = (
+                     SELECT COUNT(*) FROM atom_tags WHERE tag_id = tags.id
+                 );",
+            )?;
+        }
+
+        // Triggers to keep tags.atom_count in sync with atom_tags mutations.
+        // DROP IF EXISTS + recreate ensures triggers stay current across upgrades.
+        conn.execute_batch(
+            "DROP TRIGGER IF EXISTS atom_tags_insert_count;
+             DROP TRIGGER IF EXISTS atom_tags_delete_count;
+
+             CREATE TRIGGER atom_tags_insert_count
+             AFTER INSERT ON atom_tags
+             BEGIN
+                 UPDATE tags SET atom_count = atom_count + 1 WHERE id = NEW.tag_id;
+             END;
+
+             CREATE TRIGGER atom_tags_delete_count
+             AFTER DELETE ON atom_tags
+             BEGIN
+                 UPDATE tags SET atom_count = atom_count - 1 WHERE id = OLD.tag_id;
+             END;",
         )?;
 
         // Create vec_chunks virtual table if it doesn't exist

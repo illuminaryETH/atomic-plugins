@@ -1,6 +1,6 @@
 //! Chat / Conversation routes
 
-use crate::error::ok_or_error;
+use crate::error::blocking_ok;
 use crate::event_bridge::chat_event_callback;
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
@@ -17,12 +17,11 @@ pub async fn create_conversation(
     body: web::Json<CreateConversationBody>,
 ) -> HttpResponse {
     let req = body.into_inner();
-    match state
-        .core
-        .create_conversation(&req.tag_ids, req.title.as_deref())
-    {
-        Ok(conv) => HttpResponse::Created().json(conv),
-        Err(e) => crate::error::error_response(e),
+    let core = state.core.clone();
+    match web::block(move || core.create_conversation(&req.tag_ids, req.title.as_deref())).await {
+        Ok(Ok(conv)) => HttpResponse::Created().json(conv),
+        Ok(Err(e)) => crate::error::error_response(e),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
     }
 }
 
@@ -39,11 +38,9 @@ pub async fn get_conversations(
 ) -> HttpResponse {
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
-    ok_or_error(
-        state
-            .core
-            .get_conversations(query.filter_tag_id.as_deref(), limit, offset),
-    )
+    let filter_tag_id = query.filter_tag_id.clone();
+    let core = state.core.clone();
+    blocking_ok(move || core.get_conversations(filter_tag_id.as_deref(), limit, offset)).await
 }
 
 pub async fn get_conversation(
@@ -51,12 +48,14 @@ pub async fn get_conversation(
     path: web::Path<String>,
 ) -> HttpResponse {
     let id = path.into_inner();
-    match state.core.get_conversation(&id) {
-        Ok(Some(conv)) => HttpResponse::Ok().json(conv),
-        Ok(None) => {
+    let core = state.core.clone();
+    match web::block(move || core.get_conversation(&id)).await {
+        Ok(Ok(Some(conv))) => HttpResponse::Ok().json(conv),
+        Ok(Ok(None)) => {
             HttpResponse::NotFound().json(serde_json::json!({"error": "Conversation not found"}))
         }
-        Err(e) => crate::error::error_response(e),
+        Ok(Err(e)) => crate::error::error_response(e),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
     }
 }
 
@@ -73,11 +72,8 @@ pub async fn update_conversation(
 ) -> HttpResponse {
     let id = path.into_inner();
     let req = body.into_inner();
-    ok_or_error(
-        state
-            .core
-            .update_conversation(&id, req.title.as_deref(), req.is_archived),
-    )
+    let core = state.core.clone();
+    blocking_ok(move || core.update_conversation(&id, req.title.as_deref(), req.is_archived)).await
 }
 
 pub async fn delete_conversation(
@@ -85,7 +81,8 @@ pub async fn delete_conversation(
     path: web::Path<String>,
 ) -> HttpResponse {
     let id = path.into_inner();
-    ok_or_error(state.core.delete_conversation(&id))
+    let core = state.core.clone();
+    blocking_ok(move || core.delete_conversation(&id)).await
 }
 
 #[derive(Deserialize)]
@@ -99,7 +96,9 @@ pub async fn set_conversation_scope(
     body: web::Json<SetScopeBody>,
 ) -> HttpResponse {
     let id = path.into_inner();
-    ok_or_error(state.core.set_conversation_scope(&id, &body.tag_ids))
+    let tag_ids = body.into_inner().tag_ids;
+    let core = state.core.clone();
+    blocking_ok(move || core.set_conversation_scope(&id, &tag_ids)).await
 }
 
 #[derive(Deserialize)]
@@ -113,7 +112,9 @@ pub async fn add_tag_to_scope(
     body: web::Json<AddTagBody>,
 ) -> HttpResponse {
     let id = path.into_inner();
-    ok_or_error(state.core.add_tag_to_scope(&id, &body.tag_id))
+    let tag_id = body.into_inner().tag_id;
+    let core = state.core.clone();
+    blocking_ok(move || core.add_tag_to_scope(&id, &tag_id)).await
 }
 
 pub async fn remove_tag_from_scope(
@@ -121,7 +122,8 @@ pub async fn remove_tag_from_scope(
     path: web::Path<(String, String)>,
 ) -> HttpResponse {
     let (id, tag_id) = path.into_inner();
-    ok_or_error(state.core.remove_tag_from_scope(&id, &tag_id))
+    let core = state.core.clone();
+    blocking_ok(move || core.remove_tag_from_scope(&id, &tag_id)).await
 }
 
 #[derive(Deserialize)]
@@ -135,11 +137,12 @@ pub async fn send_chat_message(
     body: web::Json<SendMessageBody>,
 ) -> HttpResponse {
     let conversation_id = path.into_inner();
+    let content = body.into_inner().content;
     let on_event = chat_event_callback(state.event_tx.clone());
 
     match state
         .core
-        .send_chat_message(&conversation_id, &body.content, on_event)
+        .send_chat_message(&conversation_id, &content, on_event)
         .await
     {
         Ok(message) => HttpResponse::Ok().json(message),

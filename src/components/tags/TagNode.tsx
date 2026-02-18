@@ -51,7 +51,7 @@ export const TagNode = memo(function TagNode({ tag, level, selectedTagId, onSele
           : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-card)] hover:text-[var(--color-text-primary)]'
       }`}
       style={{ paddingLeft: `${8 + level * 16}px` }}
-      onClick={() => onSelect(tag.id)}
+      onClick={(e) => hasChildren ? handleToggle(e) : onSelect(tag.id)}
       onContextMenu={handleContextMenu}
     >
       {hasChildren ? (
@@ -72,26 +72,30 @@ export const TagNode = memo(function TagNode({ tag, level, selectedTagId, onSele
         <span className="w-4" />
       )}
       <span className="flex-1 truncate text-sm">{tag.name}</span>
-      {/* Chat icon - visible on hover */}
-      <button
-        onClick={handleChatClick}
-        className="w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-all"
-        title="Chat with this tag"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-      </button>
-      {/* Article icon - visible on hover */}
-      <button
-        onClick={handleWikiClick}
-        className="w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-all"
-        title="View wiki article"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      </button>
+      {!hasChildren && (
+        <>
+          {/* Chat icon - visible on hover */}
+          <button
+            onClick={handleChatClick}
+            className="w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-all"
+            title="Chat with this tag"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          </button>
+          {/* Article icon - visible on hover */}
+          <button
+            onClick={handleWikiClick}
+            className="w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-all"
+            title="View wiki article"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </button>
+        </>
+      )}
       <span className="text-xs text-[var(--color-text-tertiary)] tabular-nums">{tag.atom_count}</span>
     </div>
   );

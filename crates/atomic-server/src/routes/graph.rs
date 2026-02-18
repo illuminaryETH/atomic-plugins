@@ -1,6 +1,6 @@
 //! Semantic graph routes
 
-use crate::error::ok_or_error;
+use crate::error::blocking_ok;
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
@@ -15,7 +15,8 @@ pub async fn get_semantic_edges(
     query: web::Query<EdgesQuery>,
 ) -> HttpResponse {
     let min_similarity = query.min_similarity.unwrap_or(0.5);
-    ok_or_error(state.core.get_semantic_edges(min_similarity))
+    let core = state.core.clone();
+    blocking_ok(move || core.get_semantic_edges(min_similarity)).await
 }
 
 #[derive(Deserialize)]
@@ -32,9 +33,11 @@ pub async fn get_atom_neighborhood(
     let atom_id = path.into_inner();
     let depth = query.depth.unwrap_or(1);
     let min_similarity = query.min_similarity.unwrap_or(0.5);
-    ok_or_error(state.core.get_atom_neighborhood(&atom_id, depth, min_similarity))
+    let core = state.core.clone();
+    blocking_ok(move || core.get_atom_neighborhood(&atom_id, depth, min_similarity)).await
 }
 
 pub async fn rebuild_semantic_edges(state: web::Data<AppState>) -> HttpResponse {
-    ok_or_error(state.core.rebuild_semantic_edges())
+    let core = state.core.clone();
+    blocking_ok(move || core.rebuild_semantic_edges()).await
 }

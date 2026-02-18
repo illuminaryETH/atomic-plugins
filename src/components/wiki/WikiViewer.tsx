@@ -39,8 +39,6 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
   useEffect(() => {
     fetchArticle(tagId);
     fetchArticleStatus(tagId);
-    fetchRelatedTags(tagId);
-    fetchWikiLinks(tagId);
     // Ensure articles list is available for implicit back-linking
     if (articles.length === 0) {
       fetchAllArticles();
@@ -50,7 +48,15 @@ export function WikiViewer({ tagId, tagName }: WikiViewerProps) {
     return () => {
       clearArticle();
     };
-  }, [tagId, fetchArticle, fetchArticleStatus, fetchRelatedTags, fetchWikiLinks, clearArticle, articles.length, fetchAllArticles]);
+  }, [tagId, fetchArticle, fetchArticleStatus, clearArticle, articles.length, fetchAllArticles]);
+
+  // Only fetch related tags and wiki links when an article exists
+  useEffect(() => {
+    if (currentArticle) {
+      fetchRelatedTags(tagId);
+      fetchWikiLinks(tagId);
+    }
+  }, [tagId, currentArticle, fetchRelatedTags, fetchWikiLinks]);
 
   const handleGenerate = () => {
     generateArticle(tagId, tagName);

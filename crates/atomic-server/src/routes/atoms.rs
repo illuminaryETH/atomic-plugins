@@ -1,6 +1,6 @@
 //! Atom and Tag CRUD routes
 
-use crate::error::ok_or_error;
+use crate::error::{blocking_ok, ok_or_error};
 use crate::event_bridge::embedding_event_callback;
 use crate::state::{AppState, ServerEvent};
 use actix_web::{web, HttpResponse};
@@ -23,22 +23,29 @@ pub async fn get_atoms(
 ) -> HttpResponse {
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
-    let result = state.core.list_atoms(
-        query.tag_id.as_deref(),
-        limit,
-        offset,
-        query.cursor.as_deref(),
-        query.cursor_id.as_deref(),
-    );
-    ok_or_error(result)
+    let tag_id = query.tag_id.clone();
+    let cursor = query.cursor.clone();
+    let cursor_id = query.cursor_id.clone();
+    let core = state.core.clone();
+    blocking_ok(move || {
+        core.list_atoms(
+            tag_id.as_deref(),
+            limit,
+            offset,
+            cursor.as_deref(),
+            cursor_id.as_deref(),
+        )
+    }).await
 }
 
 pub async fn get_atom(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let id = path.into_inner();
-    match state.core.get_atom(&id) {
-        Ok(Some(atom)) => HttpResponse::Ok().json(atom),
-        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({"error": "Atom not found"})),
-        Err(e) => crate::error::error_response(e),
+    let core = state.core.clone();
+    match web::block(move || core.get_atom(&id)).await {
+        Ok(Ok(Some(atom))) => HttpResponse::Ok().json(atom),
+        Ok(Ok(None)) => HttpResponse::NotFound().json(serde_json::json!({"error": "Atom not found"})),
+        Ok(Err(e)) => crate::error::error_response(e),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
     }
 }
 
@@ -55,21 +62,24 @@ pub async fn create_atom(
 ) -> HttpResponse {
     let req = body.into_inner();
     let on_event = embedding_event_callback(state.event_tx.clone());
-    let result = state.core.create_atom(
-        atomic_core::CreateAtomRequest {
-            content: req.content,
-            source_url: req.source_url,
-            tag_ids: req.tag_ids,
-        },
-        on_event,
-    );
-    match result {
-        Ok(atom) => {
-            // Broadcast AtomCreated event to WebSocket clients
-            let _ = state.event_tx.send(ServerEvent::AtomCreated { atom: atom.clone() });
+    let core = state.core.clone();
+    let event_tx = state.event_tx.clone();
+    match web::block(move || {
+        core.create_atom(
+            atomic_core::CreateAtomRequest {
+                content: req.content,
+                source_url: req.source_url,
+                tag_ids: req.tag_ids,
+            },
+            on_event,
+        )
+    }).await {
+        Ok(Ok(atom)) => {
+            let _ = event_tx.send(ServerEvent::AtomCreated { atom: atom.clone() });
             HttpResponse::Created().json(atom)
         }
-        Err(e) => crate::error::error_response(e),
+        Ok(Err(e)) => crate::error::error_response(e),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
     }
 }
 
@@ -88,21 +98,24 @@ pub async fn update_atom(
     let id = path.into_inner();
     let req = body.into_inner();
     let on_event = embedding_event_callback(state.event_tx.clone());
-    let result = state.core.update_atom(
-        &id,
-        atomic_core::UpdateAtomRequest {
-            content: req.content,
-            source_url: req.source_url,
-            tag_ids: req.tag_ids,
-        },
-        on_event,
-    );
-    ok_or_error(result)
+    let core = state.core.clone();
+    blocking_ok(move || {
+        core.update_atom(
+            &id,
+            atomic_core::UpdateAtomRequest {
+                content: req.content,
+                source_url: req.source_url,
+                tag_ids: req.tag_ids,
+            },
+            on_event,
+        )
+    }).await
 }
 
 pub async fn delete_atom(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
     let id = path.into_inner();
-    ok_or_error(state.core.delete_atom(&id))
+    let core = state.core.clone();
+    blocking_ok(move || core.delete_atom(&id)).await
 }
 
 // ==================== Tags ====================
@@ -124,7 +137,8 @@ pub async fn get_tags(
     query: web::Query<GetTagsQuery>,
 ) -> HttpResponse {
     let min_count = query.min_count.unwrap_or(2);
-    ok_or_error(state.core.get_all_tags_filtered(min_count))
+    let core = state.core.clone();
+    blocking_ok(move || core.get_all_tags_filtered(min_count)).await
 }
 
 pub async fn get_tag_children(
@@ -136,7 +150,8 @@ pub async fn get_tag_children(
     let min_count = query.min_count.unwrap_or(0);
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
-    ok_or_error(state.core.get_tag_children(&parent_id, min_count, limit, offset))
+    let core = state.core.clone();
+    blocking_ok(move || core.get_tag_children(&parent_id, min_count, limit, offset)).await
 }
 
 #[derive(Deserialize)]
@@ -150,9 +165,11 @@ pub async fn create_tag(
     body: web::Json<CreateTagRequest>,
 ) -> HttpResponse {
     let req = body.into_inner();
-    match state.core.create_tag(&req.name, req.parent_id.as_deref()) {
-        Ok(tag) => HttpResponse::Created().json(tag),
-        Err(e) => crate::error::error_response(e),
+    let core = state.core.clone();
+    match web::block(move || core.create_tag(&req.name, req.parent_id.as_deref())).await {
+        Ok(Ok(tag)) => HttpResponse::Created().json(tag),
+        Ok(Err(e)) => crate::error::error_response(e),
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
     }
 }
 
@@ -169,7 +186,8 @@ pub async fn update_tag(
 ) -> HttpResponse {
     let id = path.into_inner();
     let req = body.into_inner();
-    ok_or_error(state.core.update_tag(&id, &req.name, req.parent_id.as_deref()))
+    let core = state.core.clone();
+    blocking_ok(move || core.update_tag(&id, &req.name, req.parent_id.as_deref())).await
 }
 
 pub async fn delete_tag(
@@ -179,5 +197,6 @@ pub async fn delete_tag(
 ) -> HttpResponse {
     let id = path.into_inner();
     let recursive = query.get("recursive").map(|v| v == "true").unwrap_or(false);
-    ok_or_error(state.core.delete_tag(&id, recursive))
+    let core = state.core.clone();
+    blocking_ok(move || core.delete_tag(&id, recursive)).await
 }
