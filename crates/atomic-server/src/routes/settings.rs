@@ -1,6 +1,6 @@
 //! Settings routes
 
-use crate::error::{blocking_ok, ok_or_error};
+use crate::error::blocking_ok;
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
@@ -23,23 +23,19 @@ pub async fn set_setting(
     let key = path.into_inner();
     let value = body.into_inner().value;
 
-    // Handle dimension-affecting settings
+    // Handle dimension-affecting settings via set_setting_with_reembed (avoids deadlock)
     let dimension_keys = ["provider", "embedding_model", "ollama_embedding_model"];
     if dimension_keys.contains(&key.as_str()) {
-        let db = state.core.database();
         let core = state.core.clone();
-        let key2 = key.clone();
-        let value2 = value.clone();
+        let on_event = crate::event_bridge::embedding_event_callback(state.event_tx.clone());
         match web::block(move || {
-            let conn = db.conn.lock().map_err(|e| atomic_core::AtomicCoreError::Lock(e.to_string()))?;
-            let (will_change, new_dim) =
-                atomic_core::db::will_dimension_change(&conn, &key2, &value2);
-            if will_change {
-                atomic_core::db::recreate_vec_chunks_with_dimension(&conn, new_dim)?;
-            }
-            core.set_setting(&key, &value)
+            core.set_setting_with_reembed(&key, &value, on_event)
         }).await {
-            Ok(result) => ok_or_error(result),
+            Ok(Ok((changed, count))) => HttpResponse::Ok().json(serde_json::json!({
+                "dimension_changed": changed,
+                "pending_reembed_count": count,
+            })),
+            Ok(Err(e)) => crate::error::error_response(e),
             Err(e) => HttpResponse::InternalServerError()
                 .json(serde_json::json!({"error": e.to_string()})),
         }
