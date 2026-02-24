@@ -1,0 +1,82 @@
+//! URL ingestion routes
+
+use crate::event_bridge::{embedding_event_callback, ingestion_event_callback};
+use crate::state::AppState;
+use actix_web::{web, HttpResponse};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct IngestUrlRequest {
+    pub url: String,
+    #[serde(default)]
+    pub tag_ids: Vec<String>,
+    pub title_hint: Option<String>,
+    pub published_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct IngestUrlsRequest {
+    pub urls: Vec<IngestUrlRequest>,
+}
+
+pub async fn ingest_url(
+    state: web::Data<AppState>,
+    body: web::Json<IngestUrlRequest>,
+) -> HttpResponse {
+    let request = atomic_core::IngestionRequest {
+        url: body.url.clone(),
+        tag_ids: body.tag_ids.clone(),
+        title_hint: body.title_hint.clone(),
+        published_at: body.published_at.clone(),
+    };
+
+    let on_ingest = ingestion_event_callback(state.event_tx.clone());
+    let on_embed = embedding_event_callback(state.event_tx.clone());
+
+    match state.core.ingest_url(request, on_ingest, on_embed).await {
+        Ok(result) => HttpResponse::Ok().json(result),
+        Err(e) => crate::error::error_response(e),
+    }
+}
+
+pub async fn ingest_urls(
+    state: web::Data<AppState>,
+    body: web::Json<IngestUrlsRequest>,
+) -> HttpResponse {
+    let requests: Vec<atomic_core::IngestionRequest> = body
+        .urls
+        .iter()
+        .map(|r| atomic_core::IngestionRequest {
+            url: r.url.clone(),
+            tag_ids: r.tag_ids.clone(),
+            title_hint: r.title_hint.clone(),
+            published_at: r.published_at.clone(),
+        })
+        .collect();
+
+    let on_ingest = ingestion_event_callback(state.event_tx.clone());
+    let on_embed = embedding_event_callback(state.event_tx.clone());
+
+    let results = state.core.ingest_urls(requests, on_ingest, on_embed).await;
+
+    let (successes, failures): (Vec<_>, Vec<_>) = results
+        .into_iter()
+        .enumerate()
+        .partition(|(_, r)| r.is_ok());
+
+    let ingested: Vec<_> = successes.into_iter().map(|(_, r)| r.unwrap()).collect();
+    let errors: Vec<_> = failures
+        .into_iter()
+        .map(|(i, r)| {
+            serde_json::json!({
+                "index": i,
+                "error": r.unwrap_err().to_string()
+            })
+        })
+        .collect();
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "ingested": ingested,
+        "errors": errors,
+    }))
+}

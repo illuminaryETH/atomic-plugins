@@ -4,6 +4,8 @@ struct Atom: Codable, Identifiable, Sendable {
     let id: String
     let content: String
     let sourceUrl: String?
+    let source: String?
+    let publishedAt: String?
     let createdAt: String
     let updatedAt: String
     let embeddingStatus: String
@@ -11,8 +13,9 @@ struct Atom: Codable, Identifiable, Sendable {
     let tags: [Tag]
 
     enum CodingKeys: String, CodingKey {
-        case id, content, tags
+        case id, content, source, tags
         case sourceUrl = "source_url"
+        case publishedAt = "published_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case embeddingStatus = "embedding_status"
@@ -25,6 +28,8 @@ struct AtomSummary: Codable, Identifiable, Sendable {
     let title: String
     let snippet: String
     let sourceUrl: String?
+    let source: String?
+    let publishedAt: String?
     let createdAt: String
     let updatedAt: String
     let embeddingStatus: String
@@ -32,12 +37,25 @@ struct AtomSummary: Codable, Identifiable, Sendable {
     let tags: [Tag]
 
     enum CodingKeys: String, CodingKey {
-        case id, title, snippet, tags
+        case id, title, snippet, source, tags
         case sourceUrl = "source_url"
+        case publishedAt = "published_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case embeddingStatus = "embedding_status"
         case taggingStatus = "tagging_status"
+    }
+}
+
+struct SourceInfo: Codable, Identifiable, Sendable {
+    let source: String
+    let atomCount: Int
+
+    var id: String { source }
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case atomCount = "atom_count"
     }
 }
 

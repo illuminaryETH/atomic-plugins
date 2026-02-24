@@ -15,15 +15,8 @@ use crate::providers::traits::EmbeddingConfig;
 use crate::providers::{get_embedding_provider, get_model_capabilities, ProviderConfig, ProviderType};
 use crate::settings;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, LazyLock};
-use tokio::sync::Semaphore;
+use std::sync::Arc;
 use uuid::Uuid;
-
-// Concurrency limits — these apply uniformly whether processing 1 or 10K atoms
-const MAX_CONCURRENT_TAGGING: usize = 4;
-
-static TAGGING_SEMAPHORE: LazyLock<Semaphore> =
-    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_TAGGING));
 
 /// Events emitted during the embedding/tagging pipeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -533,7 +526,7 @@ where
 
         let task = tokio::spawn(async move {
             // Acquire semaphore permit
-            let _permit = TAGGING_SEMAPHORE
+            let _permit = crate::executor::LLM_SEMAPHORE
                 .acquire()
                 .await
                 .expect("Semaphore closed unexpectedly");
@@ -584,15 +577,13 @@ pub fn spawn_embedding_task_single<F>(
     F: Fn(EmbeddingEvent) + Send + Sync + 'static,
 {
     let on_event = Arc::new(on_event);
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-
+    crate::executor::spawn(async move {
         // Emit started event
         on_event(EmbeddingEvent::Started {
             atom_id: atom_id.clone(),
         });
 
-        // Run embedding and tagging concurrently — they're independent now
+        // Run embedding and tagging concurrently — they're independent
         let db_embed = Arc::clone(&db);
         let db_tag = Arc::clone(&db);
         let atom_id_embed = atom_id.clone();
@@ -601,57 +592,55 @@ pub fn spawn_embedding_task_single<F>(
         let on_event_embed = Arc::clone(&on_event);
         let on_event_tag = Arc::clone(&on_event);
 
-        rt.block_on(async move {
-            let embed_handle = tokio::spawn(async move {
-                let result = process_embedding_only(&db_embed, &atom_id_embed, &content_embed).await;
-                match &result {
-                    Ok(()) => {
-                        on_event_embed(EmbeddingEvent::EmbeddingComplete {
-                            atom_id: atom_id_embed.clone(),
-                        });
-                    }
-                    Err(e) => {
-                        if let Ok(conn) = db_embed.conn.lock() {
-                            let _ = conn.execute(
-                                "UPDATE atoms SET embedding_status = 'failed' WHERE id = ?1",
-                                [&atom_id_embed],
-                            );
-                        }
-                        on_event_embed(EmbeddingEvent::EmbeddingFailed {
-                            atom_id: atom_id_embed.clone(),
-                            error: e.clone(),
-                        });
-                    }
+        let embed_handle = tokio::spawn(async move {
+            let result = process_embedding_only(&db_embed, &atom_id_embed, &content_embed).await;
+            match &result {
+                Ok(()) => {
+                    on_event_embed(EmbeddingEvent::EmbeddingComplete {
+                        atom_id: atom_id_embed.clone(),
+                    });
                 }
-            });
-
-            let tag_handle = tokio::spawn(async move {
-                let result = process_tagging_only(&db_tag, &atom_id_tag).await;
-                match result {
-                    Ok((tags_extracted, new_tags_created)) => {
-                        on_event_tag(EmbeddingEvent::TaggingComplete {
-                            atom_id: atom_id_tag.clone(),
-                            tags_extracted,
-                            new_tags_created,
-                        });
+                Err(e) => {
+                    if let Ok(conn) = db_embed.conn.lock() {
+                        let _ = conn.execute(
+                            "UPDATE atoms SET embedding_status = 'failed' WHERE id = ?1",
+                            [&atom_id_embed],
+                        );
                     }
-                    Err(e) => {
-                        if let Ok(conn) = db_tag.conn.lock() {
-                            let _ = conn.execute(
-                                "UPDATE atoms SET tagging_status = 'failed' WHERE id = ?1",
-                                [&atom_id_tag],
-                            );
-                        }
-                        on_event_tag(EmbeddingEvent::TaggingFailed {
-                            atom_id: atom_id_tag.clone(),
-                            error: e,
-                        });
-                    }
+                    on_event_embed(EmbeddingEvent::EmbeddingFailed {
+                        atom_id: atom_id_embed.clone(),
+                        error: e.clone(),
+                    });
                 }
-            });
-
-            let _ = tokio::join!(embed_handle, tag_handle);
+            }
         });
+
+        let tag_handle = tokio::spawn(async move {
+            let result = process_tagging_only(&db_tag, &atom_id_tag).await;
+            match result {
+                Ok((tags_extracted, new_tags_created)) => {
+                    on_event_tag(EmbeddingEvent::TaggingComplete {
+                        atom_id: atom_id_tag.clone(),
+                        tags_extracted,
+                        new_tags_created,
+                    });
+                }
+                Err(e) => {
+                    if let Ok(conn) = db_tag.conn.lock() {
+                        let _ = conn.execute(
+                            "UPDATE atoms SET tagging_status = 'failed' WHERE id = ?1",
+                            [&atom_id_tag],
+                        );
+                    }
+                    on_event_tag(EmbeddingEvent::TaggingFailed {
+                        atom_id: atom_id_tag.clone(),
+                        error: e,
+                    });
+                }
+            }
+        });
+
+        let _ = tokio::join!(embed_handle, tag_handle);
     });
 }
 
@@ -780,7 +769,7 @@ pub async fn process_embedding_batch<F>(
             let on_event = on_event.clone();
 
             let task = tokio::spawn(async move {
-                let _permit = TAGGING_SEMAPHORE
+                let _permit = crate::executor::LLM_SEMAPHORE
                     .acquire()
                     .await
                     .expect("Semaphore closed unexpectedly");
@@ -1160,15 +1149,15 @@ where
     let count = pending_atoms.len() as i32;
 
     if count > 0 {
-        // Process batch asynchronously in a separate thread
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(process_embedding_batch(
+        // Process batch asynchronously on the shared background runtime
+        crate::executor::spawn(async move {
+            process_embedding_batch(
                 db,
                 pending_atoms,
                 false, // don't skip tagging - normal flow
                 on_event,
-            ));
+            )
+            .await;
         });
     }
 

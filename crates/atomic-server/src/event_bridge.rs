@@ -16,6 +16,15 @@ pub fn embedding_event_callback(
     }
 }
 
+/// Create an IngestionEvent callback that broadcasts to WebSocket clients
+pub fn ingestion_event_callback(
+    tx: broadcast::Sender<ServerEvent>,
+) -> impl Fn(atomic_core::IngestionEvent) + Send + Sync + Clone + 'static {
+    move |event: atomic_core::IngestionEvent| {
+        let _ = tx.send(ServerEvent::from(event));
+    }
+}
+
 /// Create a ChatEvent callback that broadcasts to WebSocket clients
 pub fn chat_event_callback(
     tx: broadcast::Sender<ServerEvent>,

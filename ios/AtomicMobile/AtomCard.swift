@@ -18,13 +18,13 @@ struct AtomCard: View {
                     .lineLimit(3)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 if !atom.tags.isEmpty {
-                    ForEach(atom.tags.prefix(3)) { tag in
+                    ForEach(atom.tags.prefix(2)) { tag in
                         TagBadge(name: tag.name)
                     }
-                    if atom.tags.count > 3 {
-                        Text("+\(atom.tags.count - 3)")
+                    if atom.tags.count > 2 {
+                        Text("+\(atom.tags.count - 2)")
                             .font(.caption2)
                             .foregroundStyle(Theme.textSecondary)
                     }
@@ -32,9 +32,22 @@ struct AtomCard: View {
 
                 Spacer()
 
-                Text(relativeDate(atom.updatedAt))
+                if let sourceLabel = atom.source ?? hostFromURL(atom.sourceUrl) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "link")
+                            .font(.system(size: 8))
+                        Text(sourceLabel)
+                            .lineLimit(1)
+                    }
                     .font(.caption2)
                     .foregroundStyle(Theme.textSecondary)
+                    .layoutPriority(1)
+                }
+
+                Text(shortDate(atom.publishedAt ?? atom.updatedAt))
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize()
             }
         }
         .padding(14)
@@ -50,6 +63,8 @@ struct TagBadge: View {
             .font(.caption2)
             .fontWeight(.medium)
             .foregroundStyle(Theme.accent)
+            .lineLimit(1)
+            .truncationMode(.tail)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Theme.accent.opacity(0.15), in: Capsule())
@@ -88,7 +103,30 @@ struct SearchResultCard: View {
     }
 }
 
-private func relativeDate(_ iso: String) -> String {
+func hostFromURL(_ urlString: String?) -> String? {
+    guard let urlString, let url = URL(string: urlString) else { return nil }
+    return url.host
+}
+
+func shortDate(_ iso: String) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let date = formatter.date(from: iso) ?? {
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: iso)
+    }()
+    guard let date else { return "" }
+    let seconds = Int(-date.timeIntervalSinceNow)
+    if seconds < 60 { return "now" }
+    if seconds < 3600 { return "\(seconds / 60)m" }
+    if seconds < 86400 { return "\(seconds / 3600)h" }
+    if seconds < 604800 { return "\(seconds / 86400)d" }
+    if seconds < 2_592_000 { return "\(seconds / 604800)w" }
+    if seconds < 31_536_000 { return "\(seconds / 2_592_000)mo" }
+    return "\(seconds / 31_536_000)y"
+}
+
+func relativeDate(_ iso: String) -> String {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     guard let date = formatter.date(from: iso) else {

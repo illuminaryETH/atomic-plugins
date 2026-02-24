@@ -57,6 +57,10 @@ pub enum AtomicCoreError {
     #[error("Compaction error: {0}")]
     Compaction(String),
 
+    /// Ingestion error (URL fetch, article extraction, feed parsing)
+    #[error("Ingestion error: {0}")]
+    Ingestion(String),
+
     /// General database operation error (string-based)
     #[error("Database operation error: {0}")]
     DatabaseOperation(String),

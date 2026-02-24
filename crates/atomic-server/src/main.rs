@@ -207,6 +207,30 @@ async fn run_server(
         }
     }
 
+    // Spawn feed polling scheduler (ticks every 60 seconds)
+    {
+        let poll_core = core.clone();
+        let poll_tx = event_tx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.tick().await; // first tick fires immediately — skip it
+            loop {
+                interval.tick().await;
+                let on_ingest = event_bridge::ingestion_event_callback(poll_tx.clone());
+                let on_embed = event_bridge::embedding_event_callback(poll_tx.clone());
+                let results = poll_core.poll_due_feeds(on_ingest, on_embed).await;
+                for r in &results {
+                    if r.new_items > 0 {
+                        eprintln!(
+                            "Feed {}: {} new, {} skipped, {} errors",
+                            r.feed_id, r.new_items, r.skipped, r.errors
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     let bind_owned = bind.to_string();
     let shutdown_core = core.clone();
 

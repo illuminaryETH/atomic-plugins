@@ -43,12 +43,35 @@ struct AtomDetailView: View {
                             }
                         }
 
-                        if let url = atom.sourceUrl, let linkURL = URL(string: url) {
-                            Link(destination: linkURL) {
-                                Label(url, systemImage: "link")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.accent)
-                                    .lineLimit(1)
+                        if atom.source != nil || atom.sourceUrl != nil || atom.publishedAt != nil {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if let source = atom.source {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "link")
+                                            .font(.caption2)
+                                            .foregroundStyle(Theme.textSecondary)
+                                        Text(source)
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(Theme.textSecondary)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(Theme.elevated, in: Capsule())
+                                    }
+                                }
+                                if let url = atom.sourceUrl, let linkURL = URL(string: url) {
+                                    Link(destination: linkURL) {
+                                        Text(url)
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.accent)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                if let published = atom.publishedAt {
+                                    Text("Published \(relativeDate(published))")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
                             }
                         }
                     }
@@ -146,6 +169,10 @@ enum MarkdownTheme {
         .link {
             ForegroundColor(Theme.accent)
         }
+        .paragraph { configuration in
+            configuration.label
+                .padding(.bottom, 8)
+        }
         .heading1 { configuration in
             configuration.label
                 .markdownTextStyle {
@@ -153,6 +180,8 @@ enum MarkdownTheme {
                     FontWeight(.bold)
                     FontSize(.em(1.5))
                 }
+                .padding(.top, 24)
+                .padding(.bottom, 12)
         }
         .heading2 { configuration in
             configuration.label
@@ -161,6 +190,8 @@ enum MarkdownTheme {
                     FontWeight(.semibold)
                     FontSize(.em(1.3))
                 }
+                .padding(.top, 20)
+                .padding(.bottom, 10)
         }
         .heading3 { configuration in
             configuration.label
@@ -169,6 +200,8 @@ enum MarkdownTheme {
                     FontWeight(.semibold)
                     FontSize(.em(1.1))
                 }
+                .padding(.top, 16)
+                .padding(.bottom, 8)
         }
         .codeBlock { configuration in
             configuration.label
@@ -180,6 +213,7 @@ enum MarkdownTheme {
                 .padding(12)
                 .background(Theme.elevated)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.top, 8)
         }
         .blockquote { configuration in
             HStack(spacing: 0) {
@@ -192,6 +226,7 @@ enum MarkdownTheme {
                     }
                     .padding(.leading, 12)
             }
+            .padding(.vertical, 8)
         }
 }
 

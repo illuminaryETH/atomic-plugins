@@ -38,7 +38,9 @@ pub mod compaction;
 pub mod db;
 pub mod embedding;
 pub mod error;
+pub mod executor;
 pub mod extraction;
+pub mod ingest;
 pub mod import;
 pub mod models;
 pub mod providers;
@@ -57,6 +59,7 @@ pub use providers::{ProviderConfig, ProviderType};
 pub use search::{SearchMode, SearchOptions};
 pub use tokens::ApiTokenInfo;
 pub use import::{ImportProgress, ImportResult};
+pub use ingest::{IngestionEvent, IngestionRequest, IngestionResult, FeedPollResult};
 
 use chrono::Utc;
 use rusqlite::Connection;
@@ -512,7 +515,7 @@ impl AtomicCore {
             }
 
             let db_clone = Arc::clone(&self.db);
-            tokio::spawn(async move {
+            executor::spawn(async move {
                 embedding::process_embedding_batch(db_clone, embedding_pairs, false, on_event)
                     .await;
             });
@@ -1598,9 +1601,8 @@ impl AtomicCore {
 
         if count > 0 {
             let db = Arc::clone(&self.db);
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(embedding::process_tagging_batch(db, pending_atoms, on_event));
+            executor::spawn(async move {
+                embedding::process_tagging_batch(db, pending_atoms, on_event).await;
             });
         }
 
@@ -1714,14 +1716,14 @@ impl AtomicCore {
                 drop(conn);
 
                 let db = Arc::clone(&self.db);
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(embedding::process_embedding_batch(
+                executor::spawn(async move {
+                    embedding::process_embedding_batch(
                         db,
                         pending_atoms,
                         true, // skip tagging - re-embedding only
                         on_event,
-                    ));
+                    )
+                    .await;
                 });
             }
         }
@@ -1989,12 +1991,583 @@ impl AtomicCore {
             }
 
             let db_clone = Arc::clone(&self.db);
-            tokio::spawn(async move {
+            executor::spawn(async move {
                 embedding::process_embedding_batch(db_clone, imported_atoms, false, on_event).await;
             });
         }
 
         Ok(stats)
+    }
+
+    // ==================== Content Ingestion ====================
+
+    /// Ingest a single URL: fetch, extract article, create atom, trigger embedding.
+    /// Deduplicates by source_url. Returns an error if the URL was already ingested
+    /// or if the page isn't article-shaped.
+    pub async fn ingest_url<F, G>(
+        &self,
+        request: ingest::IngestionRequest,
+        on_ingest: F,
+        on_embed: G,
+    ) -> Result<ingest::IngestionResult, AtomicCoreError>
+    where
+        F: Fn(ingest::IngestionEvent) + Send + Sync + 'static,
+        G: Fn(EmbeddingEvent) + Send + Sync + 'static,
+    {
+        let request_id = Uuid::new_v4().to_string();
+
+        // Dedup check
+        {
+            let conn = self.db.read_conn()?;
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM atoms WHERE source_url = ?1)",
+                    [&request.url],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if exists {
+                return Err(AtomicCoreError::Validation(format!(
+                    "URL already ingested: {}",
+                    request.url
+                )));
+            }
+        }
+
+        // Resolve: fetch + extract
+        let resolved = ingest::resolve_url(&request.url, &request_id, &on_ingest)
+            .await
+            .map_err(|e| {
+                on_ingest(ingest::IngestionEvent::IngestionFailed {
+                    request_id: request_id.clone(),
+                    url: request.url.clone(),
+                    error: e.clone(),
+                });
+                AtomicCoreError::Ingestion(e)
+            })?;
+
+        let title = if let Some(hint) = &request.title_hint {
+            if !hint.is_empty() {
+                hint.clone()
+            } else {
+                resolved.title.clone()
+            }
+        } else {
+            resolved.title.clone()
+        };
+
+        let content_length = resolved.markdown.len();
+
+        // Create atom (this triggers embedding in background)
+        let atom = self.create_atom(
+            CreateAtomRequest {
+                content: resolved.markdown,
+                source_url: Some(request.url.clone()),
+                published_at: request.published_at,
+                tag_ids: request.tag_ids,
+            },
+            on_embed,
+        )?;
+
+        let result = ingest::IngestionResult {
+            atom_id: atom.atom.id.clone(),
+            url: request.url.clone(),
+            title: title.clone(),
+            content_length,
+        };
+
+        on_ingest(ingest::IngestionEvent::IngestionComplete {
+            request_id,
+            atom_id: atom.atom.id,
+            url: request.url,
+            title,
+        });
+
+        Ok(result)
+    }
+
+    /// Ingest multiple URLs concurrently.
+    /// Each URL is processed independently — individual failures don't affect others.
+    pub async fn ingest_urls<F, G>(
+        &self,
+        requests: Vec<ingest::IngestionRequest>,
+        on_ingest: F,
+        on_embed: G,
+    ) -> Vec<Result<ingest::IngestionResult, AtomicCoreError>>
+    where
+        F: Fn(ingest::IngestionEvent) + Send + Sync + Clone + 'static,
+        G: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+    {
+        let mut handles = Vec::with_capacity(requests.len());
+
+        for request in requests {
+            let core = self.clone();
+            let on_ingest = on_ingest.clone();
+            let on_embed = on_embed.clone();
+            handles.push(tokio::spawn(async move {
+                core.ingest_url(request, on_ingest, on_embed).await
+            }));
+        }
+
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            match handle.await {
+                Ok(result) => results.push(result),
+                Err(e) => results.push(Err(AtomicCoreError::Ingestion(format!(
+                    "Task join error: {}",
+                    e
+                )))),
+            }
+        }
+        results
+    }
+
+    // ==================== Feed Management ====================
+
+    /// Create a new RSS feed. Validates by fetching and parsing the feed URL.
+    pub async fn create_feed<F, G>(
+        &self,
+        request: CreateFeedRequest,
+        on_ingest: F,
+        on_embed: G,
+    ) -> Result<Feed, AtomicCoreError>
+    where
+        F: Fn(ingest::IngestionEvent) + Send + Sync + Clone + 'static,
+        G: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+    {
+        // Fetch feed data (XML/JSON) — use shared HTTP client with proper User-Agent
+        let feed_data = ingest::fetch::fetch_bytes(&request.url)
+            .await
+            .map_err(|e| AtomicCoreError::Ingestion(format!("Cannot fetch feed: {}", e)))?;
+
+        let parsed = ingest::rss::parse_feed(&feed_data)
+            .map_err(|e| AtomicCoreError::Ingestion(e))?;
+
+        let id = Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        {
+            let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+
+            // Check uniqueness
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM feeds WHERE url = ?1)",
+                    [&request.url],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if exists {
+                return Err(AtomicCoreError::Validation(format!(
+                    "Feed already exists: {}",
+                    request.url
+                )));
+            }
+
+            conn.execute(
+                "INSERT INTO feeds (id, url, title, site_url, poll_interval, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    &id,
+                    &request.url,
+                    &parsed.title,
+                    &parsed.site_url,
+                    request.poll_interval,
+                    &now,
+                ],
+            )?;
+
+            for tag_id in &request.tag_ids {
+                conn.execute(
+                    "INSERT INTO feed_tags (feed_id, tag_id) VALUES (?1, ?2)",
+                    rusqlite::params![&id, tag_id],
+                )?;
+            }
+        }
+
+        let feed = Feed {
+            id: id.clone(),
+            url: request.url,
+            title: parsed.title,
+            site_url: parsed.site_url,
+            poll_interval: request.poll_interval,
+            last_polled_at: None,
+            last_error: None,
+            created_at: now,
+            is_paused: false,
+            tag_ids: request.tag_ids,
+        };
+
+        // Poll immediately after creation
+        let core = self.clone();
+        let feed_id = id.clone();
+        executor::spawn(async move {
+            let _ = core.poll_feed(&feed_id, on_ingest, on_embed).await;
+        });
+
+        Ok(feed)
+    }
+
+    /// List all feeds.
+    pub fn list_feeds(&self) -> Result<Vec<Feed>, AtomicCoreError> {
+        let conn = self.db.read_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, url, title, site_url, poll_interval, last_polled_at, last_error, created_at, is_paused
+             FROM feeds ORDER BY created_at DESC",
+        )?;
+
+        let feeds: Vec<Feed> = stmt
+            .query_map([], |row| {
+                Ok(Feed {
+                    id: row.get(0)?,
+                    url: row.get(1)?,
+                    title: row.get(2)?,
+                    site_url: row.get(3)?,
+                    poll_interval: row.get(4)?,
+                    last_polled_at: row.get(5)?,
+                    last_error: row.get(6)?,
+                    created_at: row.get(7)?,
+                    is_paused: row.get(8)?,
+                    tag_ids: vec![],
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Batch load feed tags
+        let mut tag_stmt = conn.prepare("SELECT feed_id, tag_id FROM feed_tags")?;
+        let tag_pairs: Vec<(String, String)> = tag_stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut tag_map: HashMap<String, Vec<String>> = HashMap::new();
+        for (feed_id, tag_id) in tag_pairs {
+            tag_map.entry(feed_id).or_default().push(tag_id);
+        }
+
+        Ok(feeds
+            .into_iter()
+            .map(|mut f| {
+                f.tag_ids = tag_map.remove(&f.id).unwrap_or_default();
+                f
+            })
+            .collect())
+    }
+
+    /// Get a single feed by ID.
+    pub fn get_feed(&self, id: &str) -> Result<Feed, AtomicCoreError> {
+        let conn = self.db.read_conn()?;
+        let feed = conn
+            .query_row(
+                "SELECT id, url, title, site_url, poll_interval, last_polled_at, last_error, created_at, is_paused
+                 FROM feeds WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(Feed {
+                        id: row.get(0)?,
+                        url: row.get(1)?,
+                        title: row.get(2)?,
+                        site_url: row.get(3)?,
+                        poll_interval: row.get(4)?,
+                        last_polled_at: row.get(5)?,
+                        last_error: row.get(6)?,
+                        created_at: row.get(7)?,
+                        is_paused: row.get(8)?,
+                        tag_ids: vec![],
+                    })
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    AtomicCoreError::NotFound(format!("Feed not found: {}", id))
+                }
+                _ => AtomicCoreError::Database(e),
+            })?;
+
+        let mut tag_stmt = conn.prepare("SELECT tag_id FROM feed_tags WHERE feed_id = ?1")?;
+        let tag_ids: Vec<String> = tag_stmt
+            .query_map([id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Feed {
+            tag_ids,
+            ..feed
+        })
+    }
+
+    /// Update a feed's settings.
+    pub fn update_feed(&self, id: &str, request: UpdateFeedRequest) -> Result<Feed, AtomicCoreError> {
+        let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+
+        // Verify feed exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM feeds WHERE id = ?1)",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !exists {
+            return Err(AtomicCoreError::NotFound(format!("Feed not found: {}", id)));
+        }
+
+        if let Some(interval) = request.poll_interval {
+            conn.execute(
+                "UPDATE feeds SET poll_interval = ?1 WHERE id = ?2",
+                rusqlite::params![interval, id],
+            )?;
+        }
+
+        if let Some(paused) = request.is_paused {
+            conn.execute(
+                "UPDATE feeds SET is_paused = ?1 WHERE id = ?2",
+                rusqlite::params![paused, id],
+            )?;
+        }
+
+        if let Some(ref tag_ids) = request.tag_ids {
+            conn.execute("DELETE FROM feed_tags WHERE feed_id = ?1", [id])?;
+            for tag_id in tag_ids {
+                conn.execute(
+                    "INSERT INTO feed_tags (feed_id, tag_id) VALUES (?1, ?2)",
+                    rusqlite::params![id, tag_id],
+                )?;
+            }
+        }
+
+        drop(conn);
+        self.get_feed(id)
+    }
+
+    /// Delete a feed. Does NOT delete atoms created from this feed.
+    pub fn delete_feed(&self, id: &str) -> Result<(), AtomicCoreError> {
+        let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+        let changes = conn.execute("DELETE FROM feeds WHERE id = ?1", [id])?;
+        if changes == 0 {
+            return Err(AtomicCoreError::NotFound(format!("Feed not found: {}", id)));
+        }
+        Ok(())
+    }
+
+    /// Poll a single feed: fetch XML, parse, dedup via feed_items, ingest new articles.
+    pub async fn poll_feed<F, G>(
+        &self,
+        feed_id: &str,
+        on_ingest: F,
+        on_embed: G,
+    ) -> Result<ingest::FeedPollResult, AtomicCoreError>
+    where
+        F: Fn(ingest::IngestionEvent) + Send + Sync + Clone + 'static,
+        G: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+    {
+        let feed = self.get_feed(feed_id)?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Fetch feed XML — use shared HTTP client with proper User-Agent
+        let feed_data = ingest::fetch::fetch_bytes(&feed.url)
+            .await
+            .map_err(|e| {
+                let err = format!("Cannot fetch feed: {}", e);
+                self.update_feed_error(feed_id, &err);
+                on_ingest(ingest::IngestionEvent::FeedPollFailed {
+                    feed_id: feed_id.to_string(),
+                    error: err.clone(),
+                });
+                AtomicCoreError::Ingestion(err)
+            })?;
+
+        let parsed = ingest::rss::parse_feed(&feed_data).map_err(|e| {
+            self.update_feed_error(feed_id, &e);
+            on_ingest(ingest::IngestionEvent::FeedPollFailed {
+                feed_id: feed_id.to_string(),
+                error: e.clone(),
+            });
+            AtomicCoreError::Ingestion(e)
+        })?;
+
+        // Get existing GUIDs for this feed
+        let existing_guids: std::collections::HashSet<String> = {
+            let conn = self.db.read_conn()?;
+            let mut stmt = conn.prepare("SELECT guid FROM feed_items WHERE feed_id = ?1")?;
+            let guids = stmt.query_map([feed_id], |row| row.get(0))?
+                .collect::<Result<std::collections::HashSet<_>, _>>()?;
+            guids
+        };
+
+        let mut new_items = 0i32;
+        let mut skipped = 0i32;
+        let mut errors = 0i32;
+
+        for item in &parsed.items {
+            if existing_guids.contains(&item.guid) {
+                continue;
+            }
+
+            let link = match &item.link {
+                Some(l) => l.clone(),
+                None => {
+                    self.record_feed_item(feed_id, &item.guid, None, true, Some("No link in feed item"))?;
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            let request_id = Uuid::new_v4().to_string();
+            match ingest::resolve_url(&link, &request_id, &on_ingest).await {
+                Ok(resolved) => {
+                    match self.create_atom(
+                        CreateAtomRequest {
+                            content: resolved.markdown,
+                            source_url: Some(link),
+                            published_at: item.published_at.clone(),
+                            tag_ids: feed.tag_ids.clone(),
+                        },
+                        on_embed.clone(),
+                    ) {
+                        Ok(atom) => {
+                            self.record_feed_item(feed_id, &item.guid, Some(&atom.atom.id), false, None)?;
+                            new_items += 1;
+                        }
+                        Err(e) => {
+                            self.record_feed_item(feed_id, &item.guid, None, true, Some(&e.to_string()))?;
+                            errors += 1;
+                        }
+                    }
+                }
+                Err(reason) => {
+                    self.record_feed_item(feed_id, &item.guid, None, true, Some(&reason))?;
+                    skipped += 1;
+                }
+            }
+        }
+
+        // Update feed metadata
+        {
+            let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+            conn.execute(
+                "UPDATE feeds SET last_polled_at = ?1, last_error = NULL WHERE id = ?2",
+                rusqlite::params![&now, feed_id],
+            )?;
+            if parsed.title.is_some() {
+                conn.execute(
+                    "UPDATE feeds SET title = COALESCE(title, ?1) WHERE id = ?2",
+                    rusqlite::params![&parsed.title, feed_id],
+                )?;
+            }
+            if parsed.site_url.is_some() {
+                conn.execute(
+                    "UPDATE feeds SET site_url = COALESCE(site_url, ?1) WHERE id = ?2",
+                    rusqlite::params![&parsed.site_url, feed_id],
+                )?;
+            }
+        }
+
+        let result = ingest::FeedPollResult {
+            feed_id: feed_id.to_string(),
+            new_items,
+            skipped,
+            errors,
+        };
+
+        on_ingest(ingest::IngestionEvent::FeedPollComplete {
+            feed_id: feed_id.to_string(),
+            new_items,
+            skipped,
+            errors,
+        });
+
+        Ok(result)
+    }
+
+    /// Poll all feeds that are due (not paused, enough time elapsed).
+    pub async fn poll_due_feeds<F, G>(
+        &self,
+        on_ingest: F,
+        on_embed: G,
+    ) -> Vec<ingest::FeedPollResult>
+    where
+        F: Fn(ingest::IngestionEvent) + Send + Sync + Clone + 'static,
+        G: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+    {
+        let due_feed_ids: Vec<String> = {
+            let conn = match self.db.read_conn() {
+                Ok(c) => c,
+                Err(_) => return vec![],
+            };
+            let mut stmt = match conn.prepare(
+                "SELECT id, poll_interval, last_polled_at FROM feeds WHERE is_paused = 0",
+            ) {
+                Ok(s) => s,
+                Err(_) => return vec![],
+            };
+
+            let now = chrono::Utc::now();
+            stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.ok())
+            .filter(|(_, interval, last_polled)| {
+                match last_polled {
+                    None => true,
+                    Some(ts) => {
+                        if let Ok(last) = chrono::DateTime::parse_from_rfc3339(ts) {
+                            let elapsed = now.signed_duration_since(last);
+                            elapsed.num_minutes() >= *interval as i64
+                        } else {
+                            true
+                        }
+                    }
+                }
+            })
+            .map(|(id, _, _)| id)
+            .collect()
+        };
+
+        let mut results = Vec::new();
+        for feed_id in due_feed_ids {
+            match self.poll_feed(&feed_id, on_ingest.clone(), on_embed.clone()).await {
+                Ok(r) => results.push(r),
+                Err(e) => {
+                    eprintln!("Feed poll failed for {}: {}", feed_id, e);
+                }
+            }
+        }
+        results
+    }
+
+    /// Helper: record a feed item (ingested or skipped).
+    fn record_feed_item(
+        &self,
+        feed_id: &str,
+        guid: &str,
+        atom_id: Option<&str>,
+        skipped: bool,
+        skip_reason: Option<&str>,
+    ) -> Result<(), AtomicCoreError> {
+        let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR IGNORE INTO feed_items (feed_id, guid, atom_id, skipped, skip_reason, seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![feed_id, guid, atom_id, skipped, skip_reason, &now],
+        )?;
+        Ok(())
+    }
+
+    /// Helper: update a feed's last_error field.
+    fn update_feed_error(&self, feed_id: &str, error: &str) {
+        if let Ok(conn) = self.db.conn.lock() {
+            let _ = conn.execute(
+                "UPDATE feeds SET last_error = ?1 WHERE id = ?2",
+                rusqlite::params![error, feed_id],
+            );
+        }
     }
 
     /// Get suggested wiki articles (tags without articles, ranked by demand)

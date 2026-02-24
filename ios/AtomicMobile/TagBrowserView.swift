@@ -139,9 +139,24 @@ struct TagNodeView: View {
                         .frame(width: 16)
                 }
 
-                // Tag name - tap to select
+                // Tag name - tap to expand if parent, filter if leaf
                 Button {
-                    onSelect(tag.id)
+                    if hasChildren {
+                        Task {
+                            if !isExpanded && tag.childrenTotal > tag.children.count {
+                                await loadChildren?(tag.id)
+                            }
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                if isExpanded {
+                                    expandedTagIds.remove(tag.id)
+                                } else {
+                                    expandedTagIds.insert(tag.id)
+                                }
+                            }
+                        }
+                    } else {
+                        onSelect(tag.id)
+                    }
                 } label: {
                     HStack {
                         Text(tag.name)

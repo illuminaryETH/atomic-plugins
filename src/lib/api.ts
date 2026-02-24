@@ -313,6 +313,58 @@ export async function revokeApiToken(id: string): Promise<void> {
   return getTransport().invoke('revoke_api_token', { id });
 }
 
+// Feed types and commands
+export interface Feed {
+  id: string;
+  url: string;
+  title: string | null;
+  site_url: string | null;
+  poll_interval: number;
+  last_polled_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  is_paused: boolean;
+  tag_ids: string[];
+}
+
+export interface IngestionResult {
+  atom_id: string;
+  url: string;
+  title: string;
+  content_length: number;
+}
+
+export interface FeedPollResult {
+  feed_id: string;
+  new_items: number;
+  skipped: number;
+  errors: number;
+}
+
+export async function ingestUrl(url: string, tagIds?: string[]): Promise<IngestionResult> {
+  return getTransport().invoke('ingest_url', { url, tagIds });
+}
+
+export async function listFeeds(): Promise<Feed[]> {
+  return getTransport().invoke('list_feeds');
+}
+
+export async function createFeed(url: string, pollInterval?: number, tagIds?: string[]): Promise<Feed> {
+  return getTransport().invoke('create_feed', { url, pollInterval, tagIds });
+}
+
+export async function updateFeed(id: string, opts: { pollInterval?: number; isPaused?: boolean; tagIds?: string[] }): Promise<Feed> {
+  return getTransport().invoke('update_feed', { id, ...opts });
+}
+
+export async function deleteFeed(id: string): Promise<void> {
+  return getTransport().invoke('delete_feed', { id });
+}
+
+export async function pollFeed(id: string): Promise<FeedPollResult> {
+  return getTransport().invoke('poll_feed', { id });
+}
+
 // MCP config — now HTTP-based via the server's /mcp endpoint
 export interface McpConfig {
   mcpServers: {

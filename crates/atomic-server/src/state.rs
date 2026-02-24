@@ -53,6 +53,48 @@ pub enum ServerEvent {
         status: String,
     },
 
+    // Ingestion pipeline events
+    IngestionFetchStarted {
+        url: String,
+        request_id: String,
+    },
+    IngestionFetchComplete {
+        url: String,
+        request_id: String,
+        content_length: usize,
+    },
+    IngestionFetchFailed {
+        url: String,
+        request_id: String,
+        error: String,
+    },
+    IngestionSkipped {
+        url: String,
+        request_id: String,
+        reason: String,
+    },
+    IngestionComplete {
+        request_id: String,
+        atom_id: String,
+        url: String,
+        title: String,
+    },
+    IngestionFailed {
+        request_id: String,
+        url: String,
+        error: String,
+    },
+    FeedPollComplete {
+        feed_id: String,
+        new_items: i32,
+        skipped: i32,
+        errors: i32,
+    },
+    FeedPollFailed {
+        feed_id: String,
+        error: String,
+    },
+
     // Chat streaming events
     ChatStreamDelta {
         conversation_id: String,
@@ -105,6 +147,37 @@ impl From<atomic_core::EmbeddingEvent> for ServerEvent {
             }
             atomic_core::EmbeddingEvent::TaggingSkipped { atom_id } => {
                 ServerEvent::TaggingSkipped { atom_id }
+            }
+        }
+    }
+}
+
+impl From<atomic_core::IngestionEvent> for ServerEvent {
+    fn from(event: atomic_core::IngestionEvent) -> Self {
+        match event {
+            atomic_core::IngestionEvent::FetchStarted { url, request_id } => {
+                ServerEvent::IngestionFetchStarted { url, request_id }
+            }
+            atomic_core::IngestionEvent::FetchComplete { url, request_id, content_length } => {
+                ServerEvent::IngestionFetchComplete { url, request_id, content_length }
+            }
+            atomic_core::IngestionEvent::FetchFailed { url, request_id, error } => {
+                ServerEvent::IngestionFetchFailed { url, request_id, error }
+            }
+            atomic_core::IngestionEvent::Skipped { url, request_id, reason } => {
+                ServerEvent::IngestionSkipped { url, request_id, reason }
+            }
+            atomic_core::IngestionEvent::IngestionComplete { request_id, atom_id, url, title } => {
+                ServerEvent::IngestionComplete { request_id, atom_id, url, title }
+            }
+            atomic_core::IngestionEvent::IngestionFailed { request_id, url, error } => {
+                ServerEvent::IngestionFailed { request_id, url, error }
+            }
+            atomic_core::IngestionEvent::FeedPollComplete { feed_id, new_items, skipped, errors } => {
+                ServerEvent::FeedPollComplete { feed_id, new_items, skipped, errors }
+            }
+            atomic_core::IngestionEvent::FeedPollFailed { feed_id, error } => {
+                ServerEvent::FeedPollFailed { feed_id, error }
             }
         }
     }

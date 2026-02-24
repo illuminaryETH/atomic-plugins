@@ -34,6 +34,22 @@ export function normalizeServerEvent(data: Record<string, unknown>): NormalizedE
       return { event: 'embeddings-reset', payload: data };
     case 'ImportProgress':
       return { event: 'import-progress', payload: { current: data.current, total: data.total, current_file: data.current_file, status: data.status } };
+    case 'IngestionFetchStarted':
+      return { event: 'ingestion-fetch-started', payload: { url: data.url, request_id: data.request_id } };
+    case 'IngestionFetchComplete':
+      return { event: 'ingestion-fetch-complete', payload: { url: data.url, request_id: data.request_id, content_length: data.content_length } };
+    case 'IngestionFetchFailed':
+      return { event: 'ingestion-fetch-failed', payload: { url: data.url, request_id: data.request_id, error: data.error } };
+    case 'IngestionSkipped':
+      return { event: 'ingestion-skipped', payload: { url: data.url, request_id: data.request_id, reason: data.reason } };
+    case 'IngestionComplete':
+      return { event: 'ingestion-complete', payload: { request_id: data.request_id, atom_id: data.atom_id, url: data.url, title: data.title } };
+    case 'IngestionFailed':
+      return { event: 'ingestion-failed', payload: { request_id: data.request_id, url: data.url, error: data.error } };
+    case 'FeedPollComplete':
+      return { event: 'feed-poll-complete', payload: { feed_id: data.feed_id, new_items: data.new_items, skipped: data.skipped, errors: data.errors } };
+    case 'FeedPollFailed':
+      return { event: 'feed-poll-failed', payload: { feed_id: data.feed_id, error: data.error } };
     default:
       console.warn('Unknown server event type:', type);
       return null;

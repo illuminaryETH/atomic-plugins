@@ -400,6 +400,70 @@ export const COMMAND_MAP: Record<string, CommandSpec> = {
     path: '/api/utils/compact-tags',
   },
 
+  // ==================== Ingestion ====================
+  ingest_url: {
+    method: 'POST',
+    path: '/api/ingest/url',
+    argsMode: 'body',
+    transformArgs: (a) => ({
+      url: a.url,
+      tag_ids: a.tagIds ?? [],
+      title_hint: a.titleHint ?? null,
+      published_at: a.publishedAt ?? null,
+    }),
+  },
+  ingest_urls: {
+    method: 'POST',
+    path: '/api/ingest/urls',
+    argsMode: 'body',
+    transformArgs: (a) => ({
+      urls: (a.urls as Array<Record<string, unknown>>).map((u) => ({
+        url: u.url,
+        tag_ids: u.tagIds ?? [],
+        title_hint: u.titleHint ?? null,
+        published_at: u.publishedAt ?? null,
+      })),
+    }),
+  },
+
+  // ==================== Feeds ====================
+  list_feeds: {
+    method: 'GET',
+    path: '/api/feeds',
+  },
+  get_feed: {
+    method: 'GET',
+    path: (a) => `/api/feeds/${encodeURIComponent(a.id as string)}`,
+  },
+  create_feed: {
+    method: 'POST',
+    path: '/api/feeds',
+    argsMode: 'body',
+    transformArgs: (a) => ({
+      url: a.url,
+      poll_interval: a.pollInterval ?? 60,
+      tag_ids: a.tagIds ?? [],
+    }),
+  },
+  update_feed: {
+    method: 'PUT',
+    path: (a) => `/api/feeds/${encodeURIComponent(a.id as string)}`,
+    argsMode: 'body',
+    transformArgs: (a) => ({
+      poll_interval: a.pollInterval ?? null,
+      is_paused: a.isPaused ?? null,
+      tag_ids: a.tagIds ?? null,
+    }),
+  },
+  delete_feed: {
+    method: 'DELETE',
+    path: (a) => `/api/feeds/${encodeURIComponent(a.id as string)}`,
+  },
+  poll_feed: {
+    method: 'POST',
+    path: (a) => `/api/feeds/${encodeURIComponent(a.id as string)}/poll`,
+  },
+
   // ==================== Import ====================
   import_obsidian_vault: {
     method: 'POST',

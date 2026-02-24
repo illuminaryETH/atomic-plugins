@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { DisplayAtom } from '../../stores/atoms';
 import { TagChip } from '../tags/TagChip';
-import { formatRelativeDate } from '../../lib/date';
+import { formatRelativeDate, formatShortRelativeDate } from '../../lib/date';
 
 /** Get display source — prefer pre-parsed `source` field, fall back to extracting from URL */
 function getDisplaySource(atom: DisplayAtom): string | null {
@@ -182,13 +182,18 @@ export const AtomCard = memo(function AtomCard({
         onRetry={handleRetry}
       />
       <div className="flex-1 min-h-0 overflow-hidden">
-        <p
-          className={`text-sm font-medium line-clamp-1 ${
-            matchingChunkContent ? 'text-[var(--color-accent-light)]' : 'text-[var(--color-text-primary)]'
-          }`}
-        >
-          {title || 'Untitled'}
-        </p>
+        <div className="flex items-baseline justify-between gap-2">
+          <p
+            className={`text-sm font-medium line-clamp-1 min-w-0 ${
+              matchingChunkContent ? 'text-[var(--color-accent-light)]' : 'text-[var(--color-text-primary)]'
+            }`}
+          >
+            {title || 'Untitled'}
+          </p>
+          <span className="text-xs text-[var(--color-text-tertiary)] shrink-0" title={formatRelativeDate(getDisplayDate(atom))}>
+            {formatShortRelativeDate(getDisplayDate(atom))}
+          </span>
+        </div>
         {snippet && (
           <p className="text-sm text-[var(--color-text-secondary)] mt-1 leading-relaxed line-clamp-4">
             {snippet}
@@ -196,7 +201,7 @@ export const AtomCard = memo(function AtomCard({
         )}
       </div>
       <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-        <div className="flex items-center gap-1.5 mb-2">
+        <div className="flex items-center gap-1.5">
           {visibleTags.map((tag) => (
             <TagChip key={tag.id} name={tag.name} size="sm" />
           ))}
@@ -209,9 +214,6 @@ export const AtomCard = memo(function AtomCard({
             </span>
           )}
         </div>
-        <span className="text-xs text-[var(--color-text-tertiary)]">
-          {formatRelativeDate(getDisplayDate(atom))}
-        </span>
       </div>
     </div>
   );

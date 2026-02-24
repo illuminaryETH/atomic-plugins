@@ -52,6 +52,10 @@ struct ContentView: View {
                         offlineBanner
                     }
 
+                    if !isSearchActive {
+                        FilterBar(store: store)
+                    }
+
                     Group {
                         if isSearchActive {
                             searchResultsList
@@ -155,8 +159,10 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
         .task {
+            await store.syncPending()
             await store.loadAtoms()
             await store.loadTags()
+            await store.loadSources()
         }
     }
 

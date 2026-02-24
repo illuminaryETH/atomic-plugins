@@ -420,6 +420,42 @@ pub struct ChatCitation {
     pub relevance_score: Option<f32>,
 }
 
+// ==================== Feed Types ====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Feed {
+    pub id: String,
+    pub url: String,
+    pub title: Option<String>,
+    pub site_url: Option<String>,
+    pub poll_interval: i32,
+    pub last_polled_at: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub is_paused: bool,
+    pub tag_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateFeedRequest {
+    pub url: String,
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval: i32,
+    #[serde(default)]
+    pub tag_ids: Vec<String>,
+}
+
+fn default_poll_interval() -> i32 {
+    60
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateFeedRequest {
+    pub poll_interval: Option<i32>,
+    pub is_paused: Option<bool>,
+    pub tag_ids: Option<Vec<String>>,
+}
+
 // ==================== Filtering & Sorting Types ====================
 
 /// Source filter for atom list queries

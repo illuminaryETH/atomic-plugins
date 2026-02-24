@@ -37,11 +37,28 @@ final class APIClient: Sendable {
         try JSONDecoder().decode(type, from: data)
     }
 
-    func listAtoms(limit: Int = 50, offset: Int = 0, tagId: String? = nil) async throws -> AtomListResponse {
+    func listAtoms(
+        limit: Int = 50,
+        offset: Int = 0,
+        tagId: String? = nil,
+        source: String? = nil,
+        sourceValue: String? = nil,
+        sortBy: String? = nil,
+        sortOrder: String? = nil
+    ) async throws -> AtomListResponse {
         var path = "/api/atoms?limit=\(limit)&offset=\(offset)"
         if let tagId { path += "&tag_id=\(tagId)" }
+        if let source, source != "all" { path += "&source=\(source)" }
+        if let sourceValue { path += "&source_value=\(sourceValue.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sourceValue)" }
+        if let sortBy, sortBy != "updated" { path += "&sort_by=\(sortBy)" }
+        if let sortOrder, sortOrder != "desc" { path += "&sort_order=\(sortOrder)" }
         let data = try await request(path)
         return try decode(AtomListResponse.self, from: data)
+    }
+
+    func getSources() async throws -> [SourceInfo] {
+        let data = try await request("/api/atoms/sources")
+        return try decode([SourceInfo].self, from: data)
     }
 
     func getAtom(id: String) async throws -> Atom {

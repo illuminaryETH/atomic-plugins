@@ -198,7 +198,7 @@ impl Database {
     ///   1. Add a new `if version < N` block at the end (before the virtual-table section)
     ///   2. End the block with `PRAGMA user_version = N;`
     ///   3. Bump LATEST_VERSION
-    const LATEST_VERSION: i32 = 5;
+    const LATEST_VERSION: i32 = 6;
 
     pub fn run_migrations(conn: &Connection) -> Result<(), AtomicCoreError> {
         let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -503,6 +503,46 @@ impl Database {
             )?;
 
             conn.execute_batch("PRAGMA user_version = 5;")?;
+        }
+
+        // --- V5 → V6: Feed management tables ---
+        if version < 6 {
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS feeds (
+                    id TEXT PRIMARY KEY,
+                    url TEXT NOT NULL UNIQUE,
+                    title TEXT,
+                    site_url TEXT,
+                    poll_interval INTEGER NOT NULL DEFAULT 60,
+                    last_polled_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    is_paused INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS feed_tags (
+                    feed_id TEXT NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+                    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                    PRIMARY KEY (feed_id, tag_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS feed_items (
+                    feed_id TEXT NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+                    guid TEXT NOT NULL,
+                    atom_id TEXT REFERENCES atoms(id) ON DELETE SET NULL,
+                    skipped INTEGER NOT NULL DEFAULT 0,
+                    skip_reason TEXT,
+                    seen_at TEXT NOT NULL,
+                    PRIMARY KEY (feed_id, guid)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_feeds_last_polled ON feeds(is_paused, last_polled_at);
+                CREATE INDEX IF NOT EXISTS idx_feed_items_feed ON feed_items(feed_id);
+
+                PRAGMA user_version = 6;
+                "#,
+            )?;
         }
 
         // --- Triggers (recreated every startup to stay current) ---

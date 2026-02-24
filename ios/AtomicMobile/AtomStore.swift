@@ -10,6 +10,12 @@ final class AtomStore {
     var tags: [TagWithCount] = []
     var selectedTagId: String?
 
+    var sourceFilter: String = "all"
+    var sourceValue: String?
+    var sortBy: String = "updated"
+    var sortOrder: String = "desc"
+    var availableSources: [SourceInfo] = []
+
     let api: APIClient
     let cache: DiskCache
     let offlineQueue: OfflineQueue
@@ -33,7 +39,11 @@ final class AtomStore {
         }
 
         do {
-            let response = try await api.listAtoms(limit: 50, offset: 0, tagId: selectedTagId)
+            let response = try await api.listAtoms(
+                limit: 50, offset: 0, tagId: selectedTagId,
+                source: sourceFilter, sourceValue: sourceValue,
+                sortBy: sortBy, sortOrder: sortOrder
+            )
             atoms = response.atoms
             totalCount = response.totalCount
             if selectedTagId == nil {
@@ -52,7 +62,11 @@ final class AtomStore {
         guard !isLoading, atoms.count < totalCount else { return }
         isLoading = true
         do {
-            let response = try await api.listAtoms(limit: 50, offset: atoms.count, tagId: selectedTagId)
+            let response = try await api.listAtoms(
+                limit: 50, offset: atoms.count, tagId: selectedTagId,
+                source: sourceFilter, sourceValue: sourceValue,
+                sortBy: sortBy, sortOrder: sortOrder
+            )
             atoms.append(contentsOf: response.atoms)
         } catch {
             self.error = error.localizedDescription
@@ -100,6 +114,36 @@ final class AtomStore {
 
     func selectTag(_ tagId: String?) async {
         selectedTagId = tagId
+        await loadAtoms()
+    }
+
+    func loadSources() async {
+        do {
+            availableSources = try await api.getSources()
+        } catch {
+            // Non-critical, silently ignore
+        }
+    }
+
+    func setSourceFilter(_ filter: String) async {
+        sourceFilter = filter
+        if filter != "external" { sourceValue = nil }
+        await loadAtoms()
+    }
+
+    func setSourceValue(_ value: String?) async {
+        sourceValue = value
+        sourceFilter = value != nil ? "external" : "all"
+        await loadAtoms()
+    }
+
+    func setSortBy(_ field: String) async {
+        sortBy = field
+        await loadAtoms()
+    }
+
+    func setSortOrder(_ order: String) async {
+        sortOrder = order
         await loadAtoms()
     }
 

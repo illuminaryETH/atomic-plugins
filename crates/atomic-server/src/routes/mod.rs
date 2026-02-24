@@ -6,8 +6,10 @@ mod canvas;
 mod chat;
 mod clustering;
 mod embedding;
+mod feeds;
 mod graph;
 mod import;
+mod ingest;
 pub mod oauth;
 mod ollama;
 mod search;
@@ -186,4 +188,16 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         "/import/obsidian",
         web::post().to(import::import_obsidian_vault),
     );
+
+    // Ingestion
+    cfg.route("/ingest/url", web::post().to(ingest::ingest_url));
+    cfg.route("/ingest/urls", web::post().to(ingest::ingest_urls));
+
+    // Feeds
+    cfg.route("/feeds", web::get().to(feeds::list_feeds));
+    cfg.route("/feeds", web::post().to(feeds::create_feed));
+    cfg.route("/feeds/{id}", web::get().to(feeds::get_feed));
+    cfg.route("/feeds/{id}", web::put().to(feeds::update_feed));
+    cfg.route("/feeds/{id}", web::delete().to(feeds::delete_feed));
+    cfg.route("/feeds/{id}/poll", web::post().to(feeds::poll_feed));
 }
