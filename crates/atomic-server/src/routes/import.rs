@@ -4,14 +4,18 @@ use crate::db_extractor::Db;
 use crate::event_bridge::embedding_event_callback;
 use crate::state::{AppState, ServerEvent};
 use actix_web::{web, HttpResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct ImportObsidianRequest {
+    /// Path to Obsidian vault directory
     pub vault_path: String,
+    /// Max notes to import (all if not set)
     pub max_notes: Option<i32>,
 }
 
+#[utoipa::path(post, path = "/api/import/obsidian", request_body = ImportObsidianRequest, responses((status = 200, description = "Import result")), tag = "import")]
 pub async fn import_obsidian_vault(
     state: web::Data<AppState>,
     db: Db,

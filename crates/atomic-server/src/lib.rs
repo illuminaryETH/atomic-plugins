@@ -1,0 +1,246 @@
+//! Atomic Server library — exposes server components for integration testing.
+//!
+//! The binary entry point is in `main.rs`. This module re-exports the pieces
+//! needed to spin up a test server.
+
+pub mod auth;
+mod db_extractor;
+pub mod error;
+pub mod event_bridge;
+pub mod mcp;
+pub mod mcp_auth;
+pub mod routes;
+pub mod state;
+pub mod ws;
+
+use actix_web::{HttpResponse, Responder};
+use utoipa::OpenApi;
+pub use utoipa_scalar::{Scalar, Servable};
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Atomic API",
+        description = "REST API for the Atomic knowledge base",
+        version = "1.1.1",
+    ),
+    paths(
+        // Atoms
+        routes::atoms::get_atoms,
+        routes::atoms::get_atom,
+        routes::atoms::create_atom,
+        routes::atoms::update_atom,
+        routes::atoms::delete_atom,
+        routes::atoms::bulk_create_atoms,
+        routes::atoms::get_source_list,
+        // Tags
+        routes::atoms::get_tags,
+        routes::atoms::get_tag_children,
+        routes::atoms::create_tag,
+        routes::atoms::update_tag,
+        routes::atoms::delete_tag,
+        // Search
+        routes::search::search,
+        routes::search::find_similar,
+        // Wiki
+        routes::wiki::get_all_wiki_articles,
+        routes::wiki::get_wiki,
+        routes::wiki::get_wiki_status,
+        routes::wiki::generate_wiki,
+        routes::wiki::update_wiki,
+        routes::wiki::delete_wiki,
+        routes::wiki::get_related_tags,
+        routes::wiki::get_wiki_links,
+        routes::wiki::get_wiki_suggestions,
+        routes::wiki::list_wiki_versions,
+        routes::wiki::get_wiki_version,
+        routes::wiki::recompute_all_tag_embeddings,
+        // Settings
+        routes::settings::get_settings,
+        routes::settings::set_setting,
+        routes::settings::test_openrouter_connection,
+        routes::settings::get_available_llm_models,
+        // Embeddings
+        routes::embedding::process_pending_embeddings,
+        routes::embedding::process_pending_tagging,
+        routes::embedding::retry_embedding,
+        routes::embedding::reset_stuck_processing,
+        routes::embedding::get_embedding_status,
+        // Canvas
+        routes::canvas::get_positions,
+        routes::canvas::save_positions,
+        routes::canvas::get_atoms_with_embeddings,
+        routes::canvas::get_canvas_level,
+        // Graph
+        routes::graph::get_semantic_edges,
+        routes::graph::get_atom_neighborhood,
+        routes::graph::rebuild_semantic_edges,
+        // Clustering
+        routes::clustering::compute_clusters,
+        routes::clustering::get_clusters,
+        routes::clustering::get_connection_counts,
+        // Chat
+        routes::chat::create_conversation,
+        routes::chat::get_conversations,
+        routes::chat::get_conversation,
+        routes::chat::update_conversation,
+        routes::chat::delete_conversation,
+        routes::chat::set_conversation_scope,
+        routes::chat::add_tag_to_scope,
+        routes::chat::remove_tag_from_scope,
+        routes::chat::send_chat_message,
+        // Providers
+        routes::ollama::test_ollama,
+        routes::ollama::get_ollama_models,
+        routes::ollama::get_ollama_embedding_models,
+        routes::ollama::get_ollama_llm_models,
+        routes::ollama::verify_provider_configured,
+        // Utils
+        routes::utils::check_sqlite_vec,
+        routes::utils::compact_tags,
+        // Auth
+        routes::auth::create_token,
+        routes::auth::list_tokens,
+        routes::auth::revoke_token,
+        // Databases
+        routes::databases::list_databases,
+        routes::databases::create_database,
+        routes::databases::rename_database,
+        routes::databases::delete_database,
+        routes::databases::activate_database,
+        // Import
+        routes::import::import_obsidian_vault,
+        // Ingestion
+        routes::ingest::ingest_url,
+        routes::ingest::ingest_urls,
+        // Feeds
+        routes::feeds::list_feeds,
+        routes::feeds::get_feed,
+        routes::feeds::create_feed,
+        routes::feeds::update_feed,
+        routes::feeds::delete_feed,
+        routes::feeds::poll_feed,
+    ),
+    components(schemas(
+        // Core types
+        atomic_core::Atom,
+        atomic_core::Tag,
+        atomic_core::AtomWithTags,
+        atomic_core::AtomSummary,
+        atomic_core::PaginatedAtoms,
+        atomic_core::BulkCreateResult,
+        atomic_core::TagWithCount,
+        atomic_core::PaginatedTagChildren,
+        atomic_core::SourceInfo,
+        atomic_core::SimilarAtomResult,
+        atomic_core::SemanticSearchResult,
+        // Wiki
+        atomic_core::WikiArticle,
+        atomic_core::WikiCitation,
+        atomic_core::WikiArticleWithCitations,
+        atomic_core::WikiArticleStatus,
+        atomic_core::WikiArticleSummary,
+        atomic_core::WikiLink,
+        atomic_core::RelatedTag,
+        atomic_core::SuggestedArticle,
+        atomic_core::WikiArticleVersion,
+        atomic_core::WikiVersionSummary,
+        // Canvas
+        atomic_core::AtomPosition,
+        atomic_core::AtomWithEmbedding,
+        atomic_core::CanvasLevel,
+        atomic_core::CanvasNode,
+        atomic_core::CanvasNodeType,
+        atomic_core::CanvasEdge,
+        atomic_core::BreadcrumbEntry,
+        // Graph
+        atomic_core::SemanticEdge,
+        atomic_core::NeighborhoodGraph,
+        atomic_core::NeighborhoodAtom,
+        atomic_core::NeighborhoodEdge,
+        atomic_core::AtomCluster,
+        // Chat
+        atomic_core::Conversation,
+        atomic_core::ConversationWithTags,
+        atomic_core::ConversationWithMessages,
+        atomic_core::ChatMessage,
+        atomic_core::ChatMessageWithContext,
+        atomic_core::ChatToolCall,
+        atomic_core::ChatCitation,
+        // Feeds
+        atomic_core::Feed,
+        // Auth & Databases
+        atomic_core::ApiTokenInfo,
+        atomic_core::DatabaseInfo,
+        // Server request types
+        routes::atoms::CreateAtomRequest,
+        routes::atoms::UpdateAtomRequest,
+        routes::atoms::CreateTagRequest,
+        routes::atoms::UpdateTagRequest,
+        routes::search::SearchRequest,
+        routes::wiki::GenerateWikiBody,
+        routes::settings::SetSettingBody,
+        routes::settings::TestOpenRouterBody,
+        routes::canvas::CanvasLevelBody,
+        routes::clustering::ComputeClustersBody,
+        routes::chat::CreateConversationBody,
+        routes::chat::UpdateConversationBody,
+        routes::chat::SetScopeBody,
+        routes::chat::AddTagBody,
+        routes::chat::SendMessageBody,
+        routes::ollama::TestOllamaBody,
+        routes::auth::CreateTokenBody,
+        routes::databases::CreateDatabaseBody,
+        routes::databases::RenameDatabaseBody,
+        routes::import::ImportObsidianRequest,
+        routes::ingest::IngestUrlRequest,
+        routes::ingest::IngestUrlsRequest,
+        atomic_core::CreateFeedRequest,
+        atomic_core::UpdateFeedRequest,
+        error::ApiErrorResponse,
+    )),
+    tags(
+        (name = "atoms", description = "Atom CRUD operations"),
+        (name = "tags", description = "Tag management"),
+        (name = "search", description = "Semantic and keyword search"),
+        (name = "wiki", description = "Wiki article generation and management"),
+        (name = "settings", description = "Server configuration"),
+        (name = "embeddings", description = "Embedding pipeline management"),
+        (name = "canvas", description = "Canvas positions and hierarchy"),
+        (name = "graph", description = "Semantic graph and edges"),
+        (name = "clustering", description = "Atom clustering"),
+        (name = "chat", description = "Conversations and chat"),
+        (name = "providers", description = "AI provider configuration"),
+        (name = "utils", description = "Utility endpoints"),
+        (name = "auth", description = "API token management"),
+        (name = "databases", description = "Multi-database management"),
+        (name = "import", description = "Data import"),
+        (name = "ingestion", description = "URL content ingestion"),
+        (name = "feeds", description = "RSS/Atom feed management"),
+    ),
+    security(
+        ("bearer_auth" = []),
+    ),
+    modifiers(&SecurityAddon),
+)]
+pub struct ApiDoc;
+
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "bearer_auth",
+            utoipa::openapi::security::SecurityScheme::Http(
+                utoipa::openapi::security::Http::new(
+                    utoipa::openapi::security::HttpAuthScheme::Bearer,
+                ),
+            ),
+        );
+    }
+}
+
+pub async fn openapi_spec() -> impl Responder {
+    HttpResponse::Ok().json(ApiDoc::openapi())
+}

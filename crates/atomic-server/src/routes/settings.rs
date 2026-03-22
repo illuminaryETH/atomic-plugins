@@ -1,21 +1,25 @@
 //! Settings routes
 
 use crate::db_extractor::Db;
-use crate::error::blocking_ok;
+use crate::error::{blocking_ok, ApiErrorResponse};
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
+#[utoipa::path(get, path = "/api/settings", responses((status = 200, description = "All settings as key-value map")), tag = "settings")]
 pub async fn get_settings(db: Db) -> HttpResponse {
     let core = db.0;
     blocking_ok(move || core.get_settings()).await
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct SetSettingBody {
+    /// Setting value
     pub value: String,
 }
 
+#[utoipa::path(put, path = "/api/settings/{key}", params(("key" = String, Path, description = "Setting key")), request_body = SetSettingBody, responses((status = 200, description = "Setting updated"), (status = 400, description = "Invalid setting", body = ApiErrorResponse)), tag = "settings")]
 pub async fn set_setting(
     state: web::Data<AppState>,
     db: Db,
@@ -25,7 +29,6 @@ pub async fn set_setting(
     let key = path.into_inner();
     let value = body.into_inner().value;
 
-    // Handle dimension-affecting settings via set_setting_with_reembed (avoids deadlock)
     let dimension_keys = ["provider", "embedding_model", "ollama_embedding_model"];
     if dimension_keys.contains(&key.as_str()) {
         let core = db.0;
@@ -47,16 +50,17 @@ pub async fn set_setting(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct TestOpenRouterBody {
+    /// OpenRouter API key to test
     pub api_key: String,
 }
 
+#[utoipa::path(post, path = "/api/settings/test-openrouter", request_body = TestOpenRouterBody, responses((status = 200, description = "Connection successful"), (status = 400, description = "API error", body = ApiErrorResponse)), tag = "settings")]
 pub async fn test_openrouter_connection(
     body: web::Json<TestOpenRouterBody>,
 ) -> HttpResponse {
     let client = reqwest::Client::new();
-
     let response = client
         .post("https://openrouter.ai/api/v1/chat/completions")
         .header("Authorization", format!("Bearer {}", body.api_key))
@@ -86,14 +90,13 @@ pub async fn test_openrouter_connection(
     }
 }
 
+#[utoipa::path(get, path = "/api/settings/models", responses((status = 200, description = "Available LLM models")), tag = "settings")]
 pub async fn get_available_llm_models(db: Db) -> HttpResponse {
     use atomic_core::providers::models::{
         fetch_and_return_capabilities, get_cached_capabilities_sync, save_capabilities_cache,
     };
 
     let database = db.0.database();
-
-    // Check cache first
     let (cached, is_stale) = {
         let conn = match database.conn.lock() {
             Ok(c) => c,
@@ -115,7 +118,6 @@ pub async fn get_available_llm_models(db: Db) -> HttpResponse {
         }
     }
 
-    // Fetch fresh
     let client = reqwest::Client::new();
     match fetch_and_return_capabilities(&client).await {
         Ok(fresh_cache) => {

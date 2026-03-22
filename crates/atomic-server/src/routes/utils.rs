@@ -3,6 +3,7 @@
 use crate::db_extractor::Db;
 use actix_web::HttpResponse;
 
+#[utoipa::path(get, path = "/api/utils/sqlite-vec", responses((status = 200, description = "sqlite-vec version")), tag = "utils")]
 pub async fn check_sqlite_vec(db: Db) -> HttpResponse {
     let database = db.0.database();
     let conn = match database.conn.lock() {
@@ -20,6 +21,7 @@ pub async fn check_sqlite_vec(db: Db) -> HttpResponse {
     }
 }
 
+#[utoipa::path(post, path = "/api/utils/compact-tags", responses((status = 200, description = "Tag compaction results")), tag = "utils")]
 pub async fn compact_tags(db: Db) -> HttpResponse {
     let database = db.0.database();
 
@@ -42,7 +44,6 @@ pub async fn compact_tags(db: Db) -> HttpResponse {
         (provider_config, model)
     };
 
-    // Get supported params for OpenRouter
     let supported_params: Option<Vec<String>> =
         if provider_config.provider_type == atomic_core::ProviderType::OpenRouter {
             use atomic_core::providers::models::{

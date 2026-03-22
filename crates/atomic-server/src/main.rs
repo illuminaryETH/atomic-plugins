@@ -3,24 +3,16 @@
 //! Wraps atomic-core with a REST API + WebSocket events.
 //! No Tauri dependency.
 
-mod auth;
 mod config;
-mod db_extractor;
-mod error;
-mod event_bridge;
-mod mcp;
-mod mcp_auth;
-mod routes;
-mod state;
-mod ws;
 
 use actix_cors::Cors;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder};
+use atomic_server::{auth, event_bridge, mcp, mcp_auth, routes, state::AppState, ws, Scalar, Servable};
+use utoipa::OpenApi;
 use clap::Parser;
 use config::{Cli, Command, TokenAction};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp_actix_web::transport::StreamableHttpService;
-use state::AppState;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -276,6 +268,8 @@ async fn run_server(
             .app_data(app_state.clone())
             // Public routes (no auth)
             .route("/health", web::get().to(health))
+            .route("/api/docs/openapi.json", web::get().to(atomic_server::openapi_spec))
+            .service(Scalar::with_url("/api/docs", atomic_server::ApiDoc::openapi()))
             .route("/ws", web::get().to(ws::ws_handler))
             // OAuth discovery (public, no auth)
             .route(

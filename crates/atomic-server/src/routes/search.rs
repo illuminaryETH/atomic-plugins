@@ -1,19 +1,34 @@
 //! Search routes
 
 use crate::db_extractor::Db;
-use crate::error::{blocking_ok, ok_or_error};
+use crate::error::{blocking_ok, ok_or_error, ApiErrorResponse};
 use actix_web::{web, HttpResponse};
-use atomic_core::{SearchMode, SearchOptions};
-use serde::Deserialize;
+use atomic_core::{SearchMode, SearchOptions, SemanticSearchResult, SimilarAtomResult};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct SearchRequest {
+    /// Search query text
     pub query: String,
-    pub mode: String, // "keyword", "semantic", "hybrid"
+    /// Search mode: "keyword", "semantic", or "hybrid"
+    pub mode: String,
+    /// Max results (default: 20)
     pub limit: Option<i32>,
+    /// Minimum similarity threshold
     pub threshold: Option<f32>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/search",
+    request_body = SearchRequest,
+    responses(
+        (status = 200, description = "Search results", body = Vec<SemanticSearchResult>),
+        (status = 400, description = "Invalid search mode", body = ApiErrorResponse),
+    ),
+    tag = "search",
+)]
 pub async fn search(db: Db, body: web::Json<SearchRequest>) -> HttpResponse {
     let req = body.into_inner();
     let mode = match req.mode.as_str() {
@@ -36,12 +51,27 @@ pub async fn search(db: Db, body: web::Json<SearchRequest>) -> HttpResponse {
     ok_or_error(result)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct FindSimilarQuery {
+    /// Max results (default: 10)
     pub limit: Option<i32>,
+    /// Minimum similarity threshold (default: 0.7)
     pub threshold: Option<f32>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/atoms/{id}/similar",
+    params(
+        ("id" = String, Path, description = "Atom ID"),
+        FindSimilarQuery,
+    ),
+    responses(
+        (status = 200, description = "Similar atoms", body = Vec<SimilarAtomResult>),
+    ),
+    tag = "search",
+)]
 pub async fn find_similar(
     db: Db,
     path: web::Path<String>,

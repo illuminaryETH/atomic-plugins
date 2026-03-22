@@ -2,8 +2,9 @@
 
 use actix_web::HttpResponse;
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ApiErrorResponse {
     pub error: String,
 }

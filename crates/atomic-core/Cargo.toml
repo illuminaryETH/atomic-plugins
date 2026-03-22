@@ -29,6 +29,7 @@ regex = "1"
 tiktoken-rs = "0.6"
 zerocopy = { version = "0.8", features = ["derive"] }
 thiserror = "1"
+utoipa = { version = "5", features = ["preserve_order"], optional = true }
 
 # Token auth
 sha2 = "0.10"
@@ -44,6 +45,10 @@ glob = "0.3"
 yaml-rust2 = "0.9"
 urlencoding = "2"
 url = "2"
+
+[features]
+default = []
+openapi = ["utoipa"]
 
 [dev-dependencies]
 tempfile = "3"
