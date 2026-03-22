@@ -328,6 +328,23 @@ export function AIProviderStep({ state, dispatch }: AIProviderStepProps) {
                 className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors duration-150 text-sm"
               />
             </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs text-[var(--color-text-secondary)]">Context Length</label>
+              <CustomSelect
+                value={state.openaiCompatContextLength}
+                onChange={(v) => dispatch({ type: 'SET_OPENAI_COMPAT_CONTEXT_LENGTH', value: v })}
+                options={[
+                  { value: '2048', label: '2K' },
+                  { value: '4096', label: '4K' },
+                  { value: '8192', label: '8K' },
+                  { value: '16384', label: '16K' },
+                  { value: '32768', label: '32K' },
+                  { value: '65536', label: '64K' },
+                  { value: '131072', label: '128K' },
+                ]}
+              />
+            </div>
           </div>
         </>
       )}

@@ -128,13 +128,34 @@ Guidelines:
 - Prefer broad tags like "John Smith" rather than overly specific tags such as "Early Life of John Smith"
 - Every tag must have a valid parent_name from the top-level categories"#;
 
-/// Maximum characters to send for tagging (~30K tokens ≈ 120K chars)
-const MAX_TAGGING_CHARS: usize = 120_000;
+/// Default maximum characters to send for tagging (~30K tokens ≈ 120K chars)
+const DEFAULT_MAX_TAGGING_CHARS: usize = 120_000;
+
+/// Approximate ratio of characters to tokens (conservative: ~3.5 chars/token)
+const CHARS_PER_TOKEN: usize = 3;
+
+/// Estimate overhead tokens for system prompt + tag tree + response buffer
+const TAGGING_OVERHEAD_TOKENS: usize = 1500;
+
+/// Calculate max content chars based on provider context length.
+/// Returns a conservative limit that leaves room for system prompt, tag tree, and response.
+fn max_tagging_chars(provider_config: &ProviderConfig, tag_tree_json: &str) -> usize {
+    match provider_config.context_length() {
+        Some(ctx_len) => {
+            // Reserve tokens for: system prompt (~500), tag tree, response (~500)
+            let tag_tree_tokens = tag_tree_json.len() / CHARS_PER_TOKEN;
+            let available_tokens = ctx_len.saturating_sub(TAGGING_OVERHEAD_TOKENS + tag_tree_tokens);
+            // Convert to chars, with a minimum floor
+            (available_tokens * CHARS_PER_TOKEN).max(500)
+        }
+        None => DEFAULT_MAX_TAGGING_CHARS,
+    }
+}
 
 /// Extract tags from full atom content using a single LLM call.
 /// This replaces the per-chunk approach — the LLM sees the complete content
 /// and produces all tags in one pass, eliminating the need for consolidation.
-/// If content exceeds ~30K tokens, it is truncated to fit the context window.
+/// Content is truncated to fit within the provider's context window.
 pub async fn extract_tags_from_content(
     provider_config: &ProviderConfig,
     content: &str,
@@ -142,9 +163,10 @@ pub async fn extract_tags_from_content(
     model: &str,
     supported_params: Option<Vec<String>>,
 ) -> Result<ExtractionResult, String> {
-    // Truncate if content exceeds context window limit
-    let text = if content.len() > MAX_TAGGING_CHARS {
-        &content[..MAX_TAGGING_CHARS]
+    // Truncate based on provider's context length
+    let max_chars = max_tagging_chars(provider_config, tag_tree_json);
+    let text = if content.len() > max_chars {
+        &content[..max_chars]
     } else {
         content
     };

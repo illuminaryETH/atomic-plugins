@@ -79,6 +79,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [openaiCompatEmbeddingModel, setOpenaiCompatEmbeddingModel] = useState('');
   const [openaiCompatEmbeddingDimension, setOpenaiCompatEmbeddingDimension] = useState('1536');
   const [openaiCompatLlmModel, setOpenaiCompatLlmModel] = useState('');
+  const [openaiCompatContextLength, setOpenaiCompatContextLength] = useState('4096');
   const [openaiCompatStatus, setOpenaiCompatStatus] = useState<'idle' | 'checking' | 'connected' | 'error'>('idle');
   const [openaiCompatError, setOpenaiCompatError] = useState<string | null>(null);
 
@@ -469,6 +470,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setOpenaiCompatEmbeddingModel(settings.openai_compat_embedding_model || '');
     setOpenaiCompatEmbeddingDimension(settings.openai_compat_embedding_dimension || '1536');
     setOpenaiCompatLlmModel(settings.openai_compat_llm_model || '');
+    setOpenaiCompatContextLength(settings.openai_compat_context_length || '4096');
   }, [settings]);
 
   // Check Ollama connection when provider is ollama or host changes
@@ -1175,6 +1177,29 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             onBlur={() => autoSave('openai_compat_llm_model', openaiCompatLlmModel)}
                             placeholder="meta-llama/Llama-3.1-8B-Instruct"
                             className="w-full px-3 py-2 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] placeholder-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors duration-150"
+                          />
+                        </div>
+
+                        {/* Context Length */}
+                        <div className="space-y-1">
+                          <label className="block text-sm font-medium text-[var(--color-text-primary)]">
+                            Context Length
+                          </label>
+                          <p className="text-xs text-[var(--color-text-secondary)]">
+                            Max context window of your LLM model (used to truncate prompts)
+                          </p>
+                          <CustomSelect
+                            value={openaiCompatContextLength}
+                            onChange={(v) => { setOpenaiCompatContextLength(v); autoSave('openai_compat_context_length', v); }}
+                            options={[
+                              { value: '2048', label: '2K' },
+                              { value: '4096', label: '4K' },
+                              { value: '8192', label: '8K' },
+                              { value: '16384', label: '16K' },
+                              { value: '32768', label: '32K' },
+                              { value: '65536', label: '64K' },
+                              { value: '131072', label: '128K' },
+                            ]}
                           />
                         </div>
                       </div>

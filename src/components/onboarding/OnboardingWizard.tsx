@@ -67,6 +67,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         await setSetting('openai_compat_embedding_model', state.openaiCompatEmbeddingModel);
         await setSetting('openai_compat_embedding_dimension', state.openaiCompatEmbeddingDimension);
         await setSetting('openai_compat_llm_model', state.openaiCompatLlmModel);
+        await setSetting('openai_compat_context_length', state.openaiCompatContextLength);
       }
 
       await setSetting('auto_tagging_enabled', state.autoTaggingEnabled ? 'true' : 'false');

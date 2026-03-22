@@ -45,6 +45,7 @@ export interface OnboardingState {
   openaiCompatEmbeddingModel: string;
   openaiCompatEmbeddingDimension: string;
   openaiCompatLlmModel: string;
+  openaiCompatContextLength: string;
   openaiCompatStatus: 'idle' | 'checking' | 'connected' | 'error';
   openaiCompatError: string | null;
 
@@ -95,6 +96,7 @@ export type OnboardingAction =
   | { type: 'SET_OPENAI_COMPAT_EMBEDDING_MODEL'; value: string }
   | { type: 'SET_OPENAI_COMPAT_EMBEDDING_DIMENSION'; value: string }
   | { type: 'SET_OPENAI_COMPAT_LLM_MODEL'; value: string }
+  | { type: 'SET_OPENAI_COMPAT_CONTEXT_LENGTH'; value: string }
   | { type: 'SET_OPENAI_COMPAT_STATUS'; status: 'idle' | 'checking' | 'connected' | 'error'; error?: string }
   // Mobile
   | { type: 'SET_MOBILE_TOKEN'; token: string | null }
@@ -136,6 +138,7 @@ const initialState: OnboardingState = {
   openaiCompatEmbeddingModel: '',
   openaiCompatEmbeddingDimension: '1536',
   openaiCompatLlmModel: '',
+  openaiCompatContextLength: '4096',
   openaiCompatStatus: 'idle',
   openaiCompatError: null,
   mobileToken: null,
@@ -205,6 +208,8 @@ function reducer(state: OnboardingState, action: OnboardingAction): OnboardingSt
       return { ...state, openaiCompatEmbeddingDimension: action.value };
     case 'SET_OPENAI_COMPAT_LLM_MODEL':
       return { ...state, openaiCompatLlmModel: action.value };
+    case 'SET_OPENAI_COMPAT_CONTEXT_LENGTH':
+      return { ...state, openaiCompatContextLength: action.value };
     case 'SET_OPENAI_COMPAT_STATUS':
       return { ...state, openaiCompatStatus: action.status, openaiCompatError: action.error || null };
     case 'SET_MOBILE_TOKEN':

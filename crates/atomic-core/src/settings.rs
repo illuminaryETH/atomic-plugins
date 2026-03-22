@@ -25,6 +25,7 @@ pub const DEFAULT_SETTINGS: &[(&str, &str)] = &[
     ("openai_compat_embedding_model", ""),
     ("openai_compat_llm_model", ""),
     ("openai_compat_embedding_dimension", "1536"),
+    ("openai_compat_context_length", "4096"),
 ];
 
 /// Migrate settings - add any missing default settings

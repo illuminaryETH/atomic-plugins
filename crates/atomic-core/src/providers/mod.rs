@@ -55,6 +55,7 @@ pub struct ProviderConfig {
     pub openai_compat_embedding_model: String,
     pub openai_compat_llm_model: String,
     pub openai_compat_embedding_dimension: usize,
+    pub openai_compat_context_length: usize,
 }
 
 impl ProviderConfig {
@@ -96,6 +97,9 @@ impl ProviderConfig {
             openai_compat_embedding_dimension: settings.get("openai_compat_embedding_dimension")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(1536),
+            openai_compat_context_length: settings.get("openai_compat_context_length")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(4096),
         }
     }
 
@@ -131,6 +135,17 @@ impl ProviderConfig {
                 ollama::get_embedding_dimension(&self.ollama_embedding_model)
             }
             ProviderType::OpenAICompat => self.openai_compat_embedding_dimension,
+        }
+    }
+
+    /// Get the context length (in tokens) for the current provider's LLM.
+    /// Returns None for providers with large/unknown context (OpenRouter, Ollama),
+    /// meaning no truncation needed. Returns Some for providers with user-specified limits.
+    pub fn context_length(&self) -> Option<usize> {
+        match self.provider_type {
+            ProviderType::OpenRouter => None,
+            ProviderType::Ollama => None,
+            ProviderType::OpenAICompat => Some(self.openai_compat_context_length),
         }
     }
 }
