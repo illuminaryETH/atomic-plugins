@@ -240,16 +240,10 @@ async fn complete_internal(
         Some(tools.iter().map(convert_tool).collect())
     };
 
-    // Use basic json_object mode instead of json_schema for broader compatibility.
-    // Many OpenAI-compatible servers don't support json_schema structured output.
-    let response_format = if config.params.structured_output.is_some() {
-        Some(ResponseFormat {
-            format_type: "json_object".to_string(),
-            json_schema: None,
-        })
-    } else {
-        None
-    };
+    // Don't send response_format for OpenAI-compatible servers — support varies
+    // wildly (some only support json_schema, some only json_object, some neither).
+    // The system prompt already describes the expected JSON structure.
+    let response_format: Option<ResponseFormat> = None;
 
     let request = ChatRequest {
         model: config.model.clone(),
