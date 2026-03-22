@@ -1,10 +1,12 @@
 //! Database management routes
 
+use crate::error::ApiErrorResponse;
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-/// GET /api/databases — List all databases and which is active
+#[utoipa::path(get, path = "/api/databases", responses((status = 200, description = "List of databases with active ID")), tag = "databases")]
 pub async fn list_databases(state: web::Data<AppState>) -> HttpResponse {
     match state.manager.list_databases() {
         Ok((databases, active_id)) => {
@@ -17,12 +19,13 @@ pub async fn list_databases(state: web::Data<AppState>) -> HttpResponse {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct CreateDatabaseBody {
+    /// Name for the new database
     pub name: String,
 }
 
-/// POST /api/databases — Create a new database
+#[utoipa::path(post, path = "/api/databases", request_body = CreateDatabaseBody, responses((status = 201, description = "Database created", body = atomic_core::DatabaseInfo)), tag = "databases")]
 pub async fn create_database(
     state: web::Data<AppState>,
     body: web::Json<CreateDatabaseBody>,
@@ -34,12 +37,13 @@ pub async fn create_database(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct RenameDatabaseBody {
+    /// New name for the database
     pub name: String,
 }
 
-/// PUT /api/databases/{id} — Rename a database
+#[utoipa::path(put, path = "/api/databases/{id}", params(("id" = String, Path, description = "Database ID")), request_body = RenameDatabaseBody, responses((status = 200, description = "Database renamed"), (status = 404, description = "Database not found", body = ApiErrorResponse)), tag = "databases")]
 pub async fn rename_database(
     state: web::Data<AppState>,
     path: web::Path<String>,
@@ -53,7 +57,7 @@ pub async fn rename_database(
     }
 }
 
-/// DELETE /api/databases/{id} — Delete a database (400 if default)
+#[utoipa::path(delete, path = "/api/databases/{id}", params(("id" = String, Path, description = "Database ID")), responses((status = 200, description = "Database deleted"), (status = 400, description = "Cannot delete default database", body = ApiErrorResponse)), tag = "databases")]
 pub async fn delete_database(
     state: web::Data<AppState>,
     path: web::Path<String>,
@@ -65,7 +69,7 @@ pub async fn delete_database(
     }
 }
 
-/// PUT /api/databases/{id}/activate — Switch active database
+#[utoipa::path(put, path = "/api/databases/{id}/activate", params(("id" = String, Path, description = "Database ID")), responses((status = 200, description = "Database activated")), tag = "databases")]
 pub async fn activate_database(
     state: web::Data<AppState>,
     path: web::Path<String>,

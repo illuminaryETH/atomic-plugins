@@ -1,10 +1,12 @@
 //! Embedding management routes
 
 use crate::db_extractor::Db;
+use crate::error::ApiErrorResponse;
 use crate::event_bridge::embedding_event_callback;
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
 
+#[utoipa::path(post, path = "/api/embeddings/process-pending", responses((status = 200, description = "Number of atoms queued for embedding")), tag = "embeddings")]
 pub async fn process_pending_embeddings(state: web::Data<AppState>, db: Db) -> HttpResponse {
     let on_event = embedding_event_callback(state.event_tx.clone());
     match db.0.process_pending_embeddings(on_event) {
@@ -13,6 +15,7 @@ pub async fn process_pending_embeddings(state: web::Data<AppState>, db: Db) -> H
     }
 }
 
+#[utoipa::path(post, path = "/api/embeddings/process-tagging", responses((status = 200, description = "Number of atoms queued for tagging")), tag = "embeddings")]
 pub async fn process_pending_tagging(state: web::Data<AppState>, db: Db) -> HttpResponse {
     let on_event = embedding_event_callback(state.event_tx.clone());
     match db.0.process_pending_tagging(on_event) {
@@ -21,6 +24,7 @@ pub async fn process_pending_tagging(state: web::Data<AppState>, db: Db) -> Http
     }
 }
 
+#[utoipa::path(post, path = "/api/embeddings/retry/{atom_id}", params(("atom_id" = String, Path, description = "Atom ID")), responses((status = 200, description = "Embedding retried"), (status = 404, description = "Atom not found", body = ApiErrorResponse)), tag = "embeddings")]
 pub async fn retry_embedding(
     state: web::Data<AppState>,
     db: Db,
@@ -34,6 +38,7 @@ pub async fn retry_embedding(
     }
 }
 
+#[utoipa::path(post, path = "/api/embeddings/reset-stuck", responses((status = 200, description = "Number of stuck atoms reset")), tag = "embeddings")]
 pub async fn reset_stuck_processing(db: Db) -> HttpResponse {
     match db.0.reset_stuck_processing() {
         Ok(count) => HttpResponse::Ok().json(serde_json::json!({"count": count})),
@@ -41,6 +46,7 @@ pub async fn reset_stuck_processing(db: Db) -> HttpResponse {
     }
 }
 
+#[utoipa::path(get, path = "/api/atoms/{id}/embedding-status", params(("id" = String, Path, description = "Atom ID")), responses((status = 200, description = "Embedding status"), (status = 404, description = "Atom not found", body = ApiErrorResponse)), tag = "embeddings")]
 pub async fn get_embedding_status(
     db: Db,
     path: web::Path<String>,

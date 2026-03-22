@@ -1,27 +1,52 @@
 //! Atom and Tag CRUD routes
 
 use crate::db_extractor::Db;
-use crate::error::blocking_ok;
+use crate::error::{blocking_ok, ApiErrorResponse};
 use crate::event_bridge::embedding_event_callback;
 use crate::state::{AppState, ServerEvent};
 use actix_web::{web, HttpResponse};
-use serde::Deserialize;
+use atomic_core::{
+    AtomWithTags, BulkCreateResult, PaginatedAtoms, PaginatedTagChildren, SourceInfo, Tag,
+    TagWithCount,
+};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 // ==================== Atoms ====================
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GetAtomsQuery {
+    /// Filter by tag ID
     pub tag_id: Option<String>,
+    /// Max results to return (default: 50)
     pub limit: Option<i32>,
+    /// Offset for pagination
     pub offset: Option<i32>,
+    /// Cursor for keyset pagination (updated_at value)
     pub cursor: Option<String>,
+    /// Cursor tiebreaker (atom id)
     pub cursor_id: Option<String>,
-    pub source: Option<String>,       // "all" | "manual" | "external"
-    pub source_value: Option<String>,  // e.g. "nytimes.com"
-    pub sort_by: Option<String>,       // "updated" | "created" | "published" | "title"
-    pub sort_order: Option<String>,    // "desc" | "asc"
+    /// Source filter: "all", "manual", or "external"
+    pub source: Option<String>,
+    /// Filter by specific source domain (e.g. "nytimes.com")
+    pub source_value: Option<String>,
+    /// Sort field: "updated", "created", "published", or "title"
+    pub sort_by: Option<String>,
+    /// Sort direction: "desc" or "asc"
+    pub sort_order: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/atoms",
+    params(GetAtomsQuery),
+    responses(
+        (status = 200, description = "Paginated list of atoms", body = PaginatedAtoms),
+        (status = 500, description = "Internal error", body = ApiErrorResponse),
+    ),
+    tag = "atoms",
+)]
 pub async fn get_atoms(
     db: Db,
     query: web::Query<GetAtomsQuery>,
@@ -56,11 +81,31 @@ pub async fn get_atoms(
     blocking_ok(move || core.list_atoms(&params)).await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/atoms/sources",
+    responses(
+        (status = 200, description = "List of sources with counts", body = Vec<SourceInfo>),
+    ),
+    tag = "atoms",
+)]
 pub async fn get_source_list(db: Db) -> HttpResponse {
     let core = db.0;
     blocking_ok(move || core.get_source_list()).await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/atoms/{id}",
+    params(
+        ("id" = String, Path, description = "Atom ID"),
+    ),
+    responses(
+        (status = 200, description = "Atom with tags", body = AtomWithTags),
+        (status = 404, description = "Atom not found", body = ApiErrorResponse),
+    ),
+    tag = "atoms",
+)]
 pub async fn get_atom(db: Db, path: web::Path<String>) -> HttpResponse {
     let id = path.into_inner();
     let core = db.0;
@@ -72,15 +117,29 @@ pub async fn get_atom(db: Db, path: web::Path<String>) -> HttpResponse {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct CreateAtomRequest {
+    /// Markdown content of the atom
     pub content: String,
+    /// Optional source URL
     pub source_url: Option<String>,
+    /// Optional publication date (ISO 8601)
     pub published_at: Option<String>,
+    /// Tag IDs to assign
     #[serde(default)]
     pub tag_ids: Vec<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/atoms",
+    request_body = CreateAtomRequest,
+    responses(
+        (status = 201, description = "Created atom", body = AtomWithTags),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+    ),
+    tag = "atoms",
+)]
 pub async fn create_atom(
     state: web::Data<AppState>,
     db: Db,
@@ -110,6 +169,16 @@ pub async fn create_atom(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/atoms/bulk",
+    request_body = Vec<CreateAtomRequest>,
+    responses(
+        (status = 201, description = "Bulk create result", body = BulkCreateResult),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+    ),
+    tag = "atoms",
+)]
 pub async fn bulk_create_atoms(
     state: web::Data<AppState>,
     db: Db,
@@ -141,14 +210,31 @@ pub async fn bulk_create_atoms(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UpdateAtomRequest {
+    /// Updated markdown content
     pub content: String,
+    /// Updated source URL
     pub source_url: Option<String>,
+    /// Updated publication date
     pub published_at: Option<String>,
+    /// Updated tag IDs (if provided, replaces all tags)
     pub tag_ids: Option<Vec<String>>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/atoms/{id}",
+    params(
+        ("id" = String, Path, description = "Atom ID"),
+    ),
+    request_body = UpdateAtomRequest,
+    responses(
+        (status = 200, description = "Updated atom", body = AtomWithTags),
+        (status = 404, description = "Atom not found", body = ApiErrorResponse),
+    ),
+    tag = "atoms",
+)]
 pub async fn update_atom(
     state: web::Data<AppState>,
     db: Db,
@@ -173,6 +259,18 @@ pub async fn update_atom(
     }).await
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/atoms/{id}",
+    params(
+        ("id" = String, Path, description = "Atom ID"),
+    ),
+    responses(
+        (status = 200, description = "Atom deleted"),
+        (status = 404, description = "Atom not found", body = ApiErrorResponse),
+    ),
+    tag = "atoms",
+)]
 pub async fn delete_atom(db: Db, path: web::Path<String>) -> HttpResponse {
     let id = path.into_inner();
     let core = db.0;
@@ -181,18 +279,33 @@ pub async fn delete_atom(db: Db, path: web::Path<String>) -> HttpResponse {
 
 // ==================== Tags ====================
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GetTagsQuery {
+    /// Minimum atom count to include (default: 2)
     pub min_count: Option<i32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct GetTagChildrenQuery {
+    /// Minimum atom count to include (default: 0)
     pub min_count: Option<i32>,
+    /// Max results (default: 100)
     pub limit: Option<i32>,
+    /// Offset for pagination
     pub offset: Option<i32>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/tags",
+    params(GetTagsQuery),
+    responses(
+        (status = 200, description = "Hierarchical tag tree", body = Vec<TagWithCount>),
+    ),
+    tag = "tags",
+)]
 pub async fn get_tags(
     db: Db,
     query: web::Query<GetTagsQuery>,
@@ -202,6 +315,18 @@ pub async fn get_tags(
     blocking_ok(move || core.get_all_tags_filtered(min_count)).await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/tags/{id}/children",
+    params(
+        ("id" = String, Path, description = "Parent tag ID"),
+        GetTagChildrenQuery,
+    ),
+    responses(
+        (status = 200, description = "Paginated tag children", body = PaginatedTagChildren),
+    ),
+    tag = "tags",
+)]
 pub async fn get_tag_children(
     db: Db,
     path: web::Path<String>,
@@ -215,12 +340,24 @@ pub async fn get_tag_children(
     blocking_ok(move || core.get_tag_children(&parent_id, min_count, limit, offset)).await
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct CreateTagRequest {
+    /// Tag name
     pub name: String,
+    /// Parent tag ID for hierarchy
     pub parent_id: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/tags",
+    request_body = CreateTagRequest,
+    responses(
+        (status = 201, description = "Created tag", body = Tag),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+    ),
+    tag = "tags",
+)]
 pub async fn create_tag(
     db: Db,
     body: web::Json<CreateTagRequest>,
@@ -234,12 +371,27 @@ pub async fn create_tag(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct UpdateTagRequest {
+    /// Updated tag name
     pub name: String,
+    /// Updated parent tag ID
     pub parent_id: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/tags/{id}",
+    params(
+        ("id" = String, Path, description = "Tag ID"),
+    ),
+    request_body = UpdateTagRequest,
+    responses(
+        (status = 200, description = "Updated tag", body = Tag),
+        (status = 404, description = "Tag not found", body = ApiErrorResponse),
+    ),
+    tag = "tags",
+)]
 pub async fn update_tag(
     db: Db,
     path: web::Path<String>,
@@ -251,6 +403,19 @@ pub async fn update_tag(
     blocking_ok(move || core.update_tag(&id, &req.name, req.parent_id.as_deref())).await
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/tags/{id}",
+    params(
+        ("id" = String, Path, description = "Tag ID"),
+        ("recursive" = Option<bool>, Query, description = "Delete child tags recursively"),
+    ),
+    responses(
+        (status = 200, description = "Tag deleted"),
+        (status = 404, description = "Tag not found", body = ApiErrorResponse),
+    ),
+    tag = "tags",
+)]
 pub async fn delete_tag(
     db: Db,
     path: web::Path<String>,

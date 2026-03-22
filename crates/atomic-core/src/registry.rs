@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 /// Metadata about a knowledge-base database.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DatabaseInfo {
     pub id: String,
     pub name: String,

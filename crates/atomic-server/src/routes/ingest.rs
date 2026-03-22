@@ -4,22 +4,29 @@ use crate::db_extractor::Db;
 use crate::event_bridge::{embedding_event_callback, ingestion_event_callback};
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct IngestUrlRequest {
+    /// URL to ingest
     pub url: String,
+    /// Tag IDs to assign to ingested atom
     #[serde(default)]
     pub tag_ids: Vec<String>,
+    /// Hint for the article title
     pub title_hint: Option<String>,
+    /// Publication date override
     pub published_at: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct IngestUrlsRequest {
+    /// List of URLs to ingest
     pub urls: Vec<IngestUrlRequest>,
 }
 
+#[utoipa::path(post, path = "/api/ingest/url", request_body = IngestUrlRequest, responses((status = 200, description = "Ingested atom")), tag = "ingestion")]
 pub async fn ingest_url(
     state: web::Data<AppState>,
     db: Db,
@@ -41,6 +48,7 @@ pub async fn ingest_url(
     }
 }
 
+#[utoipa::path(post, path = "/api/ingest/urls", request_body = IngestUrlsRequest, responses((status = 200, description = "Batch ingestion results")), tag = "ingestion")]
 pub async fn ingest_urls(
     state: web::Data<AppState>,
     db: Db,

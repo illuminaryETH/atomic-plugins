@@ -1,15 +1,18 @@
 //! Token management endpoints
 
+use crate::error::ApiErrorResponse;
 use crate::state::AppState;
 use actix_web::{web, HttpResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct CreateTokenBody {
+    /// Name for the new token
     pub name: String,
 }
 
-/// POST /api/auth/tokens — Create a new named API token
+#[utoipa::path(post, path = "/api/auth/tokens", request_body = CreateTokenBody, responses((status = 201, description = "Token created (includes raw token — save it, won't be shown again)")), tag = "auth")]
 pub async fn create_token(
     state: web::Data<AppState>,
     body: web::Json<CreateTokenBody>,
@@ -29,7 +32,7 @@ pub async fn create_token(
     }
 }
 
-/// GET /api/auth/tokens — List all tokens (metadata only, no raw token values)
+#[utoipa::path(get, path = "/api/auth/tokens", responses((status = 200, description = "List of API tokens (metadata only)", body = Vec<atomic_core::ApiTokenInfo>)), tag = "auth")]
 pub async fn list_tokens(state: web::Data<AppState>) -> HttpResponse {
     let registry = state.manager.registry().clone();
     match web::block(move || registry.list_api_tokens()).await {
@@ -39,7 +42,7 @@ pub async fn list_tokens(state: web::Data<AppState>) -> HttpResponse {
     }
 }
 
-/// DELETE /api/auth/tokens/{id} — Revoke a token
+#[utoipa::path(delete, path = "/api/auth/tokens/{id}", params(("id" = String, Path, description = "Token ID")), responses((status = 200, description = "Token revoked"), (status = 404, description = "Token not found", body = ApiErrorResponse)), tag = "auth")]
 pub async fn revoke_token(
     state: web::Data<AppState>,
     path: web::Path<String>,

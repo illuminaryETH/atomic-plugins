@@ -1,23 +1,23 @@
 //! Route configuration — registers all API route groups
 
-mod auth;
-mod atoms;
-mod canvas;
-mod chat;
-mod clustering;
-mod databases;
-mod embedding;
-mod feeds;
-mod graph;
-mod import;
-mod ingest;
+pub mod auth;
+pub mod atoms;
+pub mod canvas;
+pub mod chat;
+pub mod clustering;
+pub mod databases;
+pub mod embedding;
+pub mod feeds;
+pub mod graph;
+pub mod import;
+pub mod ingest;
 pub mod oauth;
-mod ollama;
-mod search;
+pub mod ollama;
+pub mod search;
 pub mod setup;
-mod settings;
-mod utils;
-mod wiki;
+pub mod settings;
+pub mod utils;
+pub mod wiki;
 
 use actix_web::web;
 
