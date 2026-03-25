@@ -3,6 +3,7 @@ import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import * as d3 from 'd3-force';
 import { getAtomNeighborhood, type NeighborhoodGraph, type NeighborhoodAtom } from '../../lib/api';
 import { useUIStore } from '../../stores/ui';
+import { isTauri } from '../../lib/platform';
 
 // Generate a consistent HSL color from a string (tag name)
 function stringToHSL(str: string): string {
@@ -148,7 +149,7 @@ export function LocalGraphView({ onAtomClick }: LocalGraphViewProps) {
   return (
     <div className="fixed inset-0 z-50 bg-[var(--color-bg-main)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+      <div className={`flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)] ${isTauri() ? 'pl-[78px]' : ''}`} data-tauri-drag-region>
         <div className="flex items-center gap-3">
           {/* Back button */}
           {localGraph.navigationHistory.length > 1 && (

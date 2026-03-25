@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useKeyboard } from '../../hooks/useKeyboard';
 
 // Generic citation interface that works with both WikiCitation and ChatCitation
@@ -114,10 +116,10 @@ export function CitationPopover({ citation, anchorRect, onClose, onViewAtom }: C
       </div>
 
       {/* Excerpt content */}
-      <div className="px-4 py-3">
-        <p className="text-sm text-[var(--color-text-primary)] leading-relaxed whitespace-pre-wrap">
+      <div className="px-4 py-3 prose prose-invert prose-sm max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
           {displayExcerpt}
-        </p>
+        </ReactMarkdown>
       </div>
 
       {/* Footer with link */}
