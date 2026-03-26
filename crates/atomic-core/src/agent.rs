@@ -167,10 +167,21 @@ fn truncate_messages_to_context(messages: Vec<Message>, context_length: Option<u
         return messages; // System + user message, nothing to truncate
     }
 
-    // Count total tokens
+    // Count total tokens (content + tool calls)
     let message_tokens: Vec<usize> = messages
         .iter()
-        .map(|m| count_tokens(m.content.as_deref().unwrap_or("")))
+        .map(|m| {
+            let content_tokens = count_tokens(m.content.as_deref().unwrap_or(""));
+            let tool_call_tokens = m.tool_calls.as_ref().map_or(0, |tcs| {
+                tcs.iter().map(|tc| {
+                    let args = tc.get_arguments().unwrap_or("");
+                    let name = tc.get_name().unwrap_or("");
+                    // Count tokens for function name, arguments JSON, and ~10 tokens overhead per call
+                    count_tokens(name) + count_tokens(args) + 10
+                }).sum()
+            });
+            content_tokens + tool_call_tokens
+        })
         .collect();
 
     let total: usize = message_tokens.iter().sum();

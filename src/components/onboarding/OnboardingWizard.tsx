@@ -37,6 +37,9 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         if (state.provider === 'openrouter') {
           return state.testResult === 'success';
         }
+        if (state.provider === 'openai_compat') {
+          return state.openaiCompatStatus === 'connected';
+        }
         return state.ollamaStatus === 'connected';
       }
       default:
