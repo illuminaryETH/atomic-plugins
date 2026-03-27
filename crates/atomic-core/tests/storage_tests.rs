@@ -34,8 +34,8 @@ async fn postgres_storage() -> Option<atomic_core::storage::PostgresStorage> {
         Ok(url) => url,
         Err(_) => return None,
     };
-    let storage = atomic_core::storage::PostgresStorage::connect(&url).await.unwrap();
-    storage.initialize().await.unwrap();
+    let storage = atomic_core::storage::PostgresStorage::connect(&url, "test").unwrap();
+    storage.initialize_sync().unwrap();
 
     // Truncate data tables for a clean test (preserve schema)
     sqlx::raw_sql(

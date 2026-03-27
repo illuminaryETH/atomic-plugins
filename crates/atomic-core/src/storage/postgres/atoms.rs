@@ -19,10 +19,11 @@ impl PostgresStorage {
             "SELECT t.id, t.name, t.parent_id, t.created_at
              FROM tags t
              JOIN atom_tags at ON t.id = at.tag_id
-             WHERE at.atom_id = $1
+             WHERE at.atom_id = $1 AND at.db_id = $2
              ORDER BY t.name",
         )
         .bind(atom_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -49,18 +50,19 @@ impl PostgresStorage {
             return Ok(HashMap::new());
         }
 
-        // Build dynamic placeholders $1, $2, ...
-        let placeholders: Vec<String> = (1..=atom_ids.len()).map(|i| format!("${}", i)).collect();
+        // Build dynamic placeholders $1, $2, ... (reserve $1 for db_id)
+        let placeholders: Vec<String> = (2..=atom_ids.len() + 1).map(|i| format!("${}", i)).collect();
         let sql = format!(
             "SELECT at.atom_id, t.id, t.name, t.parent_id, t.created_at
              FROM atom_tags at
              JOIN tags t ON t.id = at.tag_id
-             WHERE at.atom_id IN ({})
+             WHERE at.db_id = $1 AND at.atom_id IN ({})
              ORDER BY t.name",
             placeholders.join(", ")
         );
 
         let mut query = sqlx::query_as::<_, (String, String, String, Option<String>, String)>(&sql);
+        query = query.bind(&self.db_id);
         for id in atom_ids {
             query = query.bind(id);
         }
@@ -127,8 +129,9 @@ impl AtomStore for PostgresStorage {
                     created_at, updated_at,
                     COALESCE(embedding_status, 'pending'),
                     COALESCE(tagging_status, 'pending')
-             FROM atoms ORDER BY updated_at DESC",
+             FROM atoms WHERE db_id = $1 ORDER BY updated_at DESC",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -159,9 +162,10 @@ impl AtomStore for PostgresStorage {
                     created_at, updated_at,
                     COALESCE(embedding_status, 'pending'),
                     COALESCE(tagging_status, 'pending')
-             FROM atoms WHERE id = $1",
+             FROM atoms WHERE id = $1 AND db_id = $2",
         )
         .bind(id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -191,8 +195,8 @@ impl AtomStore for PostgresStorage {
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         sqlx::query(
-            "INSERT INTO atoms (id, content, source_url, source, published_at, created_at, updated_at, embedding_status, tagging_status, title, snippet)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+            "INSERT INTO atoms (id, content, source_url, source, published_at, created_at, updated_at, embedding_status, tagging_status, title, snippet, db_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
         )
         .bind(id)
         .bind(&request.content)
@@ -205,14 +209,16 @@ impl AtomStore for PostgresStorage {
         .bind(tagging_status)
         .bind(&title)
         .bind(&snippet)
+        .bind(&self.db_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         for tag_id in &request.tag_ids {
-            sqlx::query("INSERT INTO atom_tags (atom_id, tag_id) VALUES ($1, $2)")
+            sqlx::query("INSERT INTO atom_tags (atom_id, tag_id, db_id) VALUES ($1, $2, $3)")
                 .bind(id)
                 .bind(tag_id)
+                .bind(&self.db_id)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -257,8 +263,8 @@ impl AtomStore for PostgresStorage {
             let source = request.source_url.as_deref().map(parse_source);
 
             sqlx::query(
-                "INSERT INTO atoms (id, content, source_url, source, published_at, created_at, updated_at, embedding_status, tagging_status, title, snippet)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+                "INSERT INTO atoms (id, content, source_url, source, published_at, created_at, updated_at, embedding_status, tagging_status, title, snippet, db_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
             )
             .bind(id)
             .bind(&request.content)
@@ -271,14 +277,16 @@ impl AtomStore for PostgresStorage {
             .bind("pending")
             .bind(&title)
             .bind(&snippet)
+            .bind(&self.db_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
             for tag_id in &request.tag_ids {
-                sqlx::query("INSERT INTO atom_tags (atom_id, tag_id) VALUES ($1, $2)")
+                sqlx::query("INSERT INTO atom_tags (atom_id, tag_id, db_id) VALUES ($1, $2, $3)")
                     .bind(id)
                     .bind(tag_id)
+                    .bind(&self.db_id)
                     .execute(&mut *tx)
                     .await
                     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -308,9 +316,11 @@ impl AtomStore for PostgresStorage {
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
-        // Resolve tags after commit
+        // Batch-resolve tags for all created atoms
+        let atom_ids: Vec<String> = atoms_with_tags.iter().map(|a| a.atom.id.clone()).collect();
+        let tag_map = self.tags_for_atom_ids(&atom_ids).await?;
         for awt in &mut atoms_with_tags {
-            awt.tags = self.tags_for_atom(&awt.atom.id).await?;
+            awt.tags = tag_map.get(&awt.atom.id).cloned().unwrap_or_default();
         }
 
         Ok(atoms_with_tags)
@@ -332,7 +342,7 @@ impl AtomStore for PostgresStorage {
         sqlx::query(
             "UPDATE atoms SET content = $1, source_url = $2, source = $3, published_at = $4,
              updated_at = $5, embedding_status = $6, title = $7, snippet = $8
-             WHERE id = $9"
+             WHERE id = $9 AND db_id = $10"
         )
         .bind(&request.content)
         .bind(&request.source_url)
@@ -343,21 +353,24 @@ impl AtomStore for PostgresStorage {
         .bind(&title)
         .bind(&snippet)
         .bind(id)
+        .bind(&self.db_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         if let Some(ref tag_ids) = request.tag_ids {
-            sqlx::query("DELETE FROM atom_tags WHERE atom_id = $1")
+            sqlx::query("DELETE FROM atom_tags WHERE atom_id = $1 AND db_id = $2")
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
             for tag_id in tag_ids {
-                sqlx::query("INSERT INTO atom_tags (atom_id, tag_id) VALUES ($1, $2)")
+                sqlx::query("INSERT INTO atom_tags (atom_id, tag_id, db_id) VALUES ($1, $2, $3)")
                     .bind(id)
                     .bind(tag_id)
+                    .bind(&self.db_id)
                     .execute(&mut *tx)
                     .await
                     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -377,9 +390,10 @@ impl AtomStore for PostgresStorage {
                     created_at, updated_at,
                     COALESCE(embedding_status, 'pending'),
                     COALESCE(tagging_status, 'pending')
-             FROM atoms WHERE id = $1",
+             FROM atoms WHERE id = $1 AND db_id = $2",
         )
         .bind(id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -393,14 +407,16 @@ impl AtomStore for PostgresStorage {
     async fn delete_atom(&self, id: &str) -> StorageResult<()> {
         // Explicit delete from atom_tags so triggers (if any) fire.
         db_err!(
-            sqlx::query("DELETE FROM atom_tags WHERE atom_id = $1")
+            sqlx::query("DELETE FROM atom_tags WHERE atom_id = $1 AND db_id = $2")
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
         )?;
         db_err!(
-            sqlx::query("DELETE FROM atoms WHERE id = $1")
+            sqlx::query("DELETE FROM atoms WHERE id = $1 AND db_id = $2")
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
         )?;
@@ -414,7 +430,7 @@ impl AtomStore for PostgresStorage {
             String, String, String, String,
         )> = sqlx::query_as(
             "WITH RECURSIVE descendant_tags(id) AS (
-                SELECT $1::text
+                SELECT id FROM tags WHERE id = $1 AND db_id = $2
                 UNION ALL
                 SELECT t.id FROM tags t
                 INNER JOIN descendant_tags dt ON t.parent_id = dt.id
@@ -432,6 +448,7 @@ impl AtomStore for PostgresStorage {
             ORDER BY a.updated_at DESC",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -490,6 +507,11 @@ impl AtomStore for PostgresStorage {
         }
         let mut bind_values: Vec<BindVal> = Vec::new();
 
+        // db_id scoping — always applied first
+        where_clauses.push(format!("a.db_id = ${}", param_idx));
+        bind_values.push(BindVal::Str(self.db_id.clone()));
+        param_idx += 1;
+
         // Tag filter — recursive CTE to include full descendant subtree
         if let Some(ref tid) = params.tag_id {
             where_clauses.push(format!(
@@ -547,9 +569,10 @@ impl AtomStore for PostgresStorage {
         let total_count: i32 = if !has_extra_filters && params.tag_id.is_some() {
             let tid = params.tag_id.as_ref().unwrap();
             let has_children: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM tags WHERE parent_id = $1)",
+                "SELECT EXISTS(SELECT 1 FROM tags WHERE parent_id = $1 AND db_id = $2)",
             )
             .bind(tid)
+            .bind(&self.db_id)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -557,7 +580,7 @@ impl AtomStore for PostgresStorage {
             if has_children {
                 let count: i64 = sqlx::query_scalar(
                     "WITH RECURSIVE descendant_tags(id) AS (
-                       SELECT $1::text
+                       SELECT id FROM tags WHERE id = $1 AND db_id = $2
                        UNION ALL
                        SELECT t.id FROM tags t INNER JOIN descendant_tags dt ON t.parent_id = dt.id
                      )
@@ -566,15 +589,17 @@ impl AtomStore for PostgresStorage {
                      WHERE at.tag_id IN (SELECT id FROM descendant_tags)",
                 )
                 .bind(tid)
+                .bind(&self.db_id)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
                 count as i32
             } else {
                 let count: i32 = sqlx::query_scalar(
-                    "SELECT atom_count FROM tags WHERE id = $1",
+                    "SELECT atom_count FROM tags WHERE id = $1 AND db_id = $2",
                 )
                 .bind(tid)
+                .bind(&self.db_id)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -585,6 +610,11 @@ impl AtomStore for PostgresStorage {
             let mut count_wheres: Vec<String> = Vec::new();
             let mut count_binds: Vec<BindVal> = Vec::new();
             let mut ci: usize = 1;
+
+            // db_id scoping
+            count_wheres.push(format!("a.db_id = ${}", ci));
+            count_binds.push(BindVal::Str(self.db_id.clone()));
+            ci += 1;
 
             if let Some(ref tid) = params.tag_id {
                 count_wheres.push(format!(
@@ -630,7 +660,8 @@ impl AtomStore for PostgresStorage {
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
             count as i32
         } else {
-            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM atoms")
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM atoms WHERE db_id = $1")
+                .bind(&self.db_id)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -736,8 +767,9 @@ impl AtomStore for PostgresStorage {
 
     async fn get_source_list(&self) -> StorageResult<Vec<SourceInfo>> {
         let rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT source, COUNT(*) as cnt FROM atoms WHERE source IS NOT NULL GROUP BY source ORDER BY cnt DESC",
+            "SELECT source, COUNT(*) as cnt FROM atoms WHERE source IS NOT NULL AND db_id = $1 GROUP BY source ORDER BY cnt DESC",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -753,9 +785,10 @@ impl AtomStore for PostgresStorage {
 
     async fn get_embedding_status(&self, atom_id: &str) -> StorageResult<String> {
         let status: String = sqlx::query_scalar(
-            "SELECT COALESCE(embedding_status, 'pending') FROM atoms WHERE id = $1",
+            "SELECT COALESCE(embedding_status, 'pending') FROM atoms WHERE id = $1 AND db_id = $2",
         )
         .bind(atom_id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -765,7 +798,8 @@ impl AtomStore for PostgresStorage {
 
     async fn get_atom_positions(&self) -> StorageResult<Vec<AtomPosition>> {
         let rows: Vec<(String, f64, f64)> =
-            sqlx::query_as("SELECT atom_id, x, y FROM atom_positions")
+            sqlx::query_as("SELECT atom_id, x, y FROM atom_positions WHERE db_id = $1")
+                .bind(&self.db_id)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -787,13 +821,14 @@ impl AtomStore for PostgresStorage {
 
         for pos in positions {
             sqlx::query(
-                "INSERT INTO atom_positions (atom_id, x, y, updated_at) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (atom_id) DO UPDATE SET x = $2, y = $3, updated_at = $4",
+                "INSERT INTO atom_positions (atom_id, x, y, updated_at, db_id) VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (atom_id, db_id) DO UPDATE SET x = $2, y = $3, updated_at = $4",
             )
             .bind(&pos.atom_id)
             .bind(&pos.x)
             .bind(&pos.y)
             .bind(&now)
+            .bind(&self.db_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -808,9 +843,10 @@ impl AtomStore for PostgresStorage {
 
     async fn get_atom_tag_ids(&self, atom_id: &str) -> StorageResult<Vec<String>> {
         let ids: Vec<(String,)> = sqlx::query_as(
-            "SELECT tag_id FROM atom_tags WHERE atom_id = $1",
+            "SELECT tag_id FROM atom_tags WHERE atom_id = $1 AND db_id = $2",
         )
         .bind(atom_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -820,9 +856,10 @@ impl AtomStore for PostgresStorage {
 
     async fn get_atom_content(&self, atom_id: &str) -> StorageResult<Option<String>> {
         let content: Option<String> = sqlx::query_scalar(
-            "SELECT content FROM atoms WHERE id = $1",
+            "SELECT content FROM atoms WHERE id = $1 AND db_id = $2",
         )
         .bind(atom_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -841,8 +878,9 @@ impl AtomStore for PostgresStorage {
                     created_at, updated_at,
                     COALESCE(embedding_status, 'pending'),
                     COALESCE(tagging_status, 'pending')
-             FROM atoms ORDER BY updated_at DESC",
+             FROM atoms WHERE db_id = $1 ORDER BY updated_at DESC",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -857,8 +895,10 @@ impl AtomStore for PostgresStorage {
             "SELECT ac.atom_id, avg(vc.embedding)::real[] as avg_embedding
              FROM atom_chunks ac
              JOIN vec_chunks vc ON vc.chunk_id = ac.id
+             WHERE ac.db_id = $1
              GROUP BY ac.atom_id",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default();
@@ -891,9 +931,10 @@ impl AtomStore for PostgresStorage {
             return Ok(std::collections::HashSet::new());
         }
         let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT source_url FROM atoms WHERE source_url = ANY($1)",
+            "SELECT source_url FROM atoms WHERE source_url = ANY($1) AND db_id = $2",
         )
         .bind(urls)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -903,9 +944,10 @@ impl AtomStore for PostgresStorage {
 
     async fn source_url_exists(&self, url: &str) -> StorageResult<bool> {
         let exists: Option<bool> = sqlx::query_scalar::<_, Option<bool>>(
-            "SELECT EXISTS(SELECT 1 FROM atoms WHERE source_url = $1)",
+            "SELECT EXISTS(SELECT 1 FROM atoms WHERE source_url = $1 AND db_id = $2)",
         )
         .bind(url)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -914,8 +956,9 @@ impl AtomStore for PostgresStorage {
 
     async fn count_pending_embeddings(&self) -> StorageResult<i32> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM atoms WHERE embedding_status = 'pending'",
+            "SELECT COUNT(*) FROM atoms WHERE embedding_status = 'pending' AND db_id = $1",
         )
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;

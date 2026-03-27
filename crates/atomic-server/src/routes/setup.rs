@@ -6,8 +6,11 @@ use serde::Deserialize;
 
 /// GET /api/setup/status — Check if the instance needs initial setup
 pub async fn setup_status(state: web::Data<AppState>) -> HttpResponse {
-    let registry = state.manager.registry().clone();
-    match web::block(move || registry.list_api_tokens()).await {
+    let core = match state.manager.active_core() {
+        Ok(c) => c,
+        Err(e) => return crate::error::error_response(e),
+    };
+    match web::block(move || core.list_api_tokens()).await {
         Ok(Ok(tokens)) => {
             let active = tokens.iter().filter(|t| !t.is_revoked).count();
             HttpResponse::Ok().json(serde_json::json!({
@@ -30,16 +33,19 @@ pub async fn claim_instance(
     body: web::Json<ClaimBody>,
 ) -> HttpResponse {
     let name = body.into_inner().name.unwrap_or_else(|| "default".to_string());
-    let registry = state.manager.registry().clone();
+    let core = match state.manager.active_core() {
+        Ok(c) => c,
+        Err(e) => return crate::error::error_response(e),
+    };
 
     match web::block(move || {
         // Check that no active tokens exist
-        let tokens = registry.list_api_tokens()?;
+        let tokens = core.list_api_tokens()?;
         let active = tokens.iter().filter(|t| !t.is_revoked).count();
         if active > 0 {
             return Ok(None);
         }
-        let (info, raw) = registry.create_api_token(&name)?;
+        let (info, raw) = core.create_api_token(&name)?;
         Ok(Some((info, raw)))
     })
     .await

@@ -39,17 +39,19 @@ struct TagTree {
 }
 
 impl TagTree {
-    async fn load(pool: &sqlx::PgPool) -> Result<Self, AtomicCoreError> {
+    async fn load(pool: &sqlx::PgPool, db_id: &str) -> Result<Self, AtomicCoreError> {
         let all_tags: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT id, name, parent_id FROM tags ORDER BY name",
+            "SELECT id, name, parent_id FROM tags WHERE db_id = $1 ORDER BY name",
         )
+        .bind(db_id)
         .fetch_all(pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         let direct_count_rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT tag_id, COUNT(*) FROM atom_tags GROUP BY tag_id",
+            "SELECT tag_id, COUNT(*) FROM atom_tags WHERE db_id = $1 GROUP BY tag_id",
         )
+        .bind(db_id)
         .fetch_all(pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -148,6 +150,7 @@ fn compute_transitive_cached(
 async fn get_dominant_tags_for_atoms(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
+    db_id: &str,
 ) -> Result<Vec<String>, AtomicCoreError> {
     if atom_ids.is_empty() {
         return Ok(vec![]);
@@ -158,11 +161,13 @@ async fn get_dominant_tags_for_atoms(
          JOIN tags t ON at.tag_id = t.id
          WHERE at.atom_id = ANY($1)
          AND t.parent_id IS NOT NULL
+         AND at.db_id = $2 AND t.db_id = $2
          GROUP BY t.id, t.name
          ORDER BY COUNT(*) DESC
          LIMIT 3",
     )
     .bind(atom_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -173,6 +178,7 @@ async fn get_dominant_tags_for_atoms(
 async fn get_dominant_tags_for_cluster(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
+    db_id: &str,
 ) -> Result<Vec<String>, AtomicCoreError> {
     if atom_ids.is_empty() {
         return Ok(vec![]);
@@ -182,11 +188,13 @@ async fn get_dominant_tags_for_cluster(
          FROM atom_tags at
          JOIN tags t ON at.tag_id = t.id
          WHERE at.atom_id = ANY($1)
+         AND at.db_id = $2 AND t.db_id = $2
          GROUP BY t.id, t.name
          ORDER BY COUNT(*) DESC
          LIMIT 3",
     )
     .bind(atom_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -199,6 +207,7 @@ async fn get_dominant_tags_for_cluster(
 async fn load_semantic_edges_for_atoms(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
+    db_id: &str,
 ) -> Result<Vec<(String, String, f32)>, AtomicCoreError> {
     if atom_ids.is_empty() {
         return Ok(vec![]);
@@ -207,10 +216,11 @@ async fn load_semantic_edges_for_atoms(
         "SELECT source_atom_id, target_atom_id, similarity_score
          FROM semantic_edges
          WHERE source_atom_id = ANY($1) AND target_atom_id = ANY($1)
-         AND similarity_score >= $2",
+         AND similarity_score >= $2 AND db_id = $3",
     )
     .bind(atom_ids)
     .bind(CLUSTER_MIN_SIMILARITY)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -234,15 +244,17 @@ fn snippet_label(content: &str) -> String {
 async fn build_flat_atom_nodes(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
+    db_id: &str,
 ) -> Result<Vec<CanvasNode>, AtomicCoreError> {
     if atom_ids.is_empty() {
         return Ok(vec![]);
     }
 
     let snippet_rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, SUBSTRING(content FROM 1 FOR 100) FROM atoms WHERE id = ANY($1)",
+        "SELECT id, SUBSTRING(content FROM 1 FOR 100) FROM atoms WHERE id = ANY($1) AND db_id = $2",
     )
     .bind(atom_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -252,10 +264,11 @@ async fn build_flat_atom_nodes(
     let tag_rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT at.atom_id, t.name FROM atom_tags at
          JOIN tags t ON at.tag_id = t.id
-         WHERE at.atom_id = ANY($1)
+         WHERE at.atom_id = ANY($1) AND at.db_id = $2 AND t.db_id = $2
          ORDER BY t.name",
     )
     .bind(atom_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -287,12 +300,13 @@ async fn build_flat_atom_nodes(
 async fn compute_edges_for_atom_set(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
+    db_id: &str,
 ) -> Result<Vec<CanvasEdge>, AtomicCoreError> {
     if atom_ids.len() <= 1 {
         return Ok(vec![]);
     }
 
-    let edges = load_semantic_edges_for_atoms(pool, atom_ids).await?;
+    let edges = load_semantic_edges_for_atoms(pool, atom_ids, db_id).await?;
 
     Ok(edges
         .into_iter()
@@ -308,6 +322,7 @@ async fn compute_edges_for_atom_set(
 async fn compute_edges_between_nodes_simple(
     pool: &sqlx::PgPool,
     nodes: &[CanvasNode],
+    db_id: &str,
 ) -> Result<Vec<CanvasEdge>, AtomicCoreError> {
     if nodes.len() <= 1 {
         return Ok(vec![]);
@@ -331,7 +346,7 @@ async fn compute_edges_between_nodes_simple(
         return Ok(vec![]);
     }
 
-    let edges = load_semantic_edges_for_atoms(pool, &all_atom_ids).await?;
+    let edges = load_semantic_edges_for_atoms(pool, &all_atom_ids, db_id).await?;
 
     // Build atom->node mapping
     let mut atom_to_node: HashMap<String, String> = HashMap::new();
@@ -374,6 +389,7 @@ async fn compute_edges_between_nodes_simple(
 async fn compute_edges_if_small(
     pool: &sqlx::PgPool,
     nodes: &[CanvasNode],
+    db_id: &str,
 ) -> Result<Vec<CanvasEdge>, AtomicCoreError> {
     if nodes.len() <= 1 {
         return Ok(vec![]);
@@ -382,7 +398,7 @@ async fn compute_edges_if_small(
     if total_atoms > MAX_ATOMS_FOR_EDGES as i64 {
         return Ok(vec![]);
     }
-    compute_edges_between_nodes_simple(pool, nodes).await
+    compute_edges_between_nodes_simple(pool, nodes, db_id).await
 }
 
 // ==================== Helper: cluster atoms into groups ====================
@@ -391,18 +407,19 @@ async fn cluster_atoms_into_groups(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
     parent_id: &str,
+    db_id: &str,
 ) -> Result<Vec<CanvasNode>, AtomicCoreError> {
-    let edges = load_semantic_edges_for_atoms(pool, atom_ids).await?;
+    let edges = load_semantic_edges_for_atoms(pool, atom_ids, db_id).await?;
 
     if edges.is_empty() {
-        return build_flat_atom_nodes(pool, atom_ids).await;
+        return build_flat_atom_nodes(pool, atom_ids, db_id).await;
     }
 
     let labels = clustering::label_propagation(&edges);
     let groups = clustering::group_labels_into_clusters(&labels, 2);
 
     if groups.len() <= 1 {
-        return build_flat_atom_nodes(pool, atom_ids).await;
+        return build_flat_atom_nodes(pool, atom_ids, db_id).await;
     }
 
     let clustered: HashSet<&String> = labels.keys().collect();
@@ -416,10 +433,10 @@ async fn cluster_atoms_into_groups(
 
     for (i, group) in groups.iter().enumerate() {
         if group.len() <= 3 {
-            let mut atom_nodes = build_flat_atom_nodes(pool, group).await?;
+            let mut atom_nodes = build_flat_atom_nodes(pool, group, db_id).await?;
             nodes.append(&mut atom_nodes);
         } else {
-            let dominant = get_dominant_tags_for_atoms(pool, group).await?;
+            let dominant = get_dominant_tags_for_atoms(pool, group, db_id).await?;
             let label = if dominant.len() >= 2 {
                 format!("{}, {}", dominant[0], dominant[1])
             } else if !dominant.is_empty() {
@@ -444,12 +461,12 @@ async fn cluster_atoms_into_groups(
         let limit = MAX_ATOMS_PER_LEVEL
             .saturating_sub(nodes.len())
             .min(unclustered.len());
-        let mut atom_nodes = build_flat_atom_nodes(pool, &unclustered[..limit]).await?;
+        let mut atom_nodes = build_flat_atom_nodes(pool, &unclustered[..limit], db_id).await?;
         nodes.append(&mut atom_nodes);
 
         if unclustered.len() > limit {
             let remaining = &unclustered[limit..];
-            let dominant = get_dominant_tags_for_atoms(pool, remaining).await?;
+            let dominant = get_dominant_tags_for_atoms(pool, remaining, db_id).await?;
             nodes.push(CanvasNode {
                 id: format!("cluster:{}:unclustered", parent_id),
                 node_type: CanvasNodeType::SemanticCluster,
@@ -472,6 +489,7 @@ async fn cluster_tags_by_similarity(
     tag_ids: &[String],
     tree: &TagTree,
     parent_id: &str,
+    db_id: &str,
 ) -> Result<Vec<CanvasNode>, AtomicCoreError> {
     // Expand each tag to descendants, batch resolve atom IDs
     let mut descendant_to_original: HashMap<String, String> = HashMap::new();
@@ -486,9 +504,10 @@ async fn cluster_tags_by_similarity(
     let all_desc_ids: Vec<String> = descendant_to_original.keys().cloned().collect();
 
     let at_rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT tag_id, atom_id FROM atom_tags WHERE tag_id = ANY($1)",
+        "SELECT tag_id, atom_id FROM atom_tags WHERE tag_id = ANY($1) AND db_id = $2",
     )
     .bind(&all_desc_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -510,7 +529,7 @@ async fn cluster_tags_by_similarity(
     all_atom_ids.sort();
     all_atom_ids.dedup();
 
-    let edges = load_semantic_edges_for_atoms(pool, &all_atom_ids).await?;
+    let edges = load_semantic_edges_for_atoms(pool, &all_atom_ids, db_id).await?;
 
     // Build atom-to-tag mapping
     let mut atom_to_tag: HashMap<String, String> = HashMap::new();
@@ -657,15 +676,17 @@ fn group_tags_by_count(
 async fn build_breadcrumb(
     pool: &sqlx::PgPool,
     tag_id: &str,
+    db_id: &str,
 ) -> Result<Vec<BreadcrumbEntry>, AtomicCoreError> {
     let mut path = Vec::new();
     let mut current_id = Some(tag_id.to_string());
 
     while let Some(id) = current_id {
         let row: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT name, parent_id FROM tags WHERE id = $1",
+            "SELECT name, parent_id FROM tags WHERE id = $1 AND db_id = $2",
         )
         .bind(&id)
+        .bind(db_id)
         .fetch_optional(pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -690,14 +711,16 @@ async fn build_breadcrumb(
 
 async fn build_root_level(
     pool: &sqlx::PgPool,
+    db_id: &str,
 ) -> Result<CanvasLevel, AtomicCoreError> {
     // Load semantic edges and compute clusters
     let edge_rows: Vec<(String, String, f32)> = sqlx::query_as(
         "SELECT source_atom_id, target_atom_id, similarity_score
          FROM semantic_edges
-         WHERE similarity_score >= $1",
+         WHERE similarity_score >= $1 AND db_id = $2",
     )
     .bind(CLUSTER_MIN_SIMILARITY)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -713,7 +736,7 @@ async fn build_root_level(
             clustered_atom_ids.insert(aid.clone());
         }
 
-        let dominant = get_dominant_tags_for_cluster(pool, group).await.unwrap_or_default();
+        let dominant = get_dominant_tags_for_cluster(pool, group, db_id).await.unwrap_or_default();
 
         let label = if dominant.len() >= 2 {
             format!("{}, {}", dominant[0], dominant[1])
@@ -736,8 +759,9 @@ async fn build_root_level(
 
     // Find unclustered atoms
     let all_atom_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM atoms ORDER BY updated_at DESC",
+        "SELECT id FROM atoms WHERE db_id = $1 ORDER BY updated_at DESC",
     )
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -749,11 +773,11 @@ async fn build_root_level(
 
     if !unclustered_ids.is_empty() {
         if unclustered_ids.len() <= MAX_ATOMS_PER_LEVEL {
-            let mut atom_nodes = build_flat_atom_nodes(pool, &unclustered_ids).await?;
+            let mut atom_nodes = build_flat_atom_nodes(pool, &unclustered_ids, db_id).await?;
             nodes.append(&mut atom_nodes);
         } else {
             let dominant =
-                get_dominant_tags_for_atoms(pool, &unclustered_ids).await.unwrap_or_default();
+                get_dominant_tags_for_atoms(pool, &unclustered_ids, db_id).await.unwrap_or_default();
             nodes.push(CanvasNode {
                 id: "cluster:unclustered".to_string(),
                 node_type: CanvasNodeType::SemanticCluster,
@@ -766,7 +790,7 @@ async fn build_root_level(
         }
     }
 
-    let edges = compute_edges_between_nodes_simple(pool, &nodes).await?;
+    let edges = compute_edges_between_nodes_simple(pool, &nodes, db_id).await?;
 
     Ok(CanvasLevel {
         parent_id: None,
@@ -780,23 +804,25 @@ async fn build_root_level(
 async fn build_tag_level(
     pool: &sqlx::PgPool,
     tag_id: &str,
+    db_id: &str,
 ) -> Result<CanvasLevel, AtomicCoreError> {
     if tag_id == "untagged" {
-        return build_untagged_level(pool).await;
+        return build_untagged_level(pool, db_id).await;
     }
 
-    let tree = TagTree::load(pool).await?;
+    let tree = TagTree::load(pool, db_id).await?;
 
     let (parent_name, _parent_parent_id): (String, Option<String>) = sqlx::query_as(
-        "SELECT name, parent_id FROM tags WHERE id = $1",
+        "SELECT name, parent_id FROM tags WHERE id = $1 AND db_id = $2",
     )
     .bind(tag_id)
+    .bind(db_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?
     .ok_or_else(|| AtomicCoreError::NotFound(format!("Tag {} not found", tag_id)))?;
 
-    let breadcrumb = build_breadcrumb(pool, tag_id).await?;
+    let breadcrumb = build_breadcrumb(pool, tag_id, db_id).await?;
 
     let child_ids: Vec<String> = tree
         .children_map
@@ -843,7 +869,7 @@ async fn build_tag_level(
             if rest.len() <= MAX_TAGS_FOR_CLUSTERING {
                 let rest_ids: Vec<String> = rest.iter().map(|(n, _)| n.id.clone()).collect();
                 let cluster_nodes =
-                    cluster_tags_by_similarity(pool, &rest_ids, &tree, tag_id).await?;
+                    cluster_tags_by_similarity(pool, &rest_ids, &tree, tag_id, db_id).await?;
                 nodes.extend(cluster_nodes);
             } else {
                 let group_nodes = group_tags_by_count(rest, &tree, tag_id);
@@ -865,7 +891,7 @@ async fn build_tag_level(
             });
         }
 
-        let edges = compute_edges_if_small(pool, &nodes).await?;
+        let edges = compute_edges_if_small(pool, &nodes, db_id).await?;
 
         Ok(CanvasLevel {
             parent_id: Some(tag_id.to_string()),
@@ -876,12 +902,13 @@ async fn build_tag_level(
         })
     } else {
         // Leaf tag — show atoms
-        build_atoms_for_tag(pool, tag_id, &parent_name, &breadcrumb).await
+        build_atoms_for_tag(pool, tag_id, &parent_name, &breadcrumb, db_id).await
     }
 }
 
 async fn build_untagged_level(
     pool: &sqlx::PgPool,
+    db_id: &str,
 ) -> Result<CanvasLevel, AtomicCoreError> {
     let breadcrumb = vec![BreadcrumbEntry {
         id: "untagged".to_string(),
@@ -890,17 +917,19 @@ async fn build_untagged_level(
 
     let atoms: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, SUBSTRING(content FROM 1 FOR 100) FROM atoms
-         WHERE id NOT IN (SELECT atom_id FROM atom_tags)
+         WHERE id NOT IN (SELECT atom_id FROM atom_tags WHERE db_id = $1)
+         AND db_id = $1
          ORDER BY updated_at DESC",
     )
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
     if atoms.len() <= MAX_ATOMS_PER_LEVEL {
         let atom_ids: Vec<String> = atoms.iter().map(|(id, _)| id.clone()).collect();
-        let nodes = build_flat_atom_nodes(pool, &atom_ids).await?;
-        let edges = compute_edges_for_atom_set(pool, &atom_ids).await?;
+        let nodes = build_flat_atom_nodes(pool, &atom_ids, db_id).await?;
+        let edges = compute_edges_for_atom_set(pool, &atom_ids, db_id).await?;
 
         Ok(CanvasLevel {
             parent_id: Some("untagged".to_string()),
@@ -911,8 +940,8 @@ async fn build_untagged_level(
         })
     } else {
         let atom_ids: Vec<String> = atoms.iter().map(|(id, _)| id.clone()).collect();
-        let nodes = cluster_atoms_into_groups(pool, &atom_ids, "untagged").await?;
-        let edges = compute_edges_between_nodes_simple(pool, &nodes).await?;
+        let nodes = cluster_atoms_into_groups(pool, &atom_ids, "untagged", db_id).await?;
+        let edges = compute_edges_between_nodes_simple(pool, &nodes, db_id).await?;
 
         Ok(CanvasLevel {
             parent_id: Some("untagged".to_string()),
@@ -929,24 +958,26 @@ async fn build_atoms_for_tag(
     tag_id: &str,
     tag_name: &str,
     breadcrumb: &[BreadcrumbEntry],
+    db_id: &str,
 ) -> Result<CanvasLevel, AtomicCoreError> {
     let actual_tag_id = tag_id.strip_prefix("direct:").unwrap_or(tag_id);
 
     let atoms: Vec<(String, String)> = sqlx::query_as(
         "SELECT a.id, SUBSTRING(a.content FROM 1 FOR 100) FROM atoms a
          INNER JOIN atom_tags at ON a.id = at.atom_id
-         WHERE at.tag_id = $1
+         WHERE at.tag_id = $1 AND a.db_id = $2 AND at.db_id = $2
          ORDER BY a.updated_at DESC",
     )
     .bind(actual_tag_id)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
     if atoms.len() <= MAX_ATOMS_PER_LEVEL {
         let atom_ids: Vec<String> = atoms.iter().map(|(id, _)| id.clone()).collect();
-        let nodes = build_flat_atom_nodes(pool, &atom_ids).await?;
-        let edges = compute_edges_for_atom_set(pool, &atom_ids).await?;
+        let nodes = build_flat_atom_nodes(pool, &atom_ids, db_id).await?;
+        let edges = compute_edges_for_atom_set(pool, &atom_ids, db_id).await?;
 
         Ok(CanvasLevel {
             parent_id: Some(tag_id.to_string()),
@@ -957,8 +988,8 @@ async fn build_atoms_for_tag(
         })
     } else {
         let atom_ids: Vec<String> = atoms.iter().map(|(id, _)| id.clone()).collect();
-        let nodes = cluster_atoms_into_groups(pool, &atom_ids, tag_id).await?;
-        let edges = compute_edges_between_nodes_simple(pool, &nodes).await?;
+        let nodes = cluster_atoms_into_groups(pool, &atom_ids, tag_id, db_id).await?;
+        let edges = compute_edges_between_nodes_simple(pool, &nodes, db_id).await?;
 
         Ok(CanvasLevel {
             parent_id: Some(tag_id.to_string()),
@@ -974,6 +1005,7 @@ async fn build_hint_level(
     pool: &sqlx::PgPool,
     parent_id: &str,
     hint_ids: &[String],
+    db_id: &str,
 ) -> Result<CanvasLevel, AtomicCoreError> {
     if hint_ids.is_empty() {
         return Ok(CanvasLevel {
@@ -987,9 +1019,10 @@ async fn build_hint_level(
 
     // Check if hints are tags or atoms
     let found_tags: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, name FROM tags WHERE id = ANY($1)",
+        "SELECT id, name FROM tags WHERE id = ANY($1) AND db_id = $2",
     )
     .bind(hint_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -1000,7 +1033,7 @@ async fn build_hint_level(
         let parts: Vec<&str> = parent_id.split(':').collect();
         if parts.len() >= 2 {
             let ancestor_id = parts[1];
-            let mut bc = build_breadcrumb(pool, ancestor_id).await.unwrap_or_default();
+            let mut bc = build_breadcrumb(pool, ancestor_id, db_id).await.unwrap_or_default();
             bc.push(BreadcrumbEntry {
                 id: parent_id.to_string(),
                 label: "Cluster".to_string(),
@@ -1010,14 +1043,14 @@ async fn build_hint_level(
             vec![]
         }
     } else {
-        build_breadcrumb(pool, parent_id).await.unwrap_or_default()
+        build_breadcrumb(pool, parent_id, db_id).await.unwrap_or_default()
     };
 
     let parent_label = breadcrumb.last().map(|b| b.label.clone());
 
     if found_tag_map.len() == hint_ids.len() {
         // All are tags
-        let tree = TagTree::load(pool).await?;
+        let tree = TagTree::load(pool, db_id).await?;
 
         let mut tag_nodes: Vec<(CanvasNode, i32)> = hint_ids
             .iter()
@@ -1056,7 +1089,7 @@ async fn build_hint_level(
             if rest.len() <= MAX_TAGS_FOR_CLUSTERING {
                 let rest_ids: Vec<String> = rest.iter().map(|(n, _)| n.id.clone()).collect();
                 let cluster_nodes =
-                    cluster_tags_by_similarity(pool, &rest_ids, &tree, parent_id).await?;
+                    cluster_tags_by_similarity(pool, &rest_ids, &tree, parent_id, db_id).await?;
                 result.extend(cluster_nodes);
             } else {
                 let group_nodes = group_tags_by_count(rest, &tree, parent_id);
@@ -1065,7 +1098,7 @@ async fn build_hint_level(
             result
         };
 
-        let edges = compute_edges_if_small(pool, &nodes).await?;
+        let edges = compute_edges_if_small(pool, &nodes, db_id).await?;
 
         Ok(CanvasLevel {
             parent_id: Some(parent_id.to_string()),
@@ -1078,8 +1111,8 @@ async fn build_hint_level(
         // Assume atoms
         let atom_ids = hint_ids.to_vec();
         if atom_ids.len() <= MAX_ATOMS_PER_LEVEL {
-            let nodes = build_flat_atom_nodes(pool, &atom_ids).await?;
-            let edges = compute_edges_for_atom_set(pool, &atom_ids).await?;
+            let nodes = build_flat_atom_nodes(pool, &atom_ids, db_id).await?;
+            let edges = compute_edges_for_atom_set(pool, &atom_ids, db_id).await?;
 
             Ok(CanvasLevel {
                 parent_id: Some(parent_id.to_string()),
@@ -1089,8 +1122,8 @@ async fn build_hint_level(
                 edges,
             })
         } else {
-            let nodes = cluster_atoms_into_groups(pool, &atom_ids, parent_id).await?;
-            let edges = compute_edges_between_nodes_simple(pool, &nodes).await?;
+            let nodes = cluster_atoms_into_groups(pool, &atom_ids, parent_id, db_id).await?;
+            let edges = compute_edges_between_nodes_simple(pool, &nodes, db_id).await?;
 
             Ok(CanvasLevel {
                 parent_id: Some(parent_id.to_string()),
@@ -1116,9 +1149,10 @@ impl ClusterStore for PostgresStorage {
         let edges: Vec<(String, String, f32)> = sqlx::query_as(
             "SELECT source_atom_id, target_atom_id, similarity_score
              FROM semantic_edges
-             WHERE similarity_score >= $1",
+             WHERE similarity_score >= $1 AND db_id = $2",
         )
         .bind(min_similarity)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -1133,7 +1167,7 @@ impl ClusterStore for PostgresStorage {
         let mut clusters: Vec<AtomCluster> = Vec::new();
         for (i, atom_ids) in groups.into_iter().enumerate() {
             let dominant_tags =
-                get_dominant_tags_for_cluster(&self.pool, &atom_ids).await.unwrap_or_default();
+                get_dominant_tags_for_cluster(&self.pool, &atom_ids, &self.db_id).await.unwrap_or_default();
             clusters.push(AtomCluster {
                 cluster_id: i as i32,
                 atom_ids,
@@ -1146,7 +1180,8 @@ impl ClusterStore for PostgresStorage {
 
     async fn save_clusters(&self, clusters: &[AtomCluster]) -> StorageResult<()> {
         // Clear existing assignments
-        sqlx::query("DELETE FROM atom_clusters")
+        sqlx::query("DELETE FROM atom_clusters WHERE db_id = $1")
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -1155,10 +1190,11 @@ impl ClusterStore for PostgresStorage {
         for cluster in clusters {
             for atom_id in &cluster.atom_ids {
                 sqlx::query(
-                    "INSERT INTO atom_clusters (atom_id, cluster_id) VALUES ($1, $2)",
+                    "INSERT INTO atom_clusters (atom_id, cluster_id, db_id) VALUES ($1, $2, $3)",
                 )
                 .bind(atom_id)
                 .bind(cluster.cluster_id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -1169,10 +1205,13 @@ impl ClusterStore for PostgresStorage {
     }
 
     async fn get_clusters(&self) -> StorageResult<Vec<AtomCluster>> {
-        let count: Option<i64> = sqlx::query_scalar::<_, Option<i64>>("SELECT COUNT(*) FROM atom_clusters")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+        let count: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT COUNT(*) FROM atom_clusters WHERE db_id = $1",
+        )
+        .bind(&self.db_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
         let count = count.unwrap_or(0);
 
         if count == 0 {
@@ -1185,9 +1224,11 @@ impl ClusterStore for PostgresStorage {
         let rows: Vec<(i32, String)> = sqlx::query_as(
             "SELECT ac.cluster_id, STRING_AGG(ac.atom_id, ',')
              FROM atom_clusters ac
+             WHERE ac.db_id = $1
              GROUP BY ac.cluster_id
              ORDER BY COUNT(*) DESC",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -1197,7 +1238,7 @@ impl ClusterStore for PostgresStorage {
             let atom_ids: Vec<String> =
                 atom_ids_str.split(',').map(|s| s.to_string()).collect();
             let dominant_tags =
-                get_dominant_tags_for_cluster(&self.pool, &atom_ids).await.unwrap_or_default();
+                get_dominant_tags_for_cluster(&self.pool, &atom_ids, &self.db_id).await.unwrap_or_default();
             clusters.push(AtomCluster {
                 cluster_id,
                 atom_ids,
@@ -1214,9 +1255,9 @@ impl ClusterStore for PostgresStorage {
         children_hint: Option<Vec<String>>,
     ) -> StorageResult<CanvasLevel> {
         match (parent_id, &children_hint) {
-            (None, _) => build_root_level(&self.pool).await,
-            (Some(pid), Some(hint)) => build_hint_level(&self.pool, pid, hint).await,
-            (Some(pid), None) => build_tag_level(&self.pool, pid).await,
+            (None, _) => build_root_level(&self.pool, &self.db_id).await,
+            (Some(pid), Some(hint)) => build_hint_level(&self.pool, pid, hint, &self.db_id).await,
+            (Some(pid), None) => build_tag_level(&self.pool, pid, &self.db_id).await,
         }
     }
 }

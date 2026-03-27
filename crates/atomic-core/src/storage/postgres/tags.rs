@@ -12,8 +12,9 @@ impl PostgresStorage {
     /// Load all tags and their direct (denormalized) atom counts.
     async fn load_tags_and_counts(&self) -> StorageResult<(Vec<Tag>, HashMap<String, i32>)> {
         let rows: Vec<(String, String, Option<String>, String, i32)> = sqlx::query_as(
-            "SELECT id, name, parent_id, created_at, atom_count FROM tags ORDER BY name",
+            "SELECT id, name, parent_id, created_at, atom_count FROM tags WHERE db_id = $1 ORDER BY name",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -54,9 +55,10 @@ impl PostgresStorage {
             visited.insert(current.clone());
 
             let parent: Option<String> = sqlx::query_scalar(
-                "SELECT parent_id FROM tags WHERE id = $1",
+                "SELECT parent_id FROM tags WHERE id = $1 AND db_id = $2",
             )
             .bind(&current)
+            .bind(&self.db_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?
@@ -72,9 +74,10 @@ impl PostgresStorage {
     /// Look up a tag ID by its name (case-insensitive).
     async fn get_tag_id_by_name(&self, name: &str) -> StorageResult<Option<String>> {
         let id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM tags WHERE LOWER(name) = LOWER($1)",
+            "SELECT id FROM tags WHERE LOWER(name) = LOWER($1) AND db_id = $2",
         )
         .bind(name.trim())
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -136,9 +139,10 @@ impl PostgresStorage {
 
         // Get atoms tagged with the loser
         let atoms_with_loser: Vec<String> = sqlx::query_scalar(
-            "SELECT atom_id FROM atom_tags WHERE tag_id = $1",
+            "SELECT atom_id FROM atom_tags WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(&loser_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("Failed to query atoms: {}", e))?;
@@ -147,10 +151,11 @@ impl PostgresStorage {
         for atom_id in &atoms_with_loser {
             // INSERT ... ON CONFLICT DO NOTHING replaces INSERT OR IGNORE
             let result = sqlx::query(
-                "INSERT INTO atom_tags (atom_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                "INSERT INTO atom_tags (atom_id, tag_id, db_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
             )
             .bind(atom_id)
             .bind(&winner_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| format!("Failed to add winner tag: {}", e))?;
@@ -161,22 +166,25 @@ impl PostgresStorage {
         }
 
         // Reparent children of the loser to the winner
-        sqlx::query("UPDATE tags SET parent_id = $1 WHERE parent_id = $2")
+        sqlx::query("UPDATE tags SET parent_id = $1 WHERE parent_id = $2 AND db_id = $3")
             .bind(&winner_id)
             .bind(&loser_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| format!("Failed to reparent children: {}", e))?;
 
         // Delete the loser tag (atom_tags rows will be cleaned by cascade or explicit delete)
-        sqlx::query("DELETE FROM atom_tags WHERE tag_id = $1")
+        sqlx::query("DELETE FROM atom_tags WHERE tag_id = $1 AND db_id = $2")
             .bind(&loser_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| format!("Failed to delete loser atom_tags: {}", e))?;
 
-        sqlx::query("DELETE FROM tags WHERE id = $1")
+        sqlx::query("DELETE FROM tags WHERE id = $1 AND db_id = $2")
             .bind(&loser_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| format!("Failed to delete loser tag: {}", e))?;
@@ -215,9 +223,10 @@ impl TagStore for PostgresStorage {
     ) -> StorageResult<PaginatedTagChildren> {
         // Fast total count
         let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tags WHERE parent_id = $1",
+            "SELECT COUNT(*) FROM tags WHERE parent_id = $1 AND db_id = $2",
         )
         .bind(parent_id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -233,13 +242,14 @@ impl TagStore for PostgresStorage {
 
         let rows: Vec<(String, String, Option<String>, String, i32, i64)> = sqlx::query_as(
             "SELECT t.id, t.name, t.parent_id, t.created_at, t.atom_count,
-                (SELECT COUNT(*) FROM tags c WHERE c.parent_id = t.id) AS children_total
+                (SELECT COUNT(*) FROM tags c WHERE c.parent_id = t.id AND c.db_id = $2) AS children_total
             FROM tags t
-            WHERE t.parent_id = $1
+            WHERE t.parent_id = $1 AND t.db_id = $2
             ORDER BY t.atom_count DESC
-            LIMIT $2 OFFSET $3",
+            LIMIT $3 OFFSET $4",
         )
         .bind(parent_id)
+        .bind(&self.db_id)
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
@@ -277,12 +287,13 @@ impl TagStore for PostgresStorage {
         let now = Utc::now().to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO tags (id, name, parent_id, created_at) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO tags (id, name, parent_id, created_at, db_id) VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(&id)
         .bind(name)
         .bind(parent_id)
         .bind(&now)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -301,18 +312,20 @@ impl TagStore for PostgresStorage {
         name: &str,
         parent_id: Option<&str>,
     ) -> StorageResult<Tag> {
-        sqlx::query("UPDATE tags SET name = $1, parent_id = $2 WHERE id = $3")
+        sqlx::query("UPDATE tags SET name = $1, parent_id = $2 WHERE id = $3 AND db_id = $4")
             .bind(name)
             .bind(parent_id)
             .bind(id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         let row: (String, String, Option<String>, String) = sqlx::query_as(
-            "SELECT id, name, parent_id, created_at FROM tags WHERE id = $1",
+            "SELECT id, name, parent_id, created_at FROM tags WHERE id = $1 AND db_id = $2",
         )
         .bind(id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -331,19 +344,21 @@ impl TagStore for PostgresStorage {
             // In Postgres, we use a CTE with DELETE.
             sqlx::query(
                 "WITH RECURSIVE descendants(id) AS (
-                    SELECT id FROM tags WHERE id = $1
+                    SELECT id FROM tags WHERE id = $1 AND db_id = $2
                     UNION ALL
                     SELECT t.id FROM tags t JOIN descendants d ON t.parent_id = d.id
                 )
-                DELETE FROM tags WHERE id IN (SELECT id FROM descendants)",
+                DELETE FROM tags WHERE id IN (SELECT id FROM descendants) AND db_id = $2",
             )
             .bind(id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
         } else {
-            sqlx::query("DELETE FROM tags WHERE id = $1")
+            sqlx::query("DELETE FROM tags WHERE id = $1 AND db_id = $2")
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -360,7 +375,7 @@ impl TagStore for PostgresStorage {
         // Get tag hierarchy (this tag + all descendants) for exclusion
         let source_tag_ids: Vec<String> = sqlx::query_scalar(
             "WITH RECURSIVE descendant_tags(id) AS (
-                SELECT $1::text
+                SELECT id FROM tags WHERE id = $1 AND db_id = $2
                 UNION ALL
                 SELECT t.id FROM tags t
                 INNER JOIN descendant_tags dt ON t.parent_id = dt.id
@@ -368,6 +383,7 @@ impl TagStore for PostgresStorage {
             SELECT id FROM descendant_tags",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -392,8 +408,8 @@ impl TagStore for PostgresStorage {
                  JOIN atom_tags at2 ON at1.atom_id = at2.atom_id
                  JOIN tags t ON at2.tag_id = t.id
                  LEFT JOIN wiki_articles wa ON t.id = wa.tag_id
-                 WHERE at1.tag_id IN (SELECT id FROM tags WHERE id = $1 OR parent_id = $1)
-                   AND at2.tag_id NOT IN (SELECT id FROM tags WHERE id = $1 OR parent_id = $1)
+                 WHERE at1.tag_id IN (SELECT id FROM tags WHERE (id = $1 OR parent_id = $1) AND db_id = $3)
+                   AND at2.tag_id NOT IN (SELECT id FROM tags WHERE (id = $1 OR parent_id = $1) AND db_id = $3)
                    AND t.parent_id IS NOT NULL
                  GROUP BY t.id, t.name, wa.id
                  ORDER BY shared_count DESC
@@ -401,6 +417,7 @@ impl TagStore for PostgresStorage {
             )
             .bind(tag_id)
             .bind(shared_limit)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -423,9 +440,10 @@ impl TagStore for PostgresStorage {
         // === Signal 2: Tag centroid embedding similarity ===
         // In Postgres with pgvector, we query the tag_embeddings table using <-> operator.
         let source_embedding: Option<Vec<f32>> = sqlx::query_scalar(
-            "SELECT embedding::real[] FROM tag_embeddings WHERE tag_id = $1",
+            "SELECT embedding::real[] FROM tag_embeddings WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .unwrap_or(None);
@@ -434,14 +452,15 @@ impl TagStore for PostgresStorage {
             let centroid_limit = (limit * 3).max(30) as i64;
             // Use pgvector's <-> (L2 distance) operator for nearest-neighbor search
             let centroid_rows: Vec<(String, f64)> = sqlx::query_as(
-                "SELECT te.tag_id, te.embedding <-> (SELECT embedding FROM tag_embeddings WHERE tag_id = $1) as distance
+                "SELECT te.tag_id, te.embedding <-> (SELECT embedding FROM tag_embeddings WHERE tag_id = $1 AND db_id = $3) as distance
                  FROM tag_embeddings te
-                 WHERE te.tag_id != $1
+                 WHERE te.tag_id != $1 AND te.db_id = $3
                  ORDER BY distance
                  LIMIT $2",
             )
             .bind(tag_id)
             .bind(centroid_limit)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .unwrap_or_default();
@@ -467,18 +486,19 @@ impl TagStore for PostgresStorage {
 
             // Batch lookup metadata for new centroid-only candidates
             if !new_candidates.is_empty() {
-                let placeholders: Vec<String> = (1..=new_candidates.len())
+                let placeholders: Vec<String> = (2..=new_candidates.len() + 1)
                     .map(|i| format!("${}", i))
                     .collect();
                 let query = format!(
                     "SELECT t.id, t.name, CASE WHEN wa.id IS NOT NULL THEN 1 ELSE 0 END
                      FROM tags t
                      LEFT JOIN wiki_articles wa ON t.id = wa.tag_id
-                     WHERE t.id IN ({}) AND t.parent_id IS NOT NULL",
+                     WHERE t.db_id = $1 AND t.id IN ({}) AND t.parent_id IS NOT NULL",
                     placeholders.join(", ")
                 );
 
                 let mut q = sqlx::query_as::<_, (String, String, i32)>(&query);
+                q = q.bind(&self.db_id);
                 for (cid, _) in &new_candidates {
                     q = q.bind(cid);
                 }
@@ -511,9 +531,10 @@ impl TagStore for PostgresStorage {
         // === Signal 3: Content mentions ===
         // Tags whose names appear in this tag's wiki article content.
         let article_content: Option<String> = sqlx::query_scalar(
-            "SELECT content FROM wiki_articles WHERE tag_id = $1",
+            "SELECT content FROM wiki_articles WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .unwrap_or(None);
@@ -521,8 +542,8 @@ impl TagStore for PostgresStorage {
         if let Some(content) = article_content {
             let content_lower = content.to_lowercase();
 
-            // Build exclusion placeholders
-            let placeholders: Vec<String> = (1..=source_tag_ids.len())
+            // Build exclusion placeholders (reserve $1 for db_id)
+            let placeholders: Vec<String> = (2..=source_tag_ids.len() + 1)
                 .map(|i| format!("${}", i))
                 .collect();
             let mention_query = format!(
@@ -530,7 +551,8 @@ impl TagStore for PostgresStorage {
                         CASE WHEN wa.id IS NOT NULL THEN 1 ELSE 0 END as has_article
                  FROM tags t
                  LEFT JOIN wiki_articles wa ON t.id = wa.tag_id
-                 WHERE t.parent_id IS NOT NULL
+                 WHERE t.db_id = $1
+                   AND t.parent_id IS NOT NULL
                    AND t.id NOT IN ({})
                    AND length(t.name) >= 3
                    AND t.name ~ '[^0-9]'",
@@ -538,6 +560,7 @@ impl TagStore for PostgresStorage {
             );
 
             let mut q = sqlx::query_as::<_, (String, String, i32)>(&mention_query);
+            q = q.bind(&self.db_id);
             for tid in &source_tag_ids {
                 q = q.bind(tid);
             }
@@ -593,8 +616,10 @@ impl TagStore for PostgresStorage {
             "SELECT t.name, p.name as parent_name
              FROM tags t
              LEFT JOIN tags p ON t.parent_id = p.id
+             WHERE t.db_id = $1
              ORDER BY COALESCE(p.name, t.name), t.name",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -642,9 +667,10 @@ impl TagStore for PostgresStorage {
 
         // Try to find existing tag (case-insensitive)
         let existing_id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM tags WHERE LOWER(name) = LOWER($1)",
+            "SELECT id FROM tags WHERE LOWER(name) = LOWER($1) AND db_id = $2",
         )
         .bind(trimmed_name)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -669,9 +695,10 @@ impl TagStore for PostgresStorage {
 
         // Parent must be an existing top-level tag (parent_id IS NULL)
         let parent_id: String = sqlx::query_scalar(
-            "SELECT id FROM tags WHERE LOWER(name) = LOWER($1) AND parent_id IS NULL",
+            "SELECT id FROM tags WHERE LOWER(name) = LOWER($1) AND parent_id IS NULL AND db_id = $2",
         )
         .bind(trimmed_parent)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?
@@ -682,24 +709,29 @@ impl TagStore for PostgresStorage {
             ))
         })?;
 
-        // Create the tag under the validated parent
+        // Create the tag under the validated parent, handling concurrent inserts
         let tag_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
 
-        sqlx::query(
-            "INSERT INTO tags (id, name, parent_id, created_at) VALUES ($1, $2, $3, $4)",
+        // Use ON CONFLICT to handle TOCTOU race with parallel auto-tagging
+        let actual_id: String = sqlx::query_scalar(
+            "INSERT INTO tags (id, name, parent_id, created_at, db_id) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (LOWER(name), COALESCE(parent_id, ''), db_id)
+             DO UPDATE SET name = tags.name  -- no-op update to return the row
+             RETURNING id",
         )
         .bind(&tag_id)
         .bind(trimmed_name)
         .bind(&parent_id)
         .bind(&now)
-        .execute(&self.pool)
+        .bind(&self.db_id)
+        .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(
             format!("Failed to create tag '{}': {}", trimmed_name, e),
         ))?;
 
-        Ok(tag_id)
+        Ok(actual_id)
     }
 
     async fn link_tags_to_atom(
@@ -709,10 +741,11 @@ impl TagStore for PostgresStorage {
     ) -> StorageResult<()> {
         for tag_id in tag_ids {
             sqlx::query(
-                "INSERT INTO atom_tags (atom_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                "INSERT INTO atom_tags (atom_id, tag_id, db_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
             )
             .bind(atom_id)
             .bind(tag_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(
@@ -725,8 +758,9 @@ impl TagStore for PostgresStorage {
     async fn get_tag_tree_for_llm(&self) -> StorageResult<String> {
         // Step 1: Get top-level category tags
         let top_level_tags: Vec<(String, String)> = sqlx::query_as(
-            "SELECT id, name FROM tags WHERE parent_id IS NULL ORDER BY name",
+            "SELECT id, name FROM tags WHERE parent_id IS NULL AND db_id = $1 ORDER BY name",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -747,12 +781,13 @@ impl TagStore for PostgresStorage {
                 "SELECT t.name
                  FROM tags t
                  LEFT JOIN atom_tags at ON t.id = at.tag_id
-                 WHERE t.parent_id = $1
+                 WHERE t.parent_id = $1 AND t.db_id = $2
                  GROUP BY t.id, t.name
                  ORDER BY COUNT(at.atom_id) DESC, t.name ASC
                  LIMIT 10",
             )
             .bind(parent_id)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -780,7 +815,7 @@ impl TagStore for PostgresStorage {
             // Get all descendant tag IDs (recursive CTE)
             let descendant_ids: Vec<(String,)> = sqlx::query_as(
                 "WITH RECURSIVE descendant_tags(id) AS (
-                    SELECT $1::text
+                    SELECT id FROM tags WHERE id = $1 AND db_id = $2
                     UNION ALL
                     SELECT t.id FROM tags t
                     INNER JOIN descendant_tags dt ON t.parent_id = dt.id
@@ -788,6 +823,7 @@ impl TagStore for PostgresStorage {
                 SELECT id FROM descendant_tags",
             )
             .bind(tag_id)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(
@@ -801,9 +837,10 @@ impl TagStore for PostgresStorage {
                 "SELECT ac.embedding
                  FROM atom_chunks ac
                  INNER JOIN atom_tags at ON ac.atom_id = at.atom_id
-                 WHERE at.tag_id = ANY($1) AND ac.embedding IS NOT NULL",
+                 WHERE at.tag_id = ANY($1) AND ac.embedding IS NOT NULL AND ac.db_id = $2",
             )
             .bind(&desc_ids)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(
@@ -846,12 +883,13 @@ impl TagStore for PostgresStorage {
             // Save the centroid
             let pg_embedding = Vector::from(centroid);
             sqlx::query(
-                "INSERT INTO tag_embeddings (tag_id, embedding)
-                 VALUES ($1, $2)
-                 ON CONFLICT (tag_id) DO UPDATE SET embedding = EXCLUDED.embedding",
+                "INSERT INTO tag_embeddings (tag_id, embedding, db_id)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (tag_id, db_id) DO UPDATE SET embedding = EXCLUDED.embedding",
             )
             .bind(tag_id)
             .bind(&pg_embedding)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(
@@ -868,9 +906,10 @@ impl TagStore for PostgresStorage {
     ) -> StorageResult<()> {
         // Get parent of this tag
         let parent_id: Option<String> = sqlx::query_scalar(
-            "SELECT parent_id FROM tags WHERE id = $1",
+            "SELECT parent_id FROM tags WHERE id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?
@@ -879,27 +918,30 @@ impl TagStore for PostgresStorage {
         if let Some(parent) = parent_id {
             // Check if parent has any children left
             let child_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM tags WHERE parent_id = $1",
+                "SELECT COUNT(*) FROM tags WHERE parent_id = $1 AND db_id = $2",
             )
             .bind(&parent)
+            .bind(&self.db_id)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
             // Check if parent is linked to any atoms
             let atom_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM atom_tags WHERE tag_id = $1",
+                "SELECT COUNT(*) FROM atom_tags WHERE tag_id = $1 AND db_id = $2",
             )
             .bind(&parent)
+            .bind(&self.db_id)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
             // Check if parent has a wiki article
             let has_wiki: bool = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM wiki_articles WHERE tag_id = $1)",
+                "SELECT EXISTS(SELECT 1 FROM wiki_articles WHERE tag_id = $1 AND db_id = $2)",
             )
             .bind(&parent)
+            .bind(&self.db_id)
             .fetch_one(&self.pool)
             .await
             .unwrap_or(false);
@@ -907,8 +949,9 @@ impl TagStore for PostgresStorage {
             // If parent is unused and has no wiki, delete it and recurse
             if child_count == 0 && atom_count == 0 && !has_wiki {
                 eprintln!("Cleaning up orphaned parent tag: {}", parent);
-                sqlx::query("DELETE FROM tags WHERE id = $1")
+                sqlx::query("DELETE FROM tags WHERE id = $1 AND db_id = $2")
                     .bind(&parent)
+                    .bind(&self.db_id)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| AtomicCoreError::DatabaseOperation(
@@ -960,7 +1003,7 @@ impl TagStore for PostgresStorage {
     ) -> StorageResult<Vec<String>> {
         let rows: Vec<String> = sqlx::query_scalar(
             "WITH RECURSIVE descendant_tags(id) AS (
-                SELECT $1::text
+                SELECT id FROM tags WHERE id = $1 AND db_id = $2
                 UNION ALL
                 SELECT t.id FROM tags t
                 INNER JOIN descendant_tags dt ON t.parent_id = dt.id
@@ -968,6 +1011,7 @@ impl TagStore for PostgresStorage {
             SELECT id FROM descendant_tags",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -984,9 +1028,10 @@ impl TagStore for PostgresStorage {
         }
         // Postgres doesn't support IN with bound array easily, so use ANY
         let count: Option<i64> = sqlx::query_scalar(
-            "SELECT COUNT(DISTINCT atom_id) FROM atom_tags WHERE tag_id = ANY($1)",
+            "SELECT COUNT(DISTINCT atom_id) FROM atom_tags WHERE tag_id = ANY($1) AND db_id = $2",
         )
         .bind(tag_ids)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;

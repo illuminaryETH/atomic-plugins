@@ -96,8 +96,20 @@ where
             }
         };
 
-        // Verify token
-        let token_info = match state.manager.registry().verify_api_token(&raw_token) {
+        // Verify token via active core (routes through registry or storage backend)
+        let core = match state.manager.active_core() {
+            Ok(c) => c,
+            _ => {
+                return Box::pin(async move {
+                    Ok(req.into_response(
+                        HttpResponse::Unauthorized()
+                            .insert_header(("WWW-Authenticate", www_authenticate))
+                            .json(serde_json::json!({"error": "server_error"})),
+                    ).map_into_right_body())
+                });
+            }
+        };
+        let token_info = match core.verify_api_token(&raw_token) {
             Ok(Some(info)) => info,
             _ => {
                 return Box::pin(async move {
@@ -112,9 +124,9 @@ where
 
         // Fire-and-forget last_used_at update
         let token_id = token_info.id.clone();
-        let registry = state.manager.registry().clone();
+        let core_clone = core.clone();
         tokio::task::spawn_blocking(move || {
-            let _ = registry.update_token_last_used(&token_id);
+            let _ = core_clone.update_token_last_used(&token_id);
         });
 
         let fut = self.service.call(req);

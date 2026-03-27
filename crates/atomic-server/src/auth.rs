@@ -70,8 +70,16 @@ where
             }
         };
 
-        // Verify token against the registry (shared across databases)
-        let token_info = match state.manager.registry().verify_api_token(&raw_token) {
+        // Verify token — uses registry if available, falls through to storage backend otherwise
+        let core = match state.manager.active_core() {
+            Ok(c) => c,
+            Err(_) => {
+                return Box::pin(async {
+                    Err(ErrorUnauthorized("Invalid or missing Bearer token"))
+                });
+            }
+        };
+        let token_info = match core.verify_api_token(&raw_token) {
             Ok(Some(info)) => info,
             Ok(None) => {
                 return Box::pin(async {
@@ -87,9 +95,9 @@ where
 
         // Fire-and-forget last_used_at update
         let token_id = token_info.id.clone();
-        let registry = state.manager.registry().clone();
+        let core_clone = core.clone();
         tokio::task::spawn_blocking(move || {
-            let _ = registry.update_token_last_used(&token_id);
+            let _ = core_clone.update_token_last_used(&token_id);
         });
 
         let fut = self.service.call(req);

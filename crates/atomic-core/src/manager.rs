@@ -16,6 +16,10 @@ pub struct DatabaseManager {
     registry: Arc<Registry>,
     cores: RwLock<HashMap<String, AtomicCore>>,
     active_id: RwLock<String>,
+    /// Postgres connection URL, if using Postgres backend.
+    /// Stored so `get_core` can create new lightweight cores for different db_ids.
+    #[cfg(feature = "postgres")]
+    database_url: Option<String>,
 }
 
 impl DatabaseManager {
@@ -28,23 +32,62 @@ impl DatabaseManager {
             registry,
             cores: RwLock::new(HashMap::new()),
             active_id: RwLock::new(default_id),
+            #[cfg(feature = "postgres")]
+            database_url: None,
         })
     }
 
     /// Create a manager that uses Postgres for data storage.
-    /// Registry stays as local SQLite for settings, tokens, OAuth, and DB metadata.
+    /// In Postgres mode, there is no separate registry for database management —
+    /// the `databases` table lives in Postgres. Settings, tokens, and DB metadata
+    /// all go through Postgres storage. The SQLite registry is still created for
+    /// OAuth routes but database CRUD uses the Postgres `databases` table.
     #[cfg(feature = "postgres")]
-    pub async fn new_postgres(
+    pub fn new_postgres(
         data_dir: impl AsRef<Path>,
         database_url: &str,
     ) -> Result<Self, AtomicCoreError> {
+        // Still need a registry for the DatabaseManager struct (used by OAuth routes).
+        // But AtomicCore gets registry: None so all settings/tokens fall through to Postgres storage.
         let registry = Arc::new(Registry::open_or_create(&data_dir)?);
-        let default_id = registry.get_default_database_id()?;
 
+        // Use a temporary db_id to bootstrap; we'll look up the real default from Postgres.
         let core = AtomicCore::open_postgres(
             database_url,
-            Some(Arc::clone(&registry)),
-        ).await?;
+            "default",
+            None, // No registry — everything goes through Postgres
+        )?;
+
+        // Ensure the default database entry exists in Postgres
+        let databases = core.storage.list_databases_sync()?;
+        if databases.is_empty() {
+            // No databases at all — seed the default entry
+            let now = chrono::Utc::now().to_rfc3339();
+            // Use raw SQL to set is_default = 1 (create_database_sync sets 0)
+            if let Some(pg) = core.storage.as_postgres() {
+                crate::storage::pg_runtime_block_on(async {
+                    sqlx::query(
+                        "INSERT INTO databases (id, name, is_default, created_at) VALUES ($1, $2, 1, $3)
+                         ON CONFLICT (id) DO NOTHING",
+                    )
+                    .bind("default")
+                    .bind("Default")
+                    .bind(&now)
+                    .execute(&pg.pool)
+                    .await
+                    .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))
+                })?;
+            }
+        }
+
+        let default_id = core.storage.get_default_database_id_sync()?;
+
+        // If the core was bootstrapped with a different db_id, recreate with the real one
+        let core = if default_id != "default" {
+            AtomicCore::open_postgres(database_url, &default_id, None)?
+        } else {
+            core
+        };
 
         let mut cores_map = HashMap::new();
         cores_map.insert(default_id.clone(), core);
@@ -53,7 +96,27 @@ impl DatabaseManager {
             registry,
             cores: RwLock::new(cores_map),
             active_id: RwLock::new(default_id),
+            #[cfg(feature = "postgres")]
+            database_url: Some(database_url.to_string()),
         })
+    }
+
+    /// Returns true if this manager is using Postgres storage.
+    #[cfg(feature = "postgres")]
+    fn is_postgres(&self) -> bool {
+        self.database_url.is_some()
+    }
+
+    /// Helper: get a storage backend to call database management methods.
+    /// In Postgres mode, grabs the storage from any loaded core (they all share a pool).
+    #[cfg(feature = "postgres")]
+    fn any_storage(&self) -> Result<crate::storage::StorageBackend, AtomicCoreError> {
+        let cores = self.cores.read().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+        cores
+            .values()
+            .next()
+            .map(|c| c.storage.clone())
+            .ok_or_else(|| AtomicCoreError::Configuration("No cores loaded".to_string()))
     }
 
     /// Get a core for a specific database, loading it lazily if needed.
@@ -66,7 +129,34 @@ impl DatabaseManager {
             }
         }
 
-        // Slow path: load from disk
+        // Postgres path: create lightweight core sharing the same pool with a new db_id
+        #[cfg(feature = "postgres")]
+        if let Some(ref url) = self.database_url {
+            // Get the pool from an existing core to share it
+            let existing_core = {
+                let cores = self.cores.read().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+                cores.values().next().cloned()
+            };
+            if let Some(existing) = existing_core {
+                if let Some(pg) = existing.storage.as_postgres() {
+                    let new_pg = pg.with_db_id(id);
+                    let core = AtomicCore::from_postgres_storage(new_pg);
+                    // Seed default tags for this db_id if needed
+                    let all_tags = core.storage.get_all_tags_impl()?;
+                    if all_tags.is_empty() {
+                        for category in &["Topics", "People", "Locations", "Organizations", "Events"] {
+                            core.storage.create_tag_impl(category, None)?;
+                        }
+                    }
+                    let mut cores = self.cores.write().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+                    cores.insert(id.to_string(), core.clone());
+                    self.registry.touch_database(id).ok();
+                    return Ok(core);
+                }
+            }
+        }
+
+        // SQLite path: load from disk
         let db_path = self.registry.database_path(id);
         let core = AtomicCore::open_for_server_with_registry(
             &db_path,
@@ -95,9 +185,25 @@ impl DatabaseManager {
     /// Switch the active database.
     pub fn set_active(&self, id: &str) -> Result<(), AtomicCoreError> {
         // Validate the database exists
-        let databases = self.registry.list_databases()?;
-        if !databases.iter().any(|d| d.id == id) {
-            return Err(AtomicCoreError::NotFound(format!("Database '{}'", id)));
+        #[cfg(feature = "postgres")]
+        if self.is_postgres() {
+            let databases = self.any_storage()?.list_databases_sync()?;
+            if !databases.iter().any(|d| d.id == id) {
+                return Err(AtomicCoreError::NotFound(format!("Database '{}'", id)));
+            }
+        } else {
+            let databases = self.registry.list_databases()?;
+            if !databases.iter().any(|d| d.id == id) {
+                return Err(AtomicCoreError::NotFound(format!("Database '{}'", id)));
+            }
+        }
+
+        #[cfg(not(feature = "postgres"))]
+        {
+            let databases = self.registry.list_databases()?;
+            if !databases.iter().any(|d| d.id == id) {
+                return Err(AtomicCoreError::NotFound(format!("Database '{}'", id)));
+            }
         }
 
         // Ensure it's loaded
@@ -115,6 +221,29 @@ impl DatabaseManager {
 
     /// Create a new database and register it.
     pub fn create_database(&self, name: &str) -> Result<DatabaseInfo, AtomicCoreError> {
+        #[cfg(feature = "postgres")]
+        if self.is_postgres() {
+            let storage = self.any_storage()?;
+            let info = storage.create_database_sync(name)?;
+
+            // Create a core for the new database (shares Postgres pool, new db_id)
+            if let Some(pg) = storage.as_postgres() {
+                let new_pg = pg.with_db_id(&info.id);
+                let core = AtomicCore::from_postgres_storage(new_pg);
+                // Seed default tags
+                let all_tags = core.storage.get_all_tags_impl()?;
+                if all_tags.is_empty() {
+                    for category in &["Topics", "People", "Locations", "Organizations", "Events"] {
+                        core.storage.create_tag_impl(category, None)?;
+                    }
+                }
+                let mut cores = self.cores.write().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+                cores.insert(info.id.clone(), core);
+            }
+
+            return Ok(info);
+        }
+
         let info = self.registry.create_database(name)?;
 
         // Create the actual SQLite file
@@ -132,7 +261,37 @@ impl DatabaseManager {
 
     /// Delete a database (cannot delete default). Removes from cache and disk.
     pub fn delete_database(&self, id: &str) -> Result<(), AtomicCoreError> {
-        // Registry validates it's not the default
+        #[cfg(feature = "postgres")]
+        if self.is_postgres() {
+            // Postgres storage validates it's not the default
+            let storage = self.any_storage()?;
+            storage.delete_database_sync(id)?;
+
+            // Remove from cache
+            {
+                let mut cores =
+                    self.cores.write().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+                cores.remove(id);
+            }
+
+            // If this was the active database, switch to default
+            {
+                let active = self.active_id.read().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+                if *active == id {
+                    drop(active);
+                    let default_id = storage.get_default_database_id_sync()?;
+                    let mut active =
+                        self.active_id.write().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+                    *active = default_id;
+                }
+            }
+
+            // In Postgres mode, per-database data is scoped by db_id — no files to delete.
+            // TODO: Consider cleaning up rows with this db_id from all tables.
+            return Ok(());
+        }
+
+        // SQLite path: Registry validates it's not the default
         self.registry.delete_database(id)?;
 
         // Remove from cache
@@ -170,9 +329,26 @@ impl DatabaseManager {
 
     /// List all databases with their info, plus which is active.
     pub fn list_databases(&self) -> Result<(Vec<DatabaseInfo>, String), AtomicCoreError> {
+        #[cfg(feature = "postgres")]
+        if self.is_postgres() {
+            let databases = self.any_storage()?.list_databases_sync()?;
+            let active = self.active_id.read().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+            return Ok((databases, active.clone()));
+        }
+
         let databases = self.registry.list_databases()?;
         let active = self.active_id.read().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
         Ok((databases, active.clone()))
+    }
+
+    /// Rename a database.
+    pub fn rename_database(&self, id: &str, name: &str) -> Result<(), AtomicCoreError> {
+        #[cfg(feature = "postgres")]
+        if self.is_postgres() {
+            return self.any_storage()?.rename_database_sync(id, name);
+        }
+
+        self.registry.rename_database(id, name)
     }
 
     /// Optimize all loaded cores (call on shutdown).

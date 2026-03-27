@@ -187,6 +187,30 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+-- ==================== Databases ====================
+
+CREATE TABLE IF NOT EXISTS databases (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_opened_at TEXT
+);
+
+-- ==================== API Tokens ====================
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    token_prefix TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    is_revoked INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
+
 -- ==================== Full-Text Search ====================
 
 -- tsvector generated column for FTS on chunk content
@@ -219,6 +243,7 @@ CREATE INDEX IF NOT EXISTS idx_semantic_edges_similarity ON semantic_edges(simil
 -- Tags
 CREATE INDEX IF NOT EXISTS idx_tags_parent_id ON tags(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tags_parent_count ON tags(parent_id, atom_count DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_parent ON tags(LOWER(name), COALESCE(parent_id, ''));
 
 -- Wiki
 CREATE INDEX IF NOT EXISTS idx_wiki_citations_article ON wiki_citations(wiki_article_id);
@@ -238,6 +263,33 @@ CREATE INDEX IF NOT EXISTS idx_chat_citations_atom ON chat_citations(atom_id);
 -- Feeds
 CREATE INDEX IF NOT EXISTS idx_feeds_last_polled ON feeds(is_paused, last_polled_at);
 CREATE INDEX IF NOT EXISTS idx_feed_items_feed ON feed_items(feed_id);
+
+-- ==================== Triggers ====================
+
+-- Maintain tags.atom_count on atom_tags insert/delete (mirrors SQLite triggers in db.rs)
+CREATE OR REPLACE FUNCTION atom_tags_increment_count() RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE tags SET atom_count = atom_count + 1 WHERE id = NEW.tag_id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION atom_tags_decrement_count() RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE tags SET atom_count = atom_count - 1 WHERE id = OLD.tag_id;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS atom_tags_insert_count ON atom_tags;
+CREATE TRIGGER atom_tags_insert_count
+    AFTER INSERT ON atom_tags
+    FOR EACH ROW EXECUTE FUNCTION atom_tags_increment_count();
+
+DROP TRIGGER IF EXISTS atom_tags_delete_count ON atom_tags;
+CREATE TRIGGER atom_tags_delete_count
+    AFTER DELETE ON atom_tags
+    FOR EACH ROW EXECUTE FUNCTION atom_tags_decrement_count();
 
 -- ==================== Schema Version ====================
 

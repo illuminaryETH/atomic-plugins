@@ -139,19 +139,49 @@ impl AtomicCore {
     /// (search, wiki generation, chat agent) still require module-level refactoring
     /// and will return `Configuration` errors when used with Postgres.
     #[cfg(feature = "postgres")]
-    pub async fn open_postgres(
+    pub fn open_postgres(
         database_url: &str,
+        db_id: &str,
         registry: Option<Arc<registry::Registry>>,
     ) -> Result<Self, AtomicCoreError> {
-        use storage::{PostgresStorage, Storage};
+        use storage::PostgresStorage;
 
-        let pg_storage = PostgresStorage::connect(database_url).await?;
-        pg_storage.initialize().await?;
+        let pg_storage = PostgresStorage::connect(database_url, db_id)?;
+        pg_storage.initialize_sync()?;
 
-        Ok(Self {
-            storage: storage::StorageBackend::Postgres(pg_storage),
-            registry,
-        })
+        let storage = storage::StorageBackend::Postgres(pg_storage);
+
+        // Seed default category tags if tags table is empty
+        let all_tags = storage.get_all_tags_impl()?;
+        if all_tags.is_empty() {
+            for category in &["Topics", "People", "Locations", "Organizations", "Events"] {
+                storage.create_tag_impl(category, None)?;
+            }
+            eprintln!("Seeded default category tags in Postgres");
+        }
+
+        // Seed default settings if no registry and settings table is empty.
+        // When a registry exists, settings live there (not in the data DB).
+        if registry.is_none() {
+            let existing = storage.get_all_settings_sync()?;
+            if existing.is_empty() {
+                for (key, value) in settings::DEFAULT_SETTINGS {
+                    storage.set_setting_sync(key, value)?;
+                }
+                eprintln!("Seeded default settings in Postgres");
+            }
+        }
+
+        Ok(Self { storage, registry })
+    }
+
+    /// Create an AtomicCore from an existing PostgresStorage (for multi-db in Postgres mode).
+    #[cfg(feature = "postgres")]
+    pub fn from_postgres_storage(pg: storage::PostgresStorage) -> Self {
+        Self {
+            storage: storage::StorageBackend::Postgres(pg),
+            registry: None,
+        }
     }
 
     /// Open an existing database or create a new one

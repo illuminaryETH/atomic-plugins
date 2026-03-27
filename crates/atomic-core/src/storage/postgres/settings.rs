@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::PostgresStorage;
 use crate::error::AtomicCoreError;
+use crate::registry::DatabaseInfo;
 use crate::storage::traits::*;
 use crate::tokens::ApiTokenInfo;
 use async_trait::async_trait;
@@ -256,5 +257,113 @@ impl TokenStore for PostgresStorage {
 
         let result = self.create_api_token("default").await?;
         Ok(Some(result))
+    }
+}
+
+// ==================== DatabaseStore ====================
+
+#[async_trait]
+impl DatabaseStore for PostgresStorage {
+    async fn list_databases(&self) -> StorageResult<Vec<DatabaseInfo>> {
+        let rows = sqlx::query_as::<_, (String, String, i32, String, Option<String>)>(
+            "SELECT id, name, is_default, created_at, last_opened_at
+             FROM databases ORDER BY is_default DESC, created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, is_default, created_at, last_opened_at)| DatabaseInfo {
+                id,
+                name,
+                is_default: is_default != 0,
+                created_at,
+                last_opened_at,
+            })
+            .collect())
+    }
+
+    async fn create_database(&self, name: &str) -> StorageResult<DatabaseInfo> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO databases (id, name, is_default, created_at) VALUES ($1, $2, 0, $3)",
+        )
+        .bind(&id)
+        .bind(name)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        Ok(DatabaseInfo {
+            id,
+            name: name.to_string(),
+            is_default: false,
+            created_at: now,
+            last_opened_at: None,
+        })
+    }
+
+    async fn rename_database(&self, id: &str, name: &str) -> StorageResult<()> {
+        let result = sqlx::query("UPDATE databases SET name = $1 WHERE id = $2")
+            .bind(name)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(AtomicCoreError::NotFound(format!("Database '{}'", id)));
+        }
+
+        Ok(())
+    }
+
+    async fn delete_database(&self, id: &str) -> StorageResult<()> {
+        // Check if it's the default database
+        let is_default: Option<i32> = sqlx::query_scalar(
+            "SELECT is_default FROM databases WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        match is_default {
+            None => {
+                return Err(AtomicCoreError::NotFound(format!("Database '{}'", id)));
+            }
+            Some(v) if v != 0 => {
+                return Err(AtomicCoreError::Validation(
+                    "Cannot delete the default database".to_string(),
+                ));
+            }
+            _ => {}
+        }
+
+        sqlx::query("DELETE FROM databases WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn get_default_database_id(&self) -> StorageResult<String> {
+        let id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM databases WHERE is_default = 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        id.ok_or_else(|| {
+            AtomicCoreError::Configuration("No default database configured".to_string())
+        })
     }
 }

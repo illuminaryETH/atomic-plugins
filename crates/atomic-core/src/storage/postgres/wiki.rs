@@ -14,9 +14,10 @@ impl WikiStore for PostgresStorage {
         // Get article
         let article_row = sqlx::query_as::<_, (String, String, String, String, String, i32)>(
             "SELECT id, tag_id, content, created_at, updated_at, atom_count
-             FROM wiki_articles WHERE tag_id = $1",
+             FROM wiki_articles WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -37,10 +38,11 @@ impl WikiStore for PostgresStorage {
         let citation_rows = sqlx::query_as::<_, (String, i32, String, Option<i32>, String)>(
             "SELECT id, citation_index, atom_id, chunk_index, excerpt
              FROM wiki_citations
-             WHERE wiki_article_id = $1
+             WHERE wiki_article_id = $1 AND db_id = $2
              ORDER BY citation_index",
         )
         .bind(&article.id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -67,11 +69,13 @@ impl WikiStore for PostgresStorage {
                 UNION ALL
                 SELECT t.id FROM tags t
                 INNER JOIN descendant_tags dt ON t.parent_id = dt.id
+                WHERE t.db_id = $2
             )
             SELECT COUNT(DISTINCT atom_id) FROM atom_tags
-            WHERE tag_id IN (SELECT id FROM descendant_tags)",
+            WHERE tag_id IN (SELECT id FROM descendant_tags) AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -79,9 +83,10 @@ impl WikiStore for PostgresStorage {
 
         // Get article info if exists
         let article_info = sqlx::query_as::<_, (i32, String)>(
-            "SELECT atom_count, updated_at FROM wiki_articles WHERE tag_id = $1",
+            "SELECT atom_count, updated_at FROM wiki_articles WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -121,16 +126,17 @@ impl WikiStore for PostgresStorage {
         self.archive_existing_article(tag_id).await?;
 
         // Delete existing article for this tag (cascade deletes citations + links)
-        sqlx::query("DELETE FROM wiki_articles WHERE tag_id = $1")
+        sqlx::query("DELETE FROM wiki_articles WHERE tag_id = $1 AND db_id = $2")
             .bind(tag_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         // Insert new article
         sqlx::query(
-            "INSERT INTO wiki_articles (id, tag_id, content, created_at, updated_at, atom_count)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO wiki_articles (id, tag_id, content, created_at, updated_at, atom_count, db_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
         .bind(tag_id)
@@ -138,6 +144,7 @@ impl WikiStore for PostgresStorage {
         .bind(&now)
         .bind(&now)
         .bind(atom_count)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -145,8 +152,8 @@ impl WikiStore for PostgresStorage {
         // Insert citations
         for citation in citations {
             sqlx::query(
-                "INSERT INTO wiki_citations (id, wiki_article_id, citation_index, atom_id, chunk_index, excerpt)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO wiki_citations (id, wiki_article_id, citation_index, atom_id, chunk_index, excerpt, db_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(&citation.id)
             .bind(&id)
@@ -154,6 +161,7 @@ impl WikiStore for PostgresStorage {
             .bind(&citation.atom_id)
             .bind(citation.chunk_index)
             .bind(&citation.excerpt)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -184,16 +192,17 @@ impl WikiStore for PostgresStorage {
         self.archive_existing_article(&article.tag_id).await?;
 
         // Delete existing article for this tag (cascade deletes citations + links)
-        sqlx::query("DELETE FROM wiki_articles WHERE tag_id = $1")
+        sqlx::query("DELETE FROM wiki_articles WHERE tag_id = $1 AND db_id = $2")
             .bind(&article.tag_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         // Insert new article
         sqlx::query(
-            "INSERT INTO wiki_articles (id, tag_id, content, created_at, updated_at, atom_count)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO wiki_articles (id, tag_id, content, created_at, updated_at, atom_count, db_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&article.id)
         .bind(&article.tag_id)
@@ -201,6 +210,7 @@ impl WikiStore for PostgresStorage {
         .bind(&article.created_at)
         .bind(&article.updated_at)
         .bind(article.atom_count)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -208,8 +218,8 @@ impl WikiStore for PostgresStorage {
         // Insert citations
         for citation in citations {
             sqlx::query(
-                "INSERT INTO wiki_citations (id, wiki_article_id, citation_index, atom_id, chunk_index, excerpt)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO wiki_citations (id, wiki_article_id, citation_index, atom_id, chunk_index, excerpt, db_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(&citation.id)
             .bind(&article.id)
@@ -217,6 +227,7 @@ impl WikiStore for PostgresStorage {
             .bind(&citation.atom_id)
             .bind(citation.chunk_index)
             .bind(&citation.excerpt)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -225,13 +236,14 @@ impl WikiStore for PostgresStorage {
         // Insert wiki links
         for link in links {
             sqlx::query(
-                "INSERT INTO wiki_links (id, source_article_id, link_text, target_tag_id)
-                 VALUES ($1, $2, $3, $4)",
+                "INSERT INTO wiki_links (id, source_article_id, link_text, target_tag_id, db_id)
+                 VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(&link.id)
             .bind(&article.id)
             .bind(&link.target_tag_name)
             .bind(&link.target_tag_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -241,8 +253,9 @@ impl WikiStore for PostgresStorage {
     }
 
     async fn delete_wiki(&self, tag_id: &str) -> StorageResult<()> {
-        sqlx::query("DELETE FROM wiki_articles WHERE tag_id = $1")
+        sqlx::query("DELETE FROM wiki_articles WHERE tag_id = $1 AND db_id = $2")
             .bind(tag_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -256,10 +269,12 @@ impl WikiStore for PostgresStorage {
             "SELECT wl.id, wl.source_article_id, COALESCE(t.name, wl.link_text),
                     wl.target_tag_id
              FROM wiki_links wl
-             LEFT JOIN tags t ON t.id = wl.target_tag_id
-             WHERE wl.source_article_id = (SELECT id FROM wiki_articles WHERE tag_id = $1)",
+             LEFT JOIN tags t ON t.id = wl.target_tag_id AND t.db_id = $2
+             WHERE wl.source_article_id = (SELECT id FROM wiki_articles WHERE tag_id = $1 AND db_id = $2)
+             AND wl.db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -269,9 +284,10 @@ impl WikiStore for PostgresStorage {
             // Check if target tag has an article
             let has_article = if let Some(ref ttid) = target_tag_id {
                 sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM wiki_articles WHERE tag_id = $1)",
+                    "SELECT EXISTS(SELECT 1 FROM wiki_articles WHERE tag_id = $1 AND db_id = $2)",
                 )
                 .bind(ttid)
+                .bind(&self.db_id)
                 .fetch_one(&self.pool)
                 .await
                 .unwrap_or(false)
@@ -298,10 +314,11 @@ impl WikiStore for PostgresStorage {
         let rows = sqlx::query_as::<_, (String, i32, i32, String)>(
             "SELECT id, version_number, atom_count, created_at
              FROM wiki_article_versions
-             WHERE tag_id = $1
+             WHERE tag_id = $1 AND db_id = $2
              ORDER BY version_number DESC",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -325,9 +342,10 @@ impl WikiStore for PostgresStorage {
     ) -> StorageResult<Option<WikiArticleVersion>> {
         let row = sqlx::query_as::<_, (String, String, String, i32, i32, String)>(
             "SELECT id, tag_id, content, atom_count, version_number, created_at
-             FROM wiki_article_versions WHERE id = $1",
+             FROM wiki_article_versions WHERE id = $1 AND db_id = $2",
         )
         .bind(version_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -353,12 +371,14 @@ impl WikiStore for PostgresStorage {
     async fn get_all_wiki_articles(&self) -> StorageResult<Vec<WikiArticleSummary>> {
         let rows = sqlx::query_as::<_, (String, String, String, String, i32, i64)>(
             "SELECT w.id, w.tag_id, t.name, w.updated_at, w.atom_count,
-                    (SELECT COUNT(*) FROM wiki_links wl WHERE wl.target_tag_id = w.tag_id)
+                    (SELECT COUNT(*) FROM wiki_links wl WHERE wl.target_tag_id = w.tag_id AND wl.db_id = $1)
              FROM wiki_articles w
-             JOIN tags t ON w.tag_id = t.id
-             ORDER BY (SELECT COUNT(*) FROM wiki_links wl WHERE wl.target_tag_id = w.tag_id) DESC,
+             JOIN tags t ON w.tag_id = t.id AND t.db_id = $1
+             WHERE w.db_id = $1
+             ORDER BY (SELECT COUNT(*) FROM wiki_links wl WHERE wl.target_tag_id = w.tag_id AND wl.db_id = $1) DESC,
                       w.atom_count DESC, w.updated_at DESC",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -395,9 +415,10 @@ impl WikiStore for PostgresStorage {
 
         // Get scoped atom IDs
         let scoped_atom_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT atom_id FROM atom_tags WHERE tag_id = ANY($1)",
+            "SELECT DISTINCT atom_id FROM atom_tags WHERE tag_id = ANY($1) AND db_id = $2",
         )
         .bind(&all_tag_ids)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -408,9 +429,10 @@ impl WikiStore for PostgresStorage {
 
         // Try centroid-ranked retrieval using pgvector
         let centroid: Option<Vec<f32>> = sqlx::query_scalar(
-            "SELECT embedding::real[] FROM tag_embeddings WHERE tag_id = $1",
+            "SELECT embedding::real[] FROM tag_embeddings WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -422,12 +444,13 @@ impl WikiStore for PostgresStorage {
                         1 - (e.embedding <=> $1::vector) as similarity
                  FROM atom_chunk_embeddings e
                  JOIN atom_chunks ac ON e.chunk_id = ac.id
-                 WHERE ac.atom_id = ANY($2)
+                 WHERE ac.atom_id = ANY($2) AND ac.db_id = $3
                  ORDER BY e.embedding <=> $1::vector
                  LIMIT 3000",
             )
             .bind(centroid_vec.as_slice())
             .bind(&scoped_atom_ids)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -455,10 +478,11 @@ impl WikiStore for PostgresStorage {
                 "SELECT DISTINCT ac.atom_id, ac.chunk_index, ac.content
                  FROM atom_chunks ac
                  INNER JOIN atom_tags at ON ac.atom_id = at.atom_id
-                 WHERE at.tag_id = ANY($1)
+                 WHERE at.tag_id = ANY($1) AND ac.db_id = $2 AND at.db_id = $2
                  ORDER BY ac.atom_id, ac.chunk_index",
             )
             .bind(&all_tag_ids)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -499,10 +523,11 @@ impl WikiStore for PostgresStorage {
         let new_atom_ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT a.id FROM atoms a
              INNER JOIN atom_tags at ON a.id = at.atom_id
-             WHERE at.tag_id = $1 AND a.created_at > $2",
+             WHERE at.tag_id = $1 AND a.created_at > $2 AND a.db_id = $3 AND at.db_id = $3",
         )
         .bind(tag_id)
         .bind(last_update)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -513,9 +538,10 @@ impl WikiStore for PostgresStorage {
 
         // Try centroid-ranked selection scoped to new atoms only
         let centroid: Option<Vec<f32>> = sqlx::query_scalar(
-            "SELECT embedding::real[] FROM tag_embeddings WHERE tag_id = $1",
+            "SELECT embedding::real[] FROM tag_embeddings WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -526,12 +552,13 @@ impl WikiStore for PostgresStorage {
                         1 - (e.embedding <=> $1::vector) as similarity
                  FROM atom_chunk_embeddings e
                  JOIN atom_chunks ac ON e.chunk_id = ac.id
-                 WHERE ac.atom_id = ANY($2)
+                 WHERE ac.atom_id = ANY($2) AND ac.db_id = $3
                  ORDER BY e.embedding <=> $1::vector
                  LIMIT 3000",
             )
             .bind(centroid_vec.as_slice())
             .bind(&new_atom_ids)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -555,9 +582,10 @@ impl WikiStore for PostgresStorage {
         } else {
             let rows: Vec<(String, i32, String)> = sqlx::query_as(
                 "SELECT atom_id, chunk_index, content FROM atom_chunks
-                 WHERE atom_id = ANY($1) ORDER BY atom_id, chunk_index",
+                 WHERE atom_id = ANY($1) AND db_id = $2 ORDER BY atom_id, chunk_index",
             )
             .bind(&new_atom_ids)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -585,9 +613,10 @@ impl WikiStore for PostgresStorage {
         }
 
         let atom_count: Option<i64> = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM atom_tags WHERE tag_id = $1",
+            "SELECT COUNT(*) FROM atom_tags WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Wiki(e.to_string()))?;
@@ -606,13 +635,13 @@ impl WikiStore for PostgresStorage {
                 SELECT tag_id, SUM(cnt) as link_count FROM (
                     SELECT wl.target_tag_id as tag_id, COUNT(*) as cnt
                     FROM wiki_links wl
-                    WHERE wl.target_tag_id IS NOT NULL
+                    WHERE wl.target_tag_id IS NOT NULL AND wl.db_id = $2
                     GROUP BY wl.target_tag_id
                     UNION ALL
                     SELECT t2.id as tag_id, COUNT(*) as cnt
                     FROM wiki_links wl
                     JOIN tags t2 ON LOWER(wl.link_text) = LOWER(t2.name)
-                    WHERE wl.target_tag_id IS NULL
+                    WHERE wl.target_tag_id IS NULL AND wl.db_id = $2 AND t2.db_id = $2
                     GROUP BY t2.id
                 ) sub
                 GROUP BY tag_id
@@ -626,14 +655,16 @@ impl WikiStore for PostgresStorage {
             FROM tags t
             LEFT JOIN link_mentions lm ON lm.tag_id = t.id
             WHERE t.parent_id IS NOT NULL
-              AND NOT EXISTS (SELECT 1 FROM wiki_articles wa WHERE wa.tag_id = t.id)
+              AND NOT EXISTS (SELECT 1 FROM wiki_articles wa WHERE wa.tag_id = t.id AND wa.db_id = $2)
               AND t.name ~ '[^0-9]'
               AND LENGTH(t.name) >= 2
               AND t.atom_count > 0
+              AND t.db_id = $2
             ORDER BY score DESC
             LIMIT $1",
         )
         .bind(limit)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -659,9 +690,10 @@ impl PostgresStorage {
     async fn archive_existing_article(&self, tag_id: &str) -> StorageResult<()> {
         // Load existing article
         let existing = sqlx::query_as::<_, (String, String, i32, String)>(
-            "SELECT id, content, atom_count, created_at FROM wiki_articles WHERE tag_id = $1",
+            "SELECT id, content, atom_count, created_at FROM wiki_articles WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -673,9 +705,10 @@ impl PostgresStorage {
 
         // Compute next version number
         let next_version: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
-            "SELECT COALESCE(MAX(version_number), 0) + 1 FROM wiki_article_versions WHERE tag_id = $1",
+            "SELECT COALESCE(MAX(version_number), 0) + 1 FROM wiki_article_versions WHERE tag_id = $1 AND db_id = $2",
         )
         .bind(tag_id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -683,8 +716,8 @@ impl PostgresStorage {
 
         // Insert version (Postgres schema doesn't have citations_json column)
         sqlx::query(
-            "INSERT INTO wiki_article_versions (id, tag_id, content, atom_count, version_number, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO wiki_article_versions (id, tag_id, content, atom_count, version_number, created_at, db_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(tag_id)
@@ -692,6 +725,7 @@ impl PostgresStorage {
         .bind(atom_count)
         .bind(next_version as i32)
         .bind(&created_at)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;

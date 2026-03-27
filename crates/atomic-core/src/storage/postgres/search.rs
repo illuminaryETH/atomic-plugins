@@ -24,12 +24,13 @@ impl SearchStore for PostgresStorage {
             "SELECT ac.id, ac.atom_id, ac.content, ac.chunk_index,
                     (ac.embedding <=> $1::vector) AS distance
              FROM atom_chunks ac
-             WHERE ac.embedding IS NOT NULL
+             WHERE ac.embedding IS NOT NULL AND ac.db_id = $3
              ORDER BY ac.embedding <=> $1::vector
              LIMIT $2",
         )
         .bind(&embedding_vec)
         .bind(fetch_limit)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Search(format!("Vector search failed: {}", e)))?;
@@ -48,7 +49,7 @@ impl SearchStore for PostgresStorage {
         let scope_atom_ids: std::collections::HashSet<String> = if let Some(tid) = tag_id {
             let candidate_atom_ids: Vec<&str> =
                 filtered.iter().map(|(_, aid, _, _, _)| aid.as_str()).collect();
-            pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, &[tid.to_string()])
+            pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, &[tid.to_string()], &self.db_id)
                 .await?
         } else {
             std::collections::HashSet::new()
@@ -83,8 +84,8 @@ impl SearchStore for PostgresStorage {
 
         // Batch fetch atom data
         let atom_ids: Vec<String> = deduped.iter().map(|(id, _, _, _)| id.clone()).collect();
-        let atom_map = pg_batch_fetch_atoms(&self.pool, &atom_ids).await?;
-        let tag_map = pg_batch_fetch_tags(&self.pool, &atom_ids).await?;
+        let atom_map = pg_batch_fetch_atoms(&self.pool, &atom_ids, &self.db_id).await?;
+        let tag_map = pg_batch_fetch_tags(&self.pool, &atom_ids, &self.db_id).await?;
 
         let mut results = Vec::with_capacity(deduped.len());
         for (atom_id, similarity, content, chunk_index) in deduped {
@@ -123,12 +124,13 @@ impl SearchStore for PostgresStorage {
             "SELECT ac.id, ac.atom_id, ac.content, ac.chunk_index,
                     ts_rank(ac.content_tsv, plainto_tsquery('english', $1)) AS rank
              FROM atom_chunks ac
-             WHERE ac.content_tsv @@ plainto_tsquery('english', $1)
+             WHERE ac.content_tsv @@ plainto_tsquery('english', $1) AND ac.db_id = $3
              ORDER BY ts_rank(ac.content_tsv, plainto_tsquery('english', $1)) DESC
              LIMIT $2",
         )
         .bind(query_trimmed)
         .bind(fetch_limit)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Search(format!("Keyword search failed: {}", e)))?;
@@ -138,7 +140,7 @@ impl SearchStore for PostgresStorage {
             let candidate_atom_ids: Vec<&str> =
                 rows.iter().map(|(_, aid, _, _, _)| aid.as_str()).collect();
             let matching =
-                pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, &[tid.to_string()])
+                pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, &[tid.to_string()], &self.db_id)
                     .await?;
             rows.into_iter()
                 .filter(|(_, aid, _, _, _)| matching.contains(aid.as_str()))
@@ -175,8 +177,8 @@ impl SearchStore for PostgresStorage {
 
         // Batch fetch atom data
         let atom_ids: Vec<String> = deduped.iter().map(|(id, _, _, _)| id.clone()).collect();
-        let atom_map = pg_batch_fetch_atoms(&self.pool, &atom_ids).await?;
-        let tag_map = pg_batch_fetch_tags(&self.pool, &atom_ids).await?;
+        let atom_map = pg_batch_fetch_atoms(&self.pool, &atom_ids, &self.db_id).await?;
+        let tag_map = pg_batch_fetch_tags(&self.pool, &atom_ids, &self.db_id).await?;
 
         let mut results = Vec::with_capacity(deduped.len());
         for (atom_id, score, content, chunk_index) in deduped {
@@ -213,12 +215,13 @@ impl SearchStore for PostgresStorage {
             "SELECT ac.id, ac.atom_id, ac.content, ac.chunk_index,
                     ts_rank(ac.content_tsv, plainto_tsquery('english', $1)) AS rank
              FROM atom_chunks ac
-             WHERE ac.content_tsv @@ plainto_tsquery('english', $1)
+             WHERE ac.content_tsv @@ plainto_tsquery('english', $1) AND ac.db_id = $3
              ORDER BY ts_rank(ac.content_tsv, plainto_tsquery('english', $1)) DESC
              LIMIT $2",
         )
         .bind(query_trimmed)
         .bind(fetch_limit)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Search(format!("Keyword chunk search failed: {}", e)))?;
@@ -230,7 +233,7 @@ impl SearchStore for PostgresStorage {
             let candidate_atom_ids: Vec<&str> =
                 rows.iter().map(|(_, aid, _, _, _)| aid.as_str()).collect();
             let matching =
-                pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, scope_tag_ids)
+                pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, scope_tag_ids, &self.db_id)
                     .await?;
             rows.into_iter()
                 .filter(|(_, aid, _, _, _)| matching.contains(aid.as_str()))
@@ -266,12 +269,13 @@ impl SearchStore for PostgresStorage {
             "SELECT ac.id, ac.atom_id, ac.content, ac.chunk_index,
                     (ac.embedding <=> $1::vector) AS distance
              FROM atom_chunks ac
-             WHERE ac.embedding IS NOT NULL
+             WHERE ac.embedding IS NOT NULL AND ac.db_id = $3
              ORDER BY ac.embedding <=> $1::vector
              LIMIT $2",
         )
         .bind(&embedding_vec)
         .bind(fetch_limit)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Search(format!("Vector chunk search failed: {}", e)))?;
@@ -291,7 +295,7 @@ impl SearchStore for PostgresStorage {
             let candidate_atom_ids: Vec<&str> =
                 filtered.iter().map(|(_, aid, _, _, _)| aid.as_str()).collect();
             let matching =
-                pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, scope_tag_ids)
+                pg_batch_atoms_with_scope_tags(&self.pool, &candidate_atom_ids, scope_tag_ids, &self.db_id)
                     .await?;
             filtered
                 .into_iter()
@@ -323,9 +327,10 @@ impl SearchStore for PostgresStorage {
         // Get all chunk embeddings for the source atom
         let source_embeddings: Vec<(i32, Vector)> = sqlx::query_as(
             "SELECT chunk_index, embedding FROM atom_chunks
-             WHERE atom_id = $1 AND embedding IS NOT NULL",
+             WHERE atom_id = $1 AND embedding IS NOT NULL AND db_id = $2",
         )
         .bind(atom_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::Search(format!("Failed to get source chunks: {}", e)))?;
@@ -343,13 +348,14 @@ impl SearchStore for PostgresStorage {
                 "SELECT ac.atom_id, ac.content, ac.chunk_index,
                         (ac.embedding <=> $1::vector) AS distance
                  FROM atom_chunks ac
-                 WHERE ac.embedding IS NOT NULL AND ac.atom_id != $2
+                 WHERE ac.embedding IS NOT NULL AND ac.atom_id != $2 AND ac.db_id = $4
                  ORDER BY ac.embedding <=> $1::vector
                  LIMIT $3",
             )
             .bind(embedding)
             .bind(atom_id)
             .bind(per_chunk_limit)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
@@ -386,8 +392,8 @@ impl SearchStore for PostgresStorage {
 
         // Batch fetch atom data
         let atom_ids: Vec<String> = results.iter().map(|(id, _, _, _)| id.clone()).collect();
-        let atom_map = pg_batch_fetch_atoms(&self.pool, &atom_ids).await?;
-        let tag_map = pg_batch_fetch_tags(&self.pool, &atom_ids).await?;
+        let atom_map = pg_batch_fetch_atoms(&self.pool, &atom_ids, &self.db_id).await?;
+        let tag_map = pg_batch_fetch_tags(&self.pool, &atom_ids, &self.db_id).await?;
 
         let mut final_results = Vec::new();
         for (result_atom_id, similarity, chunk_content, chunk_index) in results {
@@ -415,6 +421,7 @@ impl SearchStore for PostgresStorage {
 async fn pg_batch_fetch_atoms(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
+    db_id: &str,
 ) -> Result<HashMap<String, Atom>, AtomicCoreError> {
     if atom_ids.is_empty() {
         return Ok(HashMap::new());
@@ -437,9 +444,10 @@ async fn pg_batch_fetch_atoms(
                 created_at, updated_at,
                 COALESCE(embedding_status, 'pending'),
                 COALESCE(tagging_status, 'pending')
-         FROM atoms WHERE id = ANY($1)",
+         FROM atoms WHERE id = ANY($1) AND db_id = $2",
     )
     .bind(atom_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::Search(format!("Failed to batch fetch atoms: {}", e)))?;
@@ -469,6 +477,7 @@ async fn pg_batch_fetch_atoms(
 async fn pg_batch_fetch_tags(
     pool: &sqlx::PgPool,
     atom_ids: &[String],
+    db_id: &str,
 ) -> Result<HashMap<String, Vec<Tag>>, AtomicCoreError> {
     if atom_ids.is_empty() {
         return Ok(HashMap::new());
@@ -478,9 +487,10 @@ async fn pg_batch_fetch_tags(
         "SELECT at.atom_id, t.id, t.name, t.parent_id, t.created_at
          FROM atom_tags at
          INNER JOIN tags t ON at.tag_id = t.id
-         WHERE at.atom_id = ANY($1)",
+         WHERE at.atom_id = ANY($1) AND at.db_id = $2",
     )
     .bind(atom_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| AtomicCoreError::Search(format!("Failed to batch fetch tags: {}", e)))?;
@@ -502,6 +512,7 @@ async fn pg_batch_atoms_with_scope_tags(
     pool: &sqlx::PgPool,
     atom_ids: &[&str],
     scope_tag_ids: &[String],
+    db_id: &str,
 ) -> Result<std::collections::HashSet<String>, AtomicCoreError> {
     if atom_ids.is_empty() || scope_tag_ids.is_empty() {
         return Ok(std::collections::HashSet::new());
@@ -512,16 +523,18 @@ async fn pg_batch_atoms_with_scope_tags(
     // Use recursive CTE to include atoms tagged with descendants of the scope tags
     let rows: Vec<(String,)> = sqlx::query_as(
         "WITH RECURSIVE scope_tags(id) AS (
-            SELECT id FROM tags WHERE id = ANY($2)
+            SELECT id FROM tags WHERE id = ANY($2) AND db_id = $3
             UNION ALL
             SELECT t.id FROM tags t
             INNER JOIN scope_tags st ON t.parent_id = st.id
+            WHERE t.db_id = $3
          )
          SELECT DISTINCT atom_id FROM atom_tags
-         WHERE atom_id = ANY($1) AND tag_id IN (SELECT id FROM scope_tags)",
+         WHERE atom_id = ANY($1) AND tag_id IN (SELECT id FROM scope_tags) AND db_id = $3",
     )
     .bind(&atom_id_strings)
     .bind(scope_tag_ids)
+    .bind(db_id)
     .fetch_all(pool)
     .await
     .map_err(|e| {

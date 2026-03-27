@@ -205,7 +205,11 @@ pub async fn authorize_approve(
     }
 
     // Verify the user's API token
-    match state.manager.registry().verify_api_token(&f.api_token) {
+    let core = match state.manager.active_core() {
+        Ok(c) => c,
+        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+    };
+    match core.verify_api_token(&f.api_token) {
         Ok(Some(_)) => {}
         _ => {
             return HttpResponse::Ok()
@@ -396,7 +400,14 @@ pub async fn token(
         .unwrap_or_else(|| "OAuth Client".to_string());
 
     // Create a new Atomic API token
-    let (token_info, raw_token) = match state.manager.registry().create_api_token(&format!("OAuth: {}", client_name)) {
+    let core = match state.manager.active_core() {
+        Ok(c) => c,
+        Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "server_error",
+            "error_description": e.to_string()
+        })),
+    };
+    let (token_info, raw_token) = match core.create_api_token(&format!("OAuth: {}", client_name)) {
         Ok(t) => t,
         Err(e) => return HttpResponse::InternalServerError().json(serde_json::json!({
             "error": "server_error",

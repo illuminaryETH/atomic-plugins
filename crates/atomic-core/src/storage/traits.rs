@@ -677,6 +677,27 @@ pub trait TokenStore: Send + Sync {
     async fn ensure_default_token(&self) -> StorageResult<Option<(crate::tokens::ApiTokenInfo, String)>>;
 }
 
+// ==================== Database Management Storage ====================
+
+/// Storage operations for managing logical databases.
+#[async_trait]
+pub trait DatabaseStore: Send + Sync {
+    /// List all registered databases.
+    async fn list_databases(&self) -> StorageResult<Vec<crate::registry::DatabaseInfo>>;
+
+    /// Create a new database entry. Returns the new database info.
+    async fn create_database(&self, name: &str) -> StorageResult<crate::registry::DatabaseInfo>;
+
+    /// Rename a database.
+    async fn rename_database(&self, id: &str, name: &str) -> StorageResult<()>;
+
+    /// Delete a database entry (cannot delete default).
+    async fn delete_database(&self, id: &str) -> StorageResult<()>;
+
+    /// Get the ID of the default database.
+    async fn get_default_database_id(&self) -> StorageResult<String>;
+}
+
 // ==================== Supertrait ====================
 
 /// Combined storage trait. Every storage backend must implement all sub-traits.
@@ -694,6 +715,7 @@ pub trait Storage:
     + ClusterStore
     + SettingsStore
     + TokenStore
+    + DatabaseStore
     + Send
     + Sync
 {

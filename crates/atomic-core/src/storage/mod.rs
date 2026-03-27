@@ -40,6 +40,15 @@ impl StorageBackend {
         }
     }
 
+    /// Get the underlying PostgresStorage, if this is a Postgres backend.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn as_postgres(&self) -> Option<&PostgresStorage> {
+        match self {
+            StorageBackend::Sqlite(_) => None,
+            StorageBackend::Postgres(s) => Some(s),
+        }
+    }
+
     /// Run storage-specific optimization (SQLite PRAGMA optimize, Postgres no-op).
     pub(crate) fn optimize(&self) {
         match self {
@@ -69,15 +78,57 @@ impl StorageBackend {
     }
 }
 
-/// Helper: bridge an async call to sync using the current tokio Handle.
-/// Uses `block_in_place` to safely call `block_on` from within an async context
-/// (e.g., actix-web route handlers). Without `block_in_place`, `Handle::current().block_on()`
-/// panics when called from an async task.
+/// Dedicated tokio runtime for Postgres async operations.
+///
+/// The sync→async bridge problem:
+/// - actix-web workers use `current_thread` tokio → `block_in_place` panics
+/// - `handle.block_on()` from a child thread deadlocks on `current_thread`
+/// - A new runtime per call can't share the sqlx pool (pool is runtime-bound)
+///
+/// Solution: one shared multi-thread runtime created at process start.
+/// The sqlx pool is created on THIS runtime (via `connect()` called from
+/// `open_postgres()` which runs on the main runtime before actix starts).
+/// All sync dispatch calls send work here and block on the result.
 #[cfg(feature = "postgres")]
-fn block_on<F: std::future::Future>(f: F) -> F::Output {
-    tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(f)
-    })
+static PG_RUNTIME: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("Failed to create Postgres runtime")
+});
+
+/// Bridge an async Postgres call to sync on the dedicated PG_RUNTIME.
+///
+/// If called from within a tokio runtime (e.g., actix-web handler or `#[tokio::main]`),
+/// moves to a background thread to avoid "cannot start a runtime from within a runtime".
+/// If called from a non-async context, calls `block_on` directly.
+#[cfg(feature = "postgres")]
+fn block_on<F: std::future::Future + Send>(f: F) -> F::Output
+where
+    F::Output: Send,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        // We're inside a tokio runtime — can't call block_on directly.
+        // Move to a plain thread where block_on is safe.
+        std::thread::scope(|s| {
+            s.spawn(|| PG_RUNTIME.block_on(f))
+                .join()
+                .expect("PG_RUNTIME bridge thread panicked")
+        })
+    } else {
+        // No active runtime — call block_on directly.
+        PG_RUNTIME.block_on(f)
+    }
+}
+
+/// Public version for use by PostgresStorage::connect and initialize.
+#[cfg(feature = "postgres")]
+pub fn pg_runtime_block_on<F: std::future::Future + Send>(f: F) -> F::Output
+where
+    F::Output: Send,
+{
+    block_on(f)
 }
 
 // ==================== Sync dispatch methods ====================
@@ -326,6 +377,18 @@ dispatch! {
         => sqlite: get_clusters_sync, pg_trait: ClusterStore, pg_method: get_clusters;
     fn get_canvas_level_sync(&self, parent_id: Option<&str>, children_hint: Option<Vec<String>>) -> Result<CanvasLevel, AtomicCoreError>
         => sqlite: get_canvas_level_sync, pg_trait: ClusterStore, pg_method: get_canvas_level;
+
+    // ---- DatabaseStore ----
+    fn list_databases_sync(&self) -> Result<Vec<crate::registry::DatabaseInfo>, AtomicCoreError>
+        => sqlite: list_databases_sync, pg_trait: DatabaseStore, pg_method: list_databases;
+    fn create_database_sync(&self, name: &str) -> Result<crate::registry::DatabaseInfo, AtomicCoreError>
+        => sqlite: create_database_sync, pg_trait: DatabaseStore, pg_method: create_database;
+    fn rename_database_sync(&self, id: &str, name: &str) -> Result<(), AtomicCoreError>
+        => sqlite: rename_database_sync, pg_trait: DatabaseStore, pg_method: rename_database;
+    fn delete_database_sync(&self, id: &str) -> Result<(), AtomicCoreError>
+        => sqlite: delete_database_sync, pg_trait: DatabaseStore, pg_method: delete_database;
+    fn get_default_database_id_sync(&self) -> Result<String, AtomicCoreError>
+        => sqlite: get_default_database_id_sync, pg_trait: DatabaseStore, pg_method: get_default_database_id;
 
     // ---- SettingsStore ----
     fn get_all_settings_sync(&self) -> Result<HashMap<String, String>, AtomicCoreError>

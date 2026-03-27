@@ -407,13 +407,13 @@ async fn process_tagging_only_inner(
     // Load model capabilities (uses in-memory + DB cache to avoid redundant fetches)
     let supported_params: Option<Vec<String>> =
         if provider_config.provider_type == ProviderType::OpenRouter {
-            let storage_path = storage.storage_path().to_path_buf();
-            let capabilities = get_model_capabilities(move || {
-                crate::db::Database::open(&storage_path)
-                    .map(|db| db.conn.into_inner().unwrap())
-                    .map_err(|e| e.to_string())
-            })
-            .await;
+            // Try to load capabilities from the settings cache
+            let cached_json = storage.get_setting_sync("model_capabilities_cache").ok().flatten();
+            let capabilities = if let Some(json) = cached_json {
+                serde_json::from_str::<crate::providers::models::ModelCapabilitiesCache>(&json).ok()
+            } else {
+                None
+            };
 
             capabilities.and_then(|caps| caps.get_supported_params(&tagging_model).cloned())
         } else {

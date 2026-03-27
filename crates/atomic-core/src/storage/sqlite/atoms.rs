@@ -205,9 +205,11 @@ impl SqliteStorage {
 
             conn.execute_batch("COMMIT")?;
 
-            // Resolve tags for each atom after commit
+            // Batch-resolve tags for all created atoms
+            let atom_ids: Vec<String> = atoms_with_tags.iter().map(|a| a.atom.id.clone()).collect();
+            let tag_map = get_atom_tags_map_for_ids(&conn, &atom_ids)?;
             for atom_with_tags in &mut atoms_with_tags {
-                atom_with_tags.tags = get_tags_for_atom(&conn, &atom_with_tags.atom.id)?;
+                atom_with_tags.tags = tag_map.get(&atom_with_tags.atom.id).cloned().unwrap_or_default();
             }
         }
 

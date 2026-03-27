@@ -51,7 +51,7 @@ pub async fn rename_database(
 ) -> HttpResponse {
     let id = path.into_inner();
     let name = body.into_inner().name;
-    match state.manager.registry().rename_database(&id, &name) {
+    match state.manager.rename_database(&id, &name) {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({"renamed": true})),
         Err(e) => crate::error::error_response(e),
     }

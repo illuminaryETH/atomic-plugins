@@ -18,9 +18,10 @@ impl FeedStore for PostgresStorage {
     ) -> StorageResult<Feed> {
         // Check uniqueness
         let exists: Option<bool> = sqlx::query_scalar::<_, Option<bool>>(
-            "SELECT EXISTS(SELECT 1 FROM feeds WHERE url = $1)",
+            "SELECT EXISTS(SELECT 1 FROM feeds WHERE url = $1 AND db_id = $2)",
         )
         .bind(url)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -37,8 +38,8 @@ impl FeedStore for PostgresStorage {
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO feeds (id, url, title, site_url, poll_interval, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO feeds (id, url, title, site_url, poll_interval, created_at, db_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
         .bind(url)
@@ -46,14 +47,16 @@ impl FeedStore for PostgresStorage {
         .bind(site_url)
         .bind(poll_interval)
         .bind(&now)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         for tag_id in tag_ids {
-            sqlx::query("INSERT INTO feed_tags (feed_id, tag_id) VALUES ($1, $2)")
+            sqlx::query("INSERT INTO feed_tags (feed_id, tag_id, db_id) VALUES ($1, $2, $3)")
                 .bind(&id)
                 .bind(tag_id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -76,8 +79,9 @@ impl FeedStore for PostgresStorage {
     async fn list_feeds(&self) -> StorageResult<Vec<Feed>> {
         let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, i32, Option<String>, Option<String>, String, bool)>(
             "SELECT id, url, title, site_url, poll_interval, last_polled_at, last_error, created_at, is_paused::int::boolean
-             FROM feeds ORDER BY created_at DESC",
+             FROM feeds WHERE db_id = $1 ORDER BY created_at DESC",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -104,8 +108,9 @@ impl FeedStore for PostgresStorage {
 
         // Batch load feed tags
         let tag_rows = sqlx::query_as::<_, (String, String)>(
-            "SELECT feed_id, tag_id FROM feed_tags",
+            "SELECT feed_id, tag_id FROM feed_tags WHERE db_id = $1",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -125,18 +130,20 @@ impl FeedStore for PostgresStorage {
     async fn get_feed(&self, id: &str) -> StorageResult<Feed> {
         let row = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, i32, Option<String>, Option<String>, String, bool)>(
             "SELECT id, url, title, site_url, poll_interval, last_polled_at, last_error, created_at, is_paused::int::boolean
-             FROM feeds WHERE id = $1",
+             FROM feeds WHERE id = $1 AND db_id = $2",
         )
         .bind(id)
+        .bind(&self.db_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?
         .ok_or_else(|| AtomicCoreError::NotFound(format!("Feed not found: {}", id)))?;
 
         let tag_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT tag_id FROM feed_tags WHERE feed_id = $1",
+            "SELECT tag_id FROM feed_tags WHERE feed_id = $1 AND db_id = $2",
         )
         .bind(id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -165,9 +172,10 @@ impl FeedStore for PostgresStorage {
     ) -> StorageResult<Feed> {
         // Verify feed exists
         let exists: Option<bool> = sqlx::query_scalar::<_, Option<bool>>(
-            "SELECT EXISTS(SELECT 1 FROM feeds WHERE id = $1)",
+            "SELECT EXISTS(SELECT 1 FROM feeds WHERE id = $1 AND db_id = $2)",
         )
         .bind(id)
+        .bind(&self.db_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -181,43 +189,48 @@ impl FeedStore for PostgresStorage {
         }
 
         if let Some(t) = title {
-            sqlx::query("UPDATE feeds SET title = $1 WHERE id = $2")
+            sqlx::query("UPDATE feeds SET title = $1 WHERE id = $2 AND db_id = $3")
                 .bind(t)
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
         }
 
         if let Some(interval) = poll_interval {
-            sqlx::query("UPDATE feeds SET poll_interval = $1 WHERE id = $2")
+            sqlx::query("UPDATE feeds SET poll_interval = $1 WHERE id = $2 AND db_id = $3")
                 .bind(interval)
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
         }
 
         if let Some(paused) = is_paused {
-            sqlx::query("UPDATE feeds SET is_paused = $1 WHERE id = $2")
+            sqlx::query("UPDATE feeds SET is_paused = $1 WHERE id = $2 AND db_id = $3")
                 .bind(if paused { 1i32 } else { 0i32 })
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
         }
 
         if let Some(tags) = tag_ids {
-            sqlx::query("DELETE FROM feed_tags WHERE feed_id = $1")
+            sqlx::query("DELETE FROM feed_tags WHERE feed_id = $1 AND db_id = $2")
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
             for tag_id in tags {
-                sqlx::query("INSERT INTO feed_tags (feed_id, tag_id) VALUES ($1, $2)")
+                sqlx::query("INSERT INTO feed_tags (feed_id, tag_id, db_id) VALUES ($1, $2, $3)")
                     .bind(id)
                     .bind(tag_id)
+                    .bind(&self.db_id)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -228,8 +241,9 @@ impl FeedStore for PostgresStorage {
     }
 
     async fn delete_feed(&self, id: &str) -> StorageResult<()> {
-        let result = sqlx::query("DELETE FROM feeds WHERE id = $1")
+        let result = sqlx::query("DELETE FROM feeds WHERE id = $1 AND db_id = $2")
             .bind(id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -248,8 +262,9 @@ impl FeedStore for PostgresStorage {
         // Select non-paused feeds
         let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, i32, Option<String>, Option<String>, String, bool)>(
             "SELECT id, url, title, site_url, poll_interval, last_polled_at, last_error, created_at, is_paused::int::boolean
-             FROM feeds WHERE is_paused = 0",
+             FROM feeds WHERE is_paused = 0 AND db_id = $1",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -300,9 +315,10 @@ impl FeedStore for PostgresStorage {
         let feed_ids: Vec<String> = due_feeds.iter().map(|f| f.id.clone()).collect();
 
         let tag_rows = sqlx::query_as::<_, (String, String)>(
-            "SELECT feed_id, tag_id FROM feed_tags WHERE feed_id = ANY($1)",
+            "SELECT feed_id, tag_id FROM feed_tags WHERE feed_id = ANY($1) AND db_id = $2",
         )
         .bind(&feed_ids)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -331,21 +347,23 @@ impl FeedStore for PostgresStorage {
         match error {
             Some(err) => {
                 sqlx::query(
-                    "UPDATE feeds SET last_polled_at = $1, last_error = $2 WHERE id = $3",
+                    "UPDATE feeds SET last_polled_at = $1, last_error = $2 WHERE id = $3 AND db_id = $4",
                 )
                 .bind(&now)
                 .bind(err)
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
             }
             None => {
                 sqlx::query(
-                    "UPDATE feeds SET last_polled_at = $1, last_error = NULL WHERE id = $2",
+                    "UPDATE feeds SET last_polled_at = $1, last_error = NULL WHERE id = $2 AND db_id = $3",
                 )
                 .bind(&now)
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -363,13 +381,14 @@ impl FeedStore for PostgresStorage {
         let now = chrono::Utc::now().to_rfc3339();
 
         let result = sqlx::query(
-            "INSERT INTO feed_items (feed_id, guid, skipped, seen_at)
-             VALUES ($1, $2, 0, $3)
+            "INSERT INTO feed_items (feed_id, guid, skipped, seen_at, db_id)
+             VALUES ($1, $2, 0, $3, $4)
              ON CONFLICT DO NOTHING",
         )
         .bind(feed_id)
         .bind(guid)
         .bind(&now)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -384,11 +403,12 @@ impl FeedStore for PostgresStorage {
         atom_id: &str,
     ) -> StorageResult<()> {
         sqlx::query(
-            "UPDATE feed_items SET atom_id = $1 WHERE feed_id = $2 AND guid = $3",
+            "UPDATE feed_items SET atom_id = $1 WHERE feed_id = $2 AND guid = $3 AND db_id = $4",
         )
         .bind(atom_id)
         .bind(feed_id)
         .bind(guid)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -402,11 +422,12 @@ impl FeedStore for PostgresStorage {
         reason: &str,
     ) -> StorageResult<()> {
         sqlx::query(
-            "UPDATE feed_items SET skipped = 1, skip_reason = $1 WHERE feed_id = $2 AND guid = $3",
+            "UPDATE feed_items SET skipped = 1, skip_reason = $1 WHERE feed_id = $2 AND guid = $3 AND db_id = $4",
         )
         .bind(reason)
         .bind(feed_id)
         .bind(guid)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -420,17 +441,19 @@ impl FeedStore for PostgresStorage {
         site_url: Option<&str>,
     ) -> StorageResult<()> {
         if let Some(t) = title {
-            sqlx::query("UPDATE feeds SET title = COALESCE(title, $1) WHERE id = $2")
+            sqlx::query("UPDATE feeds SET title = COALESCE(title, $1) WHERE id = $2 AND db_id = $3")
                 .bind(t)
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
         }
         if let Some(s) = site_url {
-            sqlx::query("UPDATE feeds SET site_url = COALESCE(site_url, $1) WHERE id = $2")
+            sqlx::query("UPDATE feeds SET site_url = COALESCE(site_url, $1) WHERE id = $2 AND db_id = $3")
                 .bind(s)
                 .bind(id)
+                .bind(&self.db_id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;

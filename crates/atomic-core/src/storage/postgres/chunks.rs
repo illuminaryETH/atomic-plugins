@@ -12,9 +12,10 @@ use uuid::Uuid;
 impl ChunkStore for PostgresStorage {
     async fn get_pending_embeddings(&self, limit: i32) -> StorageResult<Vec<(String, String)>> {
         let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT id, content FROM atoms WHERE embedding_status = 'pending' LIMIT $1",
+            "SELECT id, content FROM atoms WHERE embedding_status = 'pending' AND db_id = $2 LIMIT $1",
         )
         .bind(limit)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -28,9 +29,10 @@ impl ChunkStore for PostgresStorage {
         atom_id: &str,
         status: &str,
     ) -> StorageResult<()> {
-        sqlx::query("UPDATE atoms SET embedding_status = $2 WHERE id = $1")
+        sqlx::query("UPDATE atoms SET embedding_status = $2 WHERE id = $1 AND db_id = $3")
             .bind(atom_id)
             .bind(status)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| {
@@ -47,9 +49,10 @@ impl ChunkStore for PostgresStorage {
         atom_id: &str,
         status: &str,
     ) -> StorageResult<()> {
-        sqlx::query("UPDATE atoms SET tagging_status = $2 WHERE id = $1")
+        sqlx::query("UPDATE atoms SET tagging_status = $2 WHERE id = $1 AND db_id = $3")
             .bind(atom_id)
             .bind(status)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| {
@@ -72,8 +75,9 @@ impl ChunkStore for PostgresStorage {
 
         // Delete existing chunks for this atom (CASCADE handles nothing else since
         // Postgres unifies chunks + embeddings + FTS in one table)
-        sqlx::query("DELETE FROM atom_chunks WHERE atom_id = $1")
+        sqlx::query("DELETE FROM atom_chunks WHERE atom_id = $1 AND db_id = $2")
             .bind(atom_id)
+            .bind(&self.db_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| {
@@ -86,14 +90,15 @@ impl ChunkStore for PostgresStorage {
             let pg_embedding = Vector::from(embedding_vec.clone());
 
             sqlx::query(
-                "INSERT INTO atom_chunks (id, atom_id, chunk_index, content, embedding)
-                 VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO atom_chunks (id, atom_id, chunk_index, content, embedding, db_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(&chunk_id)
             .bind(atom_id)
             .bind(index as i32)
             .bind(chunk_content)
             .bind(&pg_embedding)
+            .bind(&self.db_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| {
@@ -109,8 +114,9 @@ impl ChunkStore for PostgresStorage {
     }
 
     async fn delete_chunks(&self, atom_id: &str) -> StorageResult<()> {
-        sqlx::query("DELETE FROM atom_chunks WHERE atom_id = $1")
+        sqlx::query("DELETE FROM atom_chunks WHERE atom_id = $1 AND db_id = $2")
             .bind(atom_id)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| {
@@ -121,8 +127,9 @@ impl ChunkStore for PostgresStorage {
 
     async fn reset_stuck_processing(&self) -> StorageResult<i32> {
         let embedding_result = sqlx::query(
-            "UPDATE atoms SET embedding_status = 'pending' WHERE embedding_status = 'processing'",
+            "UPDATE atoms SET embedding_status = 'pending' WHERE embedding_status = 'processing' AND db_id = $1",
         )
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -133,8 +140,9 @@ impl ChunkStore for PostgresStorage {
         })?;
 
         let tagging_result = sqlx::query(
-            "UPDATE atoms SET tagging_status = 'pending' WHERE tagging_status = 'processing'",
+            "UPDATE atoms SET tagging_status = 'pending' WHERE tagging_status = 'processing' AND db_id = $1",
         )
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -152,8 +160,9 @@ impl ChunkStore for PostgresStorage {
         let atom_ids: Vec<(String,)> = sqlx::query_as(
             "SELECT DISTINCT a.id FROM atoms a
              INNER JOIN atom_chunks ac ON a.id = ac.atom_id
-             WHERE a.embedding_status = 'complete' AND ac.embedding IS NOT NULL",
+             WHERE a.embedding_status = 'complete' AND ac.embedding IS NOT NULL AND a.db_id = $1",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -163,7 +172,8 @@ impl ChunkStore for PostgresStorage {
         let atom_ids: Vec<String> = atom_ids.into_iter().map(|(id,)| id).collect();
 
         // Clear all existing semantic edges
-        sqlx::query("DELETE FROM semantic_edges")
+        sqlx::query("DELETE FROM semantic_edges WHERE db_id = $1")
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| {
@@ -214,11 +224,12 @@ impl ChunkStore for PostgresStorage {
                 "SELECT id, source_atom_id, target_atom_id, similarity_score,
                         source_chunk_index, target_chunk_index, created_at
                  FROM semantic_edges
-                 WHERE similarity_score >= $1
+                 WHERE similarity_score >= $1 AND db_id = $2
                  ORDER BY similarity_score DESC
                  LIMIT 10000",
             )
             .bind(min_similarity)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
@@ -262,12 +273,13 @@ impl ChunkStore for PostgresStorage {
                 similarity_score
              FROM semantic_edges
              WHERE (source_atom_id = $1 OR target_atom_id = $1)
-               AND similarity_score >= $2
+               AND similarity_score >= $2 AND db_id = $3
              ORDER BY similarity_score DESC
              LIMIT 20",
         )
         .bind(atom_id)
         .bind(min_similarity)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -283,8 +295,9 @@ impl ChunkStore for PostgresStorage {
 
         // Depth 1 tag connections
         let center_tags: Vec<(String,)> =
-            sqlx::query_as("SELECT tag_id FROM atom_tags WHERE atom_id = $1")
+            sqlx::query_as("SELECT tag_id FROM atom_tags WHERE atom_id = $1 AND db_id = $2")
                 .bind(atom_id)
+                .bind(&self.db_id)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| {
@@ -301,7 +314,7 @@ impl ChunkStore for PostgresStorage {
                 "SELECT atom_id, COUNT(*) AS shared_count
                  FROM atom_tags
                  WHERE tag_id = ANY($1)
-                   AND atom_id != $2
+                   AND atom_id != $2 AND db_id = $3
                  GROUP BY atom_id
                  HAVING COUNT(*) >= 1
                  ORDER BY COUNT(*) DESC
@@ -309,6 +322,7 @@ impl ChunkStore for PostgresStorage {
             )
             .bind(&center_tag_ids)
             .bind(atom_id)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
@@ -337,12 +351,13 @@ impl ChunkStore for PostgresStorage {
                         CASE WHEN source_atom_id = $1 THEN target_atom_id ELSE source_atom_id END
                      FROM semantic_edges
                      WHERE (source_atom_id = $1 OR target_atom_id = $1)
-                       AND similarity_score >= $2
+                       AND similarity_score >= $2 AND db_id = $3
                      ORDER BY similarity_score DESC
                      LIMIT 5",
                 )
                 .bind(d1_id)
                 .bind(min_similarity)
+                .bind(&self.db_id)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| {
@@ -385,9 +400,10 @@ impl ChunkStore for PostgresStorage {
                     created_at, updated_at,
                     COALESCE(embedding_status, 'pending'),
                     COALESCE(tagging_status, 'pending')
-             FROM atoms WHERE id = ANY($1)",
+             FROM atoms WHERE id = ANY($1) AND db_id = $2",
         )
         .bind(&atom_ids)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -422,9 +438,10 @@ impl ChunkStore for PostgresStorage {
             "SELECT at.atom_id, t.id, t.name, t.parent_id, t.created_at
              FROM atom_tags at
              INNER JOIN tags t ON at.tag_id = t.id
-             WHERE at.atom_id = ANY($1)",
+             WHERE at.atom_id = ANY($1) AND at.db_id = $2",
         )
         .bind(&atom_ids)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -463,9 +480,10 @@ impl ChunkStore for PostgresStorage {
         let semantic_edges_rows: Vec<(String, String, f32)> = sqlx::query_as(
             "SELECT source_atom_id, target_atom_id, similarity_score
              FROM semantic_edges
-             WHERE source_atom_id = ANY($1) AND target_atom_id = ANY($1)",
+             WHERE source_atom_id = ANY($1) AND target_atom_id = ANY($1) AND db_id = $2",
         )
         .bind(&atom_ids)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -486,10 +504,11 @@ impl ChunkStore for PostgresStorage {
              FROM atom_tags a1
              INNER JOIN atom_tags a2 ON a1.tag_id = a2.tag_id
              WHERE a1.atom_id = ANY($1) AND a2.atom_id = ANY($1)
-               AND a1.atom_id < a2.atom_id
+               AND a1.atom_id < a2.atom_id AND a1.db_id = $2
              GROUP BY a1.atom_id, a2.atom_id",
         )
         .bind(&atom_ids)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -563,12 +582,13 @@ impl ChunkStore for PostgresStorage {
     ) -> StorageResult<HashMap<String, i32>> {
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT atom_id, COUNT(*) AS cnt FROM (
-                SELECT source_atom_id AS atom_id FROM semantic_edges WHERE similarity_score >= $1
+                SELECT source_atom_id AS atom_id FROM semantic_edges WHERE similarity_score >= $1 AND db_id = $2
                 UNION ALL
-                SELECT target_atom_id AS atom_id FROM semantic_edges WHERE similarity_score >= $1
+                SELECT target_atom_id AS atom_id FROM semantic_edges WHERE similarity_score >= $1 AND db_id = $2
             ) sub GROUP BY atom_id",
         )
         .bind(min_similarity)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -592,12 +612,13 @@ impl ChunkStore for PostgresStorage {
         let pg_embedding = Vector::from(embedding.to_vec());
 
         sqlx::query(
-            "INSERT INTO tag_embeddings (tag_id, embedding)
-             VALUES ($1, $2)
-             ON CONFLICT (tag_id) DO UPDATE SET embedding = EXCLUDED.embedding",
+            "INSERT INTO tag_embeddings (tag_id, embedding, db_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (tag_id, db_id) DO UPDATE SET embedding = EXCLUDED.embedding",
         )
         .bind(tag_id)
         .bind(&pg_embedding)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -616,8 +637,9 @@ impl ChunkStore for PostgresStorage {
             "SELECT DISTINCT at.tag_id
              FROM atom_tags at
              INNER JOIN atom_chunks ac ON at.atom_id = ac.atom_id
-             WHERE ac.embedding IS NOT NULL",
+             WHERE ac.embedding IS NOT NULL AND at.db_id = $1",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -639,10 +661,12 @@ impl ChunkStore for PostgresStorage {
                     UNION ALL
                     SELECT t.id FROM tags t
                     INNER JOIN descendant_tags dt ON t.parent_id = dt.id
+                    WHERE t.db_id = $2
                 )
                 SELECT id FROM descendant_tags",
             )
             .bind(tag_id)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
@@ -659,9 +683,10 @@ impl ChunkStore for PostgresStorage {
                 "SELECT ac.embedding
                  FROM atom_chunks ac
                  INNER JOIN atom_tags at ON ac.atom_id = at.atom_id
-                 WHERE at.tag_id = ANY($1) AND ac.embedding IS NOT NULL",
+                 WHERE at.tag_id = ANY($1) AND ac.embedding IS NOT NULL AND at.db_id = $2",
             )
             .bind(&desc_ids)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
@@ -715,10 +740,12 @@ impl ChunkStore for PostgresStorage {
     async fn claim_pending_embeddings(&self, limit: i32) -> StorageResult<Vec<(String, String)>> {
         let rows: Vec<(String, String)> = sqlx::query_as(
             "UPDATE atoms SET embedding_status = 'processing'
-             WHERE id IN (SELECT id FROM atoms WHERE embedding_status = 'pending' LIMIT $1)
+             WHERE id IN (SELECT id FROM atoms WHERE embedding_status = 'pending' AND db_id = $2 LIMIT $1)
+             AND db_id = $2
              RETURNING id, content",
         )
         .bind(limit)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -731,8 +758,9 @@ impl ChunkStore for PostgresStorage {
     }
 
     async fn delete_chunks_batch(&self, atom_ids: &[String]) -> StorageResult<()> {
-        sqlx::query("DELETE FROM atom_chunks WHERE atom_id = ANY($1)")
+        sqlx::query("DELETE FROM atom_chunks WHERE atom_id = ANY($1) AND db_id = $2")
             .bind(atom_ids)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| {
@@ -779,8 +807,10 @@ impl ChunkStore for PostgresStorage {
             "UPDATE atoms SET tagging_status = 'processing'
              WHERE embedding_status = 'complete'
              AND tagging_status = 'pending'
+             AND db_id = $1
              RETURNING id",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -812,17 +842,20 @@ impl ChunkStore for PostgresStorage {
             "Failed to recreate vector index: {}", e
         )))?;
 
-        sqlx::query("UPDATE atoms SET embedding_status = 'pending'")
+        sqlx::query("UPDATE atoms SET embedding_status = 'pending' WHERE db_id = $1")
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
-        sqlx::query("UPDATE atoms SET tagging_status = 'skipped'")
+        sqlx::query("UPDATE atoms SET tagging_status = 'skipped' WHERE db_id = $1")
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
-        sqlx::query("DELETE FROM atom_chunks")
+        sqlx::query("DELETE FROM atom_chunks WHERE db_id = $1")
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -834,8 +867,10 @@ impl ChunkStore for PostgresStorage {
         let rows: Vec<(String, String)> = sqlx::query_as(
             "UPDATE atoms SET embedding_status = 'processing'
              WHERE embedding_status IN ('pending', 'processing')
+             AND db_id = $1
              RETURNING id, content",
         )
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
@@ -855,9 +890,10 @@ impl PostgresStorage {
     ) -> Result<i32, AtomicCoreError> {
         // Delete existing edges for this atom (bidirectional)
         sqlx::query(
-            "DELETE FROM semantic_edges WHERE source_atom_id = $1 OR target_atom_id = $1",
+            "DELETE FROM semantic_edges WHERE (source_atom_id = $1 OR target_atom_id = $1) AND db_id = $2",
         )
         .bind(atom_id)
+        .bind(&self.db_id)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -870,9 +906,10 @@ impl PostgresStorage {
         // Get all chunks with embeddings for the source atom
         let source_chunks: Vec<(String, i32, Vector)> = sqlx::query_as(
             "SELECT id, chunk_index, embedding FROM atom_chunks
-             WHERE atom_id = $1 AND embedding IS NOT NULL",
+             WHERE atom_id = $1 AND embedding IS NOT NULL AND db_id = $2",
         )
         .bind(atom_id)
+        .bind(&self.db_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
@@ -894,13 +931,14 @@ impl PostgresStorage {
                 "SELECT ac.atom_id, ac.chunk_index,
                         (ac.embedding <=> $1::vector) AS distance
                  FROM atom_chunks ac
-                 WHERE ac.embedding IS NOT NULL AND ac.atom_id != $2
+                 WHERE ac.embedding IS NOT NULL AND ac.atom_id != $2 AND ac.db_id = $4
                  ORDER BY ac.embedding <=> $1::vector
                  LIMIT $3",
             )
             .bind(embedding)
             .bind(atom_id)
             .bind(max_edges * 5)
+            .bind(&self.db_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
@@ -963,8 +1001,8 @@ impl PostgresStorage {
 
             let result = sqlx::query(
                 "INSERT INTO semantic_edges
-                 (id, source_atom_id, target_atom_id, similarity_score, source_chunk_index, target_chunk_index, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 (id, source_atom_id, target_atom_id, similarity_score, source_chunk_index, target_chunk_index, created_at, db_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  ON CONFLICT (id) DO UPDATE SET
                     similarity_score = EXCLUDED.similarity_score,
                     source_chunk_index = EXCLUDED.source_chunk_index,
@@ -978,6 +1016,7 @@ impl PostgresStorage {
             .bind(src_chunk)
             .bind(tgt_chunk)
             .bind(&now)
+            .bind(&self.db_id)
             .execute(&self.pool)
             .await;
 
