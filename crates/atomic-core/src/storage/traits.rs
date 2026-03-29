@@ -298,6 +298,10 @@ pub trait ChunkStore: Send + Sync {
     /// Claim pending/processing atoms for re-embedding after dimension change.
     /// Sets status to 'processing' and returns (atom_id, content) pairs.
     async fn claim_pending_reembedding(&self) -> StorageResult<Vec<(String, String)>>;
+
+    /// Claim ALL atoms for re-embedding regardless of current status.
+    /// Sets status to 'processing' and returns (atom_id, content) pairs.
+    async fn claim_all_for_reembedding(&self) -> StorageResult<Vec<(String, String)>>;
 }
 
 // ==================== Search Storage ====================

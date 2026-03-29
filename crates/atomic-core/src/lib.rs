@@ -915,6 +915,39 @@ impl AtomicCore {
         Ok(())
     }
 
+    /// Re-embed all atoms in the database
+    pub fn reembed_all_atoms<F>(&self, on_event: F) -> Result<i32, AtomicCoreError>
+    where
+        F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+    {
+        let atoms = self.storage.claim_all_for_reembedding_sync()?;
+        let count = atoms.len() as i32;
+
+        if count > 0 {
+            let storage_clone = self.storage.clone();
+            let bg_settings = self.settings_for_background();
+            executor::spawn(async move {
+                match bg_settings {
+                    Some(s) => embedding::process_embedding_batch_with_settings(
+                        storage_clone,
+                        atoms,
+                        false,
+                        on_event,
+                        s,
+                    ).await,
+                    None => embedding::process_embedding_batch(
+                        storage_clone,
+                        atoms,
+                        false,
+                        on_event,
+                    ).await,
+                };
+            });
+        }
+
+        Ok(count)
+    }
+
     /// Retry tagging for a specific atom
     pub fn retry_tagging<F>(&self, atom_id: &str, on_event: F) -> Result<(), AtomicCoreError>
     where

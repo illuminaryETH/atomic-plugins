@@ -877,6 +877,19 @@ impl ChunkStore for PostgresStorage {
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
         Ok(rows)
     }
+
+    async fn claim_all_for_reembedding(&self) -> StorageResult<Vec<(String, String)>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "UPDATE atoms SET embedding_status = 'processing'
+             WHERE db_id = $1
+             RETURNING id, content",
+        )
+        .bind(&self.db_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+        Ok(rows)
+    }
 }
 
 // ==================== Private Helpers ====================

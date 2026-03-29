@@ -66,6 +66,7 @@ pub use utoipa_scalar::{Scalar, Servable};
         routes::embedding::process_pending_tagging,
         routes::embedding::retry_embedding,
         routes::embedding::retry_tagging,
+        routes::embedding::reembed_all_atoms,
         routes::embedding::reset_stuck_processing,
         routes::embedding::get_embedding_status,
         // Canvas

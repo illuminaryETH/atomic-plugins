@@ -458,6 +458,22 @@ impl SqliteStorage {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
     }
+
+    pub(crate) fn claim_all_for_reembedding_sync(&self) -> StorageResult<Vec<(String, String)>> {
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "UPDATE atoms SET embedding_status = 'processing'
+             RETURNING id, content",
+        )?;
+        let results = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
 }
 
 #[async_trait]
@@ -576,5 +592,9 @@ impl ChunkStore for SqliteStorage {
 
     async fn claim_pending_reembedding(&self) -> StorageResult<Vec<(String, String)>> {
         self.claim_pending_reembedding_sync()
+    }
+
+    async fn claim_all_for_reembedding(&self) -> StorageResult<Vec<(String, String)>> {
+        self.claim_all_for_reembedding_sync()
     }
 }

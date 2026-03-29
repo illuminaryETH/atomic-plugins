@@ -33,6 +33,11 @@ export async function retryTagging(atomId: string): Promise<void> {
   return getTransport().invoke('retry_tagging', { atomId });
 }
 
+// Re-embed all atoms
+export async function reembedAllAtoms(): Promise<number> {
+  return getTransport().invoke('reembed_all_atoms');
+}
+
 // Reset atoms stuck in 'processing' state (call on app startup)
 export async function resetStuckProcessing(): Promise<number> {
   return getTransport().invoke('reset_stuck_processing');

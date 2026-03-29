@@ -152,6 +152,11 @@ export const COMMAND_MAP: Record<string, CommandSpec> = {
     method: 'POST',
     path: (a) => `/api/tagging/retry/${encodeURIComponent(a.atomId as string)}`,
   },
+  reembed_all_atoms: {
+    method: 'POST',
+    path: '/api/embeddings/reembed-all',
+    transformResponse: (d: any) => d.count as number,
+  },
   reset_stuck_processing: {
     method: 'POST',
     path: '/api/embeddings/reset-stuck',

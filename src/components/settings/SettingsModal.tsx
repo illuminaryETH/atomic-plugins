@@ -31,6 +31,7 @@ import {
   type ApiTokenInfo,
   type CreateTokenResponse,
   type Feed,
+  reembedAllAtoms,
   type IngestionResult,
   type FeedPollResult,
 } from '../../lib/api';
@@ -336,6 +337,12 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [ingesting, setIngesting] = useState(false);
   const [ingestResult, setIngestResult] = useState<IngestionResult | null>(null);
   const [ingestError, setIngestError] = useState<string | null>(null);
+
+  // Re-embed state
+  const [showReembedConfirm, setShowReembedConfirm] = useState(false);
+  const [reembedding, setReembedding] = useState(false);
+  const [reembedResult, setReembedResult] = useState<number | null>(null);
+  const [reembedError, setReembedError] = useState<string | null>(null);
 
   // Feed action state
   const [pollingFeedId, setPollingFeedId] = useState<string | null>(null);
@@ -1489,6 +1496,82 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       </div>
                     </>
                   )}
+                  {/* Re-embed All Section */}
+                  <div className="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-[var(--color-text-primary)]">
+                        Re-embed All Atoms
+                      </label>
+                      <p className="text-xs text-[var(--color-text-secondary)]">
+                        Regenerate embeddings for every atom in the current database. Useful after changing providers or if embeddings were interrupted.
+                      </p>
+                    </div>
+
+                    {!showReembedConfirm ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => { setShowReembedConfirm(true); setReembedResult(null); setReembedError(null); }}
+                        disabled={reembedding}
+                      >
+                        Re-embed All Atoms
+                      </Button>
+                    ) : (
+                      <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md space-y-3">
+                        <p className="text-sm text-yellow-200">
+                          This will re-embed <strong>all</strong> atoms in the current database. This is a bulk operation that may take a while depending on how many atoms you have and your provider's rate limits.
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={async () => {
+                              setReembedding(true);
+                              setShowReembedConfirm(false);
+                              setReembedResult(null);
+                              setReembedError(null);
+                              try {
+                                const count = await reembedAllAtoms();
+                                setReembedResult(count);
+                              } catch (e) {
+                                setReembedError(String(e));
+                              } finally {
+                                setReembedding(false);
+                              }
+                            }}
+                            disabled={reembedding}
+                          >
+                            {reembedding ? (
+                              <>
+                                <svg className="w-4 h-4 animate-spin mr-1" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                Starting...
+                              </>
+                            ) : 'Confirm Re-embed'}
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => setShowReembedConfirm(false)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {reembedResult !== null && (
+                      <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-md text-sm">
+                        <div className="text-green-400 font-medium">Queued {reembedResult} atoms for re-embedding</div>
+                        <div className="text-[var(--color-text-secondary)]">Embeddings are being generated in the background.</div>
+                      </div>
+                    )}
+
+                    {reembedError && (
+                      <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-md text-sm">
+                        <div className="text-red-400 font-medium">Re-embedding failed</div>
+                        <div className="text-[var(--color-text-secondary)]">{reembedError}</div>
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 
@@ -1766,6 +1849,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       )}
                     </div>
                   )}
+
                 </>
               )}
 

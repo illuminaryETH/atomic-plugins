@@ -281,6 +281,8 @@ dispatch! {
         => sqlite: recreate_vector_index_sync, pg_trait: ChunkStore, pg_method: recreate_vector_index;
     fn claim_pending_reembedding_sync(&self) -> Result<Vec<(String, String)>, AtomicCoreError>
         => sqlite: claim_pending_reembedding_sync, pg_trait: ChunkStore, pg_method: claim_pending_reembedding;
+    fn claim_all_for_reembedding_sync(&self) -> Result<Vec<(String, String)>, AtomicCoreError>
+        => sqlite: claim_all_for_reembedding_sync, pg_trait: ChunkStore, pg_method: claim_all_for_reembedding;
 
     // ---- SearchStore ----
     fn vector_search_sync(&self, query_embedding: &[f32], limit: i32, threshold: f32, tag_id: Option<&str>) -> Result<Vec<SemanticSearchResult>, AtomicCoreError>
