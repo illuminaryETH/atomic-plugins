@@ -22,10 +22,10 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
       STRIPE_PRICE_ID: ${STRIPE_PRICE_ID:-price_placeholder}
       FLY_API_TOKEN: ${FLY_API_TOKEN:-fo1_placeholder}
-      FLY_APP_NAME: ${FLY_APP_NAME:-atomic-managed}
+      FLY_ORG: ${FLY_ORG:-personal}
       FLY_REGION: ${FLY_REGION:-iad}
-      ATOMIC_IMAGE: ${ATOMIC_IMAGE:-registry.fly.io/atomic:latest}
-      BASE_DOMAIN: ${BASE_DOMAIN:-atomic.so}
+      ATOMIC_IMAGE: ${ATOMIC_IMAGE:-ghcr.io/kenforthewin/atomic:latest}
+      BASE_DOMAIN: ${BASE_DOMAIN:-atomicapp.ai}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
 

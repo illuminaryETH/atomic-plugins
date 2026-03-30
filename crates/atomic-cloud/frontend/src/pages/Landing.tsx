@@ -56,7 +56,7 @@ export default function Landing() {
       {/* Nav */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-bg-primary/80 backdrop-blur-md border-b border-border-light">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <a href="https://atomic.so" className="font-display text-xl tracking-tight">
+          <a href="https://atomicapp.ai" className="font-display text-xl tracking-tight">
             atomic
           </a>
           <span className="text-sm text-text-muted">Managed Hosting</span>
@@ -67,7 +67,7 @@ export default function Landing() {
       <section className="relative overflow-hidden">
         {/* Subtle grid background */}
         <div
-          className="absolute inset-0 opacity-[0.03]"
+          className="absolute inset-0 opacity-[0.03] pointer-events-none"
           style={{
             backgroundImage:
               "radial-gradient(circle, #1a1a1a 1px, transparent 1px)",
@@ -130,7 +130,7 @@ export default function Landing() {
                       className="flex-1 px-3.5 py-2.5 rounded-l-lg border border-r-0 border-border bg-bg-primary text-text-primary placeholder:text-text-muted text-sm focus:outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/10 transition-all"
                     />
                     <span className="px-3.5 py-2.5 rounded-r-lg border border-border bg-bg-secondary text-text-muted text-sm">
-                      .atomic.so
+                      .atomicapp.ai
                     </span>
                   </div>
                   {/* Availability indicator */}
@@ -228,10 +228,10 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between text-sm text-text-muted">
           <span>Atomic</span>
           <div className="flex items-center gap-6">
-            <a href="https://atomic.so" className="hover:text-text-primary transition-colors">
+            <a href="https://atomicapp.ai" className="hover:text-text-primary transition-colors">
               Home
             </a>
-            <a href="https://atomic.so/getting-started" className="hover:text-text-primary transition-colors">
+            <a href="https://atomicapp.ai/getting-started" className="hover:text-text-primary transition-colors">
               Docs
             </a>
             <a href="https://github.com/kenforthewin/atomic" className="hover:text-text-primary transition-colors">

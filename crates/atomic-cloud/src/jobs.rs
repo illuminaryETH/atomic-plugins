@@ -28,18 +28,10 @@ async fn run_cleanup(pool: &PgPool, fly: &FlyClient) -> Result<(), crate::error:
 
         crate::db::update_instance_status(pool, instance.id, "destroying").await?;
 
-        if let Some(ref machine_id) = instance.fly_machine_id {
-            if let Err(e) = fly.destroy_machine(&instance.fly_app_name, machine_id).await {
-                eprintln!("Failed to destroy machine for {}: {e}", instance.subdomain);
-                continue;
-            }
-        }
-
-        if let Some(ref volume_id) = instance.fly_volume_id {
-            if let Err(e) = fly.destroy_volume(&instance.fly_app_name, volume_id).await {
-                eprintln!("Failed to destroy volume for {}: {e}", instance.subdomain);
-                // Continue anyway — machine is already gone
-            }
+        // Delete the entire Fly app (destroys machines, volumes, certs, IPs)
+        if let Err(e) = fly.delete_app(&instance.fly_app_name).await {
+            eprintln!("Failed to delete app for {}: {e}", instance.subdomain);
+            continue;
         }
 
         crate::db::update_instance_status(pool, instance.id, "destroyed").await?;

@@ -27,8 +27,9 @@ export default function Success() {
     let cancelled = false;
 
     const run = async () => {
-      // Step 1: Exchange session ID for management token (if we don't have one)
-      if (!hasToken() && sessionId) {
+      // Step 1: Exchange session ID for management token
+      // Always re-exchange when a session_id is present (token may be stale from a prior attempt)
+      if (sessionId) {
         while (!cancelled) {
           try {
             const result = await exchangeSession(sessionId);

@@ -42,9 +42,9 @@ pub enum Command {
         #[arg(long, env = "FLY_API_TOKEN")]
         fly_api_token: String,
 
-        /// Fly.io app name for managed instances
-        #[arg(long, default_value = "atomic-managed", env = "FLY_APP_NAME")]
-        fly_app_name: String,
+        /// Fly.io organization slug for creating apps
+        #[arg(long, default_value = "personal", env = "FLY_ORG")]
+        fly_org: String,
 
         /// Fly.io region for new machines
         #[arg(long, default_value = "iad", env = "FLY_REGION")]
@@ -55,7 +55,7 @@ pub enum Command {
         atomic_image: String,
 
         /// Base domain for customer subdomains
-        #[arg(long, default_value = "atomic.so", env = "BASE_DOMAIN")]
+        #[arg(long, default_value = "atomicapp.ai", env = "BASE_DOMAIN")]
         base_domain: String,
 
         /// Admin API key for management routes

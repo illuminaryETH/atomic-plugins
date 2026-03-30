@@ -19,18 +19,15 @@ pub fn configure_public_routes(cfg: &mut web::ServiceConfig) {
 }
 
 pub fn configure_instance_routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/api/instance/status", web::get().to(instances::get_status))
-        .route("/api/instance/start", web::post().to(instances::start))
-        .route("/api/instance/stop", web::post().to(instances::stop))
-        .route("/api/instance/restart", web::post().to(instances::restart))
-        .route("/api/instance/portal", web::post().to(instances::billing_portal));
+    cfg.route("/status", web::get().to(instances::get_status))
+        .route("/start", web::post().to(instances::start))
+        .route("/stop", web::post().to(instances::stop))
+        .route("/restart", web::post().to(instances::restart))
+        .route("/portal", web::post().to(instances::billing_portal));
 }
 
 pub fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/api/admin/instances", web::get().to(admin::list_instances))
-        .route("/api/admin/stats", web::get().to(admin::stats))
-        .route(
-            "/api/admin/rollout",
-            web::post().to(admin::trigger_rollout),
-        );
+    cfg.route("/instances", web::get().to(admin::list_instances))
+        .route("/stats", web::get().to(admin::stats))
+        .route("/rollout", web::post().to(admin::trigger_rollout));
 }

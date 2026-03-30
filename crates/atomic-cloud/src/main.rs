@@ -37,7 +37,7 @@ async fn main() -> std::io::Result<()> {
             stripe_webhook_secret,
             stripe_price_id,
             fly_api_token,
-            fly_app_name,
+            fly_org,
             fly_region,
             atomic_image,
             base_domain,
@@ -53,7 +53,7 @@ async fn main() -> std::io::Result<()> {
                 stripe_webhook_secret,
                 stripe_price_id,
                 fly_api_token,
-                fly_app_name,
+                fly_org,
                 fly_region,
                 atomic_image,
                 base_domain,
@@ -80,7 +80,7 @@ async fn run_server(
     stripe_webhook_secret: String,
     stripe_price_id: String,
     fly_api_token: String,
-    fly_app_name: String,
+    fly_org: String,
     fly_region: String,
     atomic_image: String,
     base_domain: String,
@@ -104,7 +104,7 @@ async fn run_server(
     eprintln!("Atomic Cloud starting...");
     eprintln!("  Listening: http://{}:{}", bind, port);
     eprintln!("  Public URL: {}", public_url);
-    eprintln!("  Fly app: {}", fly_app_name);
+    eprintln!("  Fly org: {}", fly_org);
     eprintln!("  Base domain: {}", base_domain);
 
     let fly_client = Arc::new(clients::fly::FlyClient::new(fly_api_token));
@@ -121,7 +121,7 @@ async fn run_server(
             stripe_webhook_secret,
             base_domain,
             atomic_image,
-            fly_app_name,
+            fly_org,
             fly_region,
             admin_api_key,
             public_url,
@@ -143,13 +143,13 @@ async fn run_server(
             .configure(routes::configure_public_routes)
             // Instance management routes (management token auth)
             .service(
-                web::scope("")
+                web::scope("/api/instance")
                     .wrap(auth::InstanceAuth)
                     .configure(routes::configure_instance_routes),
             )
             // Admin routes (admin API key auth)
             .service(
-                web::scope("")
+                web::scope("/api/admin")
                     .wrap(auth::AdminAuth)
                     .configure(routes::configure_admin_routes),
             );

@@ -4,6 +4,7 @@ use crate::error::CloudError;
 use serde::{Deserialize, Serialize};
 
 const FLY_API_BASE: &str = "https://api.machines.dev/v1";
+const FLY_GRAPHQL_URL: &str = "https://api.fly.io/graphql";
 
 /// Fly Machines API client. Cheaply cloneable via Arc.
 #[derive(Clone)]
@@ -46,6 +47,133 @@ impl FlyClient {
 
     fn auth_header(&self) -> String {
         format!("Bearer {}", self.inner.api_token)
+    }
+
+    /// Create a new Fly app for a customer
+    pub async fn create_app(&self, app_name: &str, org_slug: &str) -> Result<(), CloudError> {
+        let url = format!("{}/apps", FLY_API_BASE);
+        let body = serde_json::json!({
+            "app_name": app_name,
+            "org_slug": org_slug,
+        });
+
+        let resp = self
+            .inner.http
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CloudError::Fly(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CloudError::Fly(format!("Create app failed: {body}")));
+        }
+
+        Ok(())
+    }
+
+    /// Allocate shared IPv4 and IPv6 addresses for an app via GraphQL
+    pub async fn allocate_ips(&self, app_name: &str) -> Result<(), CloudError> {
+        // Allocate shared IPv4
+        let query = serde_json::json!({
+            "query": "mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { ipAddress { id address type } } }",
+            "variables": {
+                "input": {
+                    "appId": app_name,
+                    "type": "shared_v4"
+                }
+            }
+        });
+
+        let resp = self
+            .inner.http
+            .post(FLY_GRAPHQL_URL)
+            .header("Authorization", self.auth_header())
+            .json(&query)
+            .send()
+            .await
+            .map_err(|e| CloudError::Fly(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CloudError::Fly(format!("Allocate IPv4 failed: {body}")));
+        }
+
+        // Allocate IPv6
+        let query = serde_json::json!({
+            "query": "mutation($input: AllocateIPAddressInput!) { allocateIpAddress(input: $input) { ipAddress { id address type } } }",
+            "variables": {
+                "input": {
+                    "appId": app_name,
+                    "type": "v6"
+                }
+            }
+        });
+
+        let resp = self
+            .inner.http
+            .post(FLY_GRAPHQL_URL)
+            .header("Authorization", self.auth_header())
+            .json(&query)
+            .send()
+            .await
+            .map_err(|e| CloudError::Fly(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CloudError::Fly(format!("Allocate IPv6 failed: {body}")));
+        }
+
+        Ok(())
+    }
+
+    /// Add a TLS certificate for a custom domain
+    pub async fn add_certificate(&self, app_name: &str, hostname: &str) -> Result<(), CloudError> {
+        let query = serde_json::json!({
+            "query": "mutation($appId: ID!, $hostname: String!) { addCertificate(appId: $appId, hostname: $hostname) { certificate { id hostname } } }",
+            "variables": {
+                "appId": app_name,
+                "hostname": hostname,
+            }
+        });
+
+        let resp = self
+            .inner.http
+            .post(FLY_GRAPHQL_URL)
+            .header("Authorization", self.auth_header())
+            .json(&query)
+            .send()
+            .await
+            .map_err(|e| CloudError::Fly(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CloudError::Fly(format!("Add certificate failed: {body}")));
+        }
+
+        Ok(())
+    }
+
+    /// Delete a Fly app and all its resources
+    pub async fn delete_app(&self, app_name: &str) -> Result<(), CloudError> {
+        let url = format!("{}/apps/{}", FLY_API_BASE, app_name);
+
+        let resp = self
+            .inner.http
+            .delete(&url)
+            .header("Authorization", self.auth_header())
+            .send()
+            .await
+            .map_err(|e| CloudError::Fly(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CloudError::Fly(format!("Delete app failed: {body}")));
+        }
+
+        Ok(())
     }
 
     /// Create a persistent volume for a customer instance
@@ -102,8 +230,6 @@ impl FlyClient {
                 "env": {
                     "ATOMIC_STORAGE": "sqlite",
                     "ATOMIC_DEFAULT_TOKEN": auth_token,
-                    "PORT": "8080",
-                    "BIND": "0.0.0.0"
                 },
                 "guest": {
                     "cpu_kind": "shared",
@@ -120,12 +246,12 @@ impl FlyClient {
                         { "port": 80, "handlers": ["http"] }
                     ],
                     "protocol": "tcp",
-                    "internal_port": 8080
+                    "internal_port": 8081
                 }],
                 "checks": {
                     "health": {
                         "type": "http",
-                        "port": 8080,
+                        "port": 8081,
                         "path": "/health",
                         "interval": "30s",
                         "timeout": "5s"

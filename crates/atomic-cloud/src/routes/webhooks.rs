@@ -95,13 +95,16 @@ async fn handle_checkout_completed(
     // Generate management token
     let management_token = Uuid::new_v4().to_string();
 
+    // Each customer gets their own Fly app: atomic-{subdomain}
+    let fly_app_name = format!("atomic-{subdomain}");
+
     // Create instance record
     let instance = crate::db::create_instance(
         &state.db,
         customer.id,
         subscription.id,
         subdomain,
-        &state.config.fly_app_name,
+        &fly_app_name,
         &management_token,
     )
     .await?;
@@ -109,15 +112,16 @@ async fn handle_checkout_completed(
     // Spawn async provisioning task
     let fly = Arc::clone(&state.fly);
     let db = state.db.clone();
-    let app_name = state.config.fly_app_name.clone();
     let image = state.config.atomic_image.clone();
     let region = state.config.fly_region.clone();
+    let fly_org = state.config.fly_org.clone();
+    let base_domain = state.config.base_domain.clone();
     let instance_id = instance.id;
     let subdomain = subdomain.to_string();
 
     tokio::spawn(async move {
         if let Err(e) = provision_instance(
-            &fly, &db, &app_name, &image, &region, instance_id, &subdomain,
+            &fly, &db, &fly_app_name, &fly_org, &base_domain, &image, &region, instance_id, &subdomain,
         )
         .await
         {
@@ -133,21 +137,36 @@ async fn provision_instance(
     fly: &crate::clients::fly::FlyClient,
     db: &sqlx::PgPool,
     app_name: &str,
+    org_slug: &str,
+    base_domain: &str,
     image: &str,
     region: &str,
     instance_id: uuid::Uuid,
     subdomain: &str,
 ) -> Result<(), CloudError> {
-    // Create volume
-    let volume_name = format!("{}-data", subdomain);
+    // Step 1: Create a dedicated Fly app for this customer
+    fly.create_app(app_name, org_slug).await?;
+    eprintln!("Created Fly app: {app_name}");
+
+    // Step 2: Allocate IP addresses
+    fly.allocate_ips(app_name).await?;
+    eprintln!("Allocated IPs for {app_name}");
+
+    // Step 3: Add TLS certificate for the custom domain
+    let hostname = format!("{subdomain}.{base_domain}");
+    fly.add_certificate(app_name, &hostname).await?;
+    eprintln!("Added certificate for {hostname}");
+
+    // Step 4: Create volume
+    let volume_name = format!("{}_data", subdomain.replace('-', "_"));
     let volume = fly
         .create_volume(app_name, &volume_name, 3, region)
         .await?;
 
-    // Generate a default auth token for the customer's atomic-server instance
+    // Step 5: Generate a default auth token for the customer's atomic-server instance
     let instance_auth_token = Uuid::new_v4().to_string();
 
-    // Create machine
+    // Step 6: Create machine
     let machine = fly
         .create_machine(app_name, subdomain, image, &volume.id, region, &instance_auth_token)
         .await?;
@@ -156,7 +175,7 @@ async fn provision_instance(
     crate::db::update_instance_fly_ids(db, instance_id, &machine.id, &volume.id).await?;
     crate::db::update_instance_status(db, instance_id, "running").await?;
 
-    eprintln!("Provisioned {subdomain}: machine={}, volume={}", machine.id, volume.id);
+    eprintln!("Provisioned {subdomain}: app={app_name}, machine={}, volume={}", machine.id, volume.id);
     Ok(())
 }
 
