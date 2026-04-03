@@ -38,17 +38,20 @@ pub async fn set_setting(
         let on_event = crate::event_bridge::embedding_event_callback(state.event_tx.clone());
         match web::block(move || {
             let result = core.set_setting_with_reembed(&key, &value, on_event);
-            // If dimension changed, also recreate vector indexes on all other databases
-            // (skip the active one — it was already recreated and has a re-embed job in flight)
+            // If dimension changed, also recreate vector indexes on all other databases.
+            // Best-effort: failures here must not override the already-successful result.
             if let Ok((true, _)) = &result {
-                let current_settings = core.get_settings().map_err(|e| {
-                    tracing::error!("Failed to get settings for dimension calc: {}", e);
-                    e
-                })?;
-                let config = atomic_core::providers::ProviderConfig::from_settings(&current_settings);
-                let new_dim = config.embedding_dimension();
-                if let Err(e) = manager.recreate_other_vector_indexes(new_dim, &active_id) {
-                    tracing::error!("Failed to recreate vector indexes on other databases: {}", e);
+                match core.get_settings() {
+                    Ok(current_settings) => {
+                        let config = atomic_core::providers::ProviderConfig::from_settings(&current_settings);
+                        let new_dim = config.embedding_dimension();
+                        if let Err(e) = manager.recreate_other_vector_indexes(new_dim, &active_id) {
+                            tracing::error!("Failed to recreate vector indexes on other databases: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to get settings for dimension calc: {}", e);
+                    }
                 }
             }
             result
