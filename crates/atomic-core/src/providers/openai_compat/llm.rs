@@ -260,10 +260,6 @@ async fn complete_internal(
         }
     });
 
-    // temperature and max_tokens are intentionally omitted:
-    // - temperature is rejected by reasoning models (OpenAI o-series)
-    // - max_tokens is rejected by OpenAI o-series (wants max_completion_tokens),
-    //   and callers already handle token budgets via context-window truncation.
     let request = ChatRequest {
         model: config.model.clone(),
         messages: api_messages,
