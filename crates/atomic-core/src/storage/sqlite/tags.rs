@@ -104,8 +104,17 @@ impl SqliteStorage {
     ) -> StorageResult<Tag> {
         let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
 
-        // Check if a tag with this name already exists (case-insensitive due to COLLATE NOCASE)
-        match conn.query_row(
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+
+        // Atomically insert-or-ignore, then fetch the row that exists.
+        // This eliminates the TOCTOU race in a check-then-insert pattern.
+        conn.execute(
+            "INSERT OR IGNORE INTO tags (id, name, parent_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+            (&id, name, &parent_id, &now),
+        )?;
+
+        let tag = conn.query_row(
             "SELECT id, name, parent_id, created_at FROM tags WHERE name = ?1",
             [name],
             |row| {
@@ -116,26 +125,9 @@ impl SqliteStorage {
                     created_at: row.get(3)?,
                 })
             },
-        ) {
-            Ok(tag) => return Ok(tag),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {}
-            Err(e) => return Err(e.into()),
-        }
-
-        let id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
-
-        conn.execute(
-            "INSERT INTO tags (id, name, parent_id, created_at) VALUES (?1, ?2, ?3, ?4)",
-            (&id, name, &parent_id, &now),
         )?;
 
-        Ok(Tag {
-            id,
-            name: name.to_string(),
-            parent_id: parent_id.map(String::from),
-            created_at: now,
-        })
+        Ok(tag)
     }
 
     pub(crate) fn update_tag_impl(

@@ -289,31 +289,13 @@ impl TagStore for PostgresStorage {
         name: &str,
         parent_id: Option<&str>,
     ) -> StorageResult<Tag> {
-        // Check if a tag with this name and parent already exists (return it instead of failing)
-        let existing = sqlx::query_as::<_, (String, String, Option<String>, String)>(
-            "SELECT id, name, parent_id, created_at FROM tags WHERE LOWER(name) = LOWER($1) AND db_id = $2 AND COALESCE(parent_id, '') = COALESCE($3, '')",
-        )
-        .bind(name)
-        .bind(&self.db_id)
-        .bind(parent_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
-
-        if let Some((id, tag_name, tag_parent_id, created_at)) = existing {
-            return Ok(Tag {
-                id,
-                name: tag_name,
-                parent_id: tag_parent_id,
-                created_at,
-            });
-        }
-
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
 
+        // Atomically insert-or-ignore, then fetch the row that exists.
+        // This eliminates the TOCTOU race in a check-then-insert pattern.
         sqlx::query(
-            "INSERT INTO tags (id, name, parent_id, created_at, db_id) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO tags (id, name, parent_id, created_at, db_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
         )
         .bind(&id)
         .bind(name)
@@ -324,11 +306,21 @@ impl TagStore for PostgresStorage {
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
+        let (tag_id, tag_name, tag_parent_id, created_at) = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+            "SELECT id, name, parent_id, created_at FROM tags WHERE LOWER(name) = LOWER($1) AND db_id = $2 AND COALESCE(parent_id, '') = COALESCE($3, '')",
+        )
+        .bind(name)
+        .bind(&self.db_id)
+        .bind(parent_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
         Ok(Tag {
-            id,
-            name: name.to_string(),
-            parent_id: parent_id.map(String::from),
-            created_at: now,
+            id: tag_id,
+            name: tag_name,
+            parent_id: tag_parent_id,
+            created_at,
         })
     }
 
