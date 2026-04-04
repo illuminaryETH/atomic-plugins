@@ -104,6 +104,24 @@ impl SqliteStorage {
     ) -> StorageResult<Tag> {
         let conn = self.db.conn.lock().map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
 
+        // Check if a tag with this name already exists (case-insensitive due to COLLATE NOCASE)
+        match conn.query_row(
+            "SELECT id, name, parent_id, created_at FROM tags WHERE name = ?1",
+            [name],
+            |row| {
+                Ok(Tag {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    parent_id: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            },
+        ) {
+            Ok(tag) => return Ok(tag),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => return Err(e.into()),
+        }
+
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
 

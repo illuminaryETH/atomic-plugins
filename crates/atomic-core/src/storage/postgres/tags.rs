@@ -289,6 +289,25 @@ impl TagStore for PostgresStorage {
         name: &str,
         parent_id: Option<&str>,
     ) -> StorageResult<Tag> {
+        // Check if a tag with this name already exists (return it instead of failing)
+        let existing = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+            "SELECT id, name, parent_id, created_at FROM tags WHERE LOWER(name) = LOWER($1) AND db_id = $2",
+        )
+        .bind(name)
+        .bind(&self.db_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        if let Some((id, tag_name, tag_parent_id, created_at)) = existing {
+            return Ok(Tag {
+                id,
+                name: tag_name,
+                parent_id: tag_parent_id,
+                created_at,
+            });
+        }
+
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
 
