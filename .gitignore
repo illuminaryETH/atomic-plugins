@@ -24,10 +24,14 @@ ios/DerivedData/
 ios/build/
 
 # Discord bot
-discord/data/
-discord/dist/
-discord/node_modules/
-atomic-discord.config.yaml
+plugins/discord/data/
+plugins/discord/dist/
+plugins/discord/atomic-discord.config.yaml
+
+# Obsidian plugin
+plugins/obsidian-plugin/main.js
+plugins/obsidian-plugin/main.js.map
+plugins/obsidian-plugin/data.json
 
 # Claude Code
 .claude/

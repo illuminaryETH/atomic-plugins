@@ -1,0 +1,17 @@
+services:
+  atomic-discord:
+    build: .
+    image: atomic-discord:latest
+    container_name: atomic-discord
+    restart: unless-stopped
+    volumes:
+      - ./atomic-discord.config.yaml:/app/config/atomic-discord.config.yaml:ro
+      - atomic-discord-data:/app/data
+    # If atomic-server runs on the host, use host.docker.internal (Mac/Windows)
+    # or uncomment network_mode: host on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # network_mode: host
+
+volumes:
+  atomic-discord-data:
