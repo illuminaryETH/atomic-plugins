@@ -159,7 +159,7 @@ export function MainView() {
   const displayCount = isSemanticSearch ? displayAtoms.length : totalCount;
 
   return (
-    <main className="flex-1 flex flex-col h-full bg-[var(--color-bg-main)] overflow-hidden">
+    <main className="relative flex-1 flex flex-col h-full bg-[var(--color-bg-main)] overflow-hidden">
       {/* Titlebar row - aligned with traffic lights */}
       <div className="h-[52px] flex items-center gap-3 px-4 flex-shrink-0">
         {/* Sidebar toggle — visible on small screens when panel is collapsed */}
@@ -296,9 +296,6 @@ export function MainView() {
         )}
       </div>
 
-      {/* Embedding progress banner */}
-      <EmbeddingProgressBanner />
-
       {/* Search results header - only show for grid/list views */}
       {isSemanticSearch && viewMode !== 'canvas' && (
         <div className="px-4 py-2 text-sm text-[var(--color-text-secondary)] border-b border-[var(--color-border)]">
@@ -346,6 +343,9 @@ export function MainView() {
 
       {/* FAB */}
       <FAB onClick={handleNewAtom} title="Create new atom" />
+
+      {/* Embedding progress overlay */}
+      <EmbeddingProgressBanner />
     </main>
   );
 }
