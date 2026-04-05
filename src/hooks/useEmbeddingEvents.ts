@@ -4,6 +4,7 @@ import { getTransport } from '../lib/transport';
 import { useAtomsStore } from '../stores/atoms';
 import { useTagsStore } from '../stores/tags';
 import { useUIStore } from '../stores/ui';
+import { useEmbeddingProgressStore } from '../stores/embedding-progress';
 import type { AtomWithTags } from '../stores/atoms';
 
 // Embedding complete - fast, no tags (just embedding status update)
@@ -26,6 +27,14 @@ interface TaggingCompletePayload {
 interface EmbeddingsResetPayload {
   pending_count: number;
   reason: string;
+}
+
+// Batch progress - aggregate progress for bulk embedding pipeline
+interface BatchProgressPayload {
+  batch_id: string;
+  phase: string;
+  completed: number;
+  total: number;
 }
 
 const DEBOUNCE_MS = 2000;
@@ -134,6 +143,18 @@ export function useEmbeddingEvents() {
       toast.error('Feed poll failed', { id: `feed-poll-failed-${payload.feed_id}`, description: payload.error });
     });
 
+    // Listen for batch progress events (bulk embedding pipeline)
+    const unsubBatchProgress = transport.subscribe<BatchProgressPayload>('batch-progress', (payload) => {
+      const { updateBatch, clearBatch } = useEmbeddingProgressStore.getState();
+      if (payload.phase === 'complete') {
+        // Show 100% briefly before clearing
+        updateBatch(payload.batch_id, payload.phase, payload.completed, payload.total);
+        setTimeout(() => clearBatch(payload.batch_id), 3000);
+      } else {
+        updateBatch(payload.batch_id, payload.phase, payload.completed, payload.total);
+      }
+    });
+
     // Listen for embeddings-reset events (provider/model change triggers re-embedding)
     const unsubEmbeddingsReset = transport.subscribe<EmbeddingsResetPayload>('embeddings-reset', (payload) => {
       console.log('Embeddings reset event:', payload);
@@ -154,6 +175,7 @@ export function useEmbeddingEvents() {
       unsubIngestionFailed();
       unsubIngestionFetchFailed();
       unsubFeedPollFailed();
+      unsubBatchProgress();
       unsubEmbeddingsReset();
     };
   }, []); // Empty deps - only run once on mount

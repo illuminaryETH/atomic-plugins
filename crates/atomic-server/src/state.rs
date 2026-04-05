@@ -70,6 +70,12 @@ pub enum ServerEvent {
     TaggingSkipped {
         atom_id: String,
     },
+    BatchProgress {
+        batch_id: String,
+        phase: String,
+        completed: usize,
+        total: usize,
+    },
 
     // Atom lifecycle events
     AtomCreated {
@@ -179,6 +185,9 @@ impl From<atomic_core::EmbeddingEvent> for ServerEvent {
             }
             atomic_core::EmbeddingEvent::TaggingSkipped { atom_id } => {
                 ServerEvent::TaggingSkipped { atom_id }
+            }
+            atomic_core::EmbeddingEvent::BatchProgress { batch_id, phase, completed, total } => {
+                ServerEvent::BatchProgress { batch_id, phase, completed, total }
             }
         }
     }

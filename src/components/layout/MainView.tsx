@@ -5,6 +5,7 @@ import { AtomList } from '../atoms/AtomList';
 import { FilterBar } from '../atoms/FilterBar';
 import { SigmaCanvas } from '../canvas/SigmaCanvas';
 import { FAB } from '../ui/FAB';
+import { EmbeddingProgressBanner } from '../ui/EmbeddingProgressBanner';
 import { useAtomsStore } from '../../stores/atoms';
 import { useUIStore } from '../../stores/ui';
 
@@ -294,6 +295,9 @@ export function MainView() {
           </div>
         )}
       </div>
+
+      {/* Embedding progress banner */}
+      <EmbeddingProgressBanner />
 
       {/* Search results header - only show for grid/list views */}
       {isSemanticSearch && viewMode !== 'canvas' && (

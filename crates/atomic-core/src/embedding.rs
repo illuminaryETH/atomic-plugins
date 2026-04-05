@@ -14,6 +14,7 @@ use crate::storage::StorageBackend;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use uuid::Uuid;
 
 /// Events emitted during the embedding/tagging pipeline
@@ -35,6 +36,13 @@ pub enum EmbeddingEvent {
     TaggingFailed { atom_id: String, error: String },
     /// Tag extraction was skipped (disabled or no API key)
     TaggingSkipped { atom_id: String },
+    /// Progress update for batch embedding pipeline
+    BatchProgress {
+        batch_id: String,
+        phase: String,
+        completed: usize,
+        total: usize,
+    },
 }
 
 /// Generate embeddings via provider abstraction (batch support)
@@ -554,12 +562,28 @@ async fn process_tagging_batch_inner<F>(
 where
     F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
 {
-    let mut tasks = Vec::with_capacity(atom_ids.len());
+    let total = atom_ids.len();
+    let emit_progress = total > 1;
+    let batch_id = Uuid::new_v4().to_string();
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    if emit_progress {
+        on_event(EmbeddingEvent::BatchProgress {
+            batch_id: batch_id.clone(),
+            phase: "tagging".to_string(),
+            completed: 0,
+            total,
+        });
+    }
+
+    let mut tasks = Vec::with_capacity(total);
 
     for atom_id in atom_ids {
         let storage = storage.clone();
         let on_event = on_event.clone();
         let settings = external_settings.clone();
+        let counter = counter.clone();
+        let batch_id = batch_id.clone();
 
         let task = tokio::spawn(async move {
             // Acquire semaphore permit
@@ -589,6 +613,18 @@ where
             };
 
             on_event(event);
+
+            if emit_progress {
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if done % 5 == 0 || done == total {
+                    on_event(EmbeddingEvent::BatchProgress {
+                        batch_id: batch_id.clone(),
+                        phase: "tagging".to_string(),
+                        completed: done,
+                        total,
+                    });
+                }
+            }
         });
 
         tasks.push(task);
@@ -597,6 +633,15 @@ where
     // Wait for all tasks to complete
     for task in tasks {
         let _ = task.await;
+    }
+
+    if emit_progress {
+        on_event(EmbeddingEvent::BatchProgress {
+            batch_id,
+            phase: "complete".to_string(),
+            completed: total,
+            total,
+        });
     }
 }
 
@@ -732,6 +777,19 @@ async fn process_embedding_batch_inner<F>(
         return;
     }
 
+    let batch_id = Uuid::new_v4().to_string();
+
+    // Only emit batch progress for bulk operations (>1 atom)
+    let emit_progress = total_count > 1;
+    if emit_progress {
+        on_event(EmbeddingEvent::BatchProgress {
+            batch_id: batch_id.clone(),
+            phase: "chunking".to_string(),
+            completed: 0,
+            total: total_count,
+        });
+    }
+
     tracing::info!(
         total_count,
         "Starting pipeline for atoms (cross-atom batching + concurrent tagging)"
@@ -813,14 +871,28 @@ async fn process_embedding_batch_inner<F>(
         "Pre-chunked atoms into chunks"
     );
 
+    if emit_progress {
+        on_event(EmbeddingEvent::BatchProgress {
+            batch_id: batch_id.clone(),
+            phase: "embedding".to_string(),
+            completed: 0,
+            total: total_count,
+        });
+    }
+
     // === Phase 2: Spawn tagging tasks concurrently (independent of embedding) ===
     let mut tagging_tasks = Vec::new();
+    let tagging_counter = Arc::new(AtomicUsize::new(0));
     if !skip_tagging {
+        let tagging_total = atoms.len();
         for (atom_id, _) in &atoms {
             let storage = storage.clone();
             let atom_id = atom_id.clone();
             let on_event = on_event.clone();
             let settings = external_settings.clone();
+            let counter = tagging_counter.clone();
+            let batch_id = batch_id.clone();
+            let should_emit = emit_progress;
 
             let task = tokio::spawn(async move {
                 let _permit = crate::executor::LLM_SEMAPHORE
@@ -849,6 +921,19 @@ async fn process_embedding_batch_inner<F>(
                 };
 
                 on_event(event);
+
+                // Emit tagging progress every 5 atoms
+                if should_emit {
+                    let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done % 5 == 0 || done == tagging_total {
+                        on_event(EmbeddingEvent::BatchProgress {
+                            batch_id: batch_id.clone(),
+                            phase: "tagging".to_string(),
+                            completed: done,
+                            total: tagging_total,
+                        });
+                    }
+                }
             });
             tagging_tasks.push(task);
         }
@@ -871,6 +956,7 @@ async fn process_embedding_batch_inner<F>(
         }
 
         // Store successful embeddings
+        let mut stored_count = 0usize;
         for (atom_id, chunks) in &by_atom {
             let chunks_with_embeddings: Vec<(String, Vec<f32>)> = chunks
                 .iter()
@@ -881,12 +967,22 @@ async fn process_embedding_batch_inner<F>(
                 Ok(()) => {
                     storage.set_embedding_status_sync(atom_id, "complete", None).ok();
                     completed_atom_ids.push(atom_id.clone());
+                    stored_count += 1;
                     on_event(EmbeddingEvent::EmbeddingComplete {
                         atom_id: atom_id.clone(),
                     });
+                    if emit_progress && stored_count % 10 == 0 {
+                        on_event(EmbeddingEvent::BatchProgress {
+                            batch_id: batch_id.clone(),
+                            phase: "storing".to_string(),
+                            completed: stored_count,
+                            total: total_count,
+                        });
+                    }
                 }
                 Err(_) => {
                     storage.set_embedding_status_sync(atom_id, "failed", Some("Failed to store embeddings in DB")).ok();
+                    stored_count += 1;
                     on_event(EmbeddingEvent::EmbeddingFailed {
                         atom_id: atom_id.clone(),
                         error: "Failed to store embeddings in DB".to_string(),
@@ -960,9 +1056,27 @@ async fn process_embedding_batch_inner<F>(
         }
     }
 
+    if emit_progress {
+        on_event(EmbeddingEvent::BatchProgress {
+            batch_id: batch_id.clone(),
+            phase: "finalizing".to_string(),
+            completed: total_count,
+            total: total_count,
+        });
+    }
+
     // === Phase 5: Wait for tagging to complete ===
     for task in tagging_tasks {
         let _ = task.await;
+    }
+
+    if emit_progress {
+        on_event(EmbeddingEvent::BatchProgress {
+            batch_id: batch_id.clone(),
+            phase: "complete".to_string(),
+            completed: total_count,
+            total: total_count,
+        });
     }
 
     if skip_tagging {
