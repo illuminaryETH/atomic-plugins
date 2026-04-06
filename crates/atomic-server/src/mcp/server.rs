@@ -167,13 +167,15 @@ impl AtomicMcpServer {
             source_url: params.source_url,
             published_at: None,
             tag_ids: vec![],
+            skip_if_source_exists: false,
         };
 
         let on_event = embedding_event_callback(self.event_tx.clone());
 
         let result = core
             .create_atom(request, on_event)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .ok_or_else(|| ErrorData::internal_error("Atom creation returned None".to_string(), None))?;
 
         // Broadcast atom creation event
         let _ = self.event_tx.send(ServerEvent::AtomCreated {

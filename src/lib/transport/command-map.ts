@@ -13,6 +13,7 @@ function atomBody(args: Record<string, unknown>) {
     source_url: args.sourceUrl ?? null,
     published_at: args.publishedAt ?? null,
     tag_ids: args.tagIds ?? [],
+    skip_if_source_exists: args.skipIfSourceExists ?? false,
   };
 }
 
@@ -63,6 +64,12 @@ export const COMMAND_MAP: Record<string, CommandSpec> = {
     path: '/api/atoms',
     argsMode: 'body',
     transformArgs: atomBody,
+  },
+  bulk_create_atoms: {
+    method: 'POST',
+    path: '/api/atoms/bulk',
+    argsMode: 'body',
+    transformArgs: (a) => (a.atoms as unknown[]).map((atom: any) => atomBody(atom)),
   },
   update_atom: {
     method: 'PUT',

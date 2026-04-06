@@ -159,6 +159,9 @@ pub struct CreateAtomRequest {
     /// Tag IDs to assign
     #[serde(default)]
     pub tag_ids: Vec<String>,
+    /// When true, skip creation if an atom with the same source_url already exists
+    #[serde(default)]
+    pub skip_if_source_exists: bool,
 }
 
 #[utoipa::path(
@@ -187,13 +190,17 @@ pub async fn create_atom(
                 source_url: req.source_url,
                 published_at: req.published_at,
                 tag_ids: req.tag_ids,
+                skip_if_source_exists: req.skip_if_source_exists,
             },
             on_event,
         )
     }).await {
-        Ok(Ok(atom)) => {
+        Ok(Ok(Some(atom))) => {
             let _ = event_tx.send(ServerEvent::AtomCreated { atom: atom.clone() });
             HttpResponse::Created().json(atom)
+        }
+        Ok(Ok(None)) => {
+            HttpResponse::Ok().json(serde_json::json!({"skipped": true}))
         }
         Ok(Err(e)) => crate::error::error_response(e),
         Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()})),
@@ -223,6 +230,7 @@ pub async fn bulk_create_atoms(
             source_url: r.source_url,
             published_at: r.published_at,
             tag_ids: r.tag_ids,
+            skip_if_source_exists: r.skip_if_source_exists,
         })
         .collect();
     let on_event = embedding_event_callback(state.event_tx.clone());

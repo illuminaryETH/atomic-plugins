@@ -20,12 +20,11 @@ fn create_atom(core: &AtomicCore, content: &str) -> AtomWithTags {
     core.create_atom(
         CreateAtomRequest {
             content: content.to_string(),
-            source_url: None,
-            published_at: None,
-            tag_ids: vec![],
+            ..Default::default()
         },
         |_| {},
     )
+    .unwrap()
     .unwrap()
 }
 
@@ -76,14 +75,14 @@ fn test_bulk_create_with_dedup() {
         CreateAtomRequest {
             content: "Atom 1".to_string(),
             source_url: Some("https://example.com/1".to_string()),
-            published_at: None,
-            tag_ids: vec![],
+            skip_if_source_exists: true,
+            ..Default::default()
         },
         CreateAtomRequest {
             content: "Atom 2".to_string(),
             source_url: Some("https://example.com/2".to_string()),
-            published_at: None,
-            tag_ids: vec![],
+            skip_if_source_exists: true,
+            ..Default::default()
         },
     ];
 
@@ -111,12 +110,11 @@ fn test_tag_hierarchy_and_atom_association() {
     let atom = core.create_atom(
         CreateAtomRequest {
             content: "Quantum mechanics".to_string(),
-            source_url: None,
-            published_at: None,
             tag_ids: vec![child.id.clone()],
+            ..Default::default()
         },
         |_| {},
-    ).unwrap();
+    ).unwrap().unwrap();
     assert_eq!(atom.tags.len(), 1);
     assert_eq!(atom.tags[0].name, "Physics");
 
@@ -271,6 +269,7 @@ fn test_source_url_tracking() {
             source_url: Some("https://example.com/article".to_string()),
             published_at: None,
             tag_ids: vec![],
+            ..Default::default()
         },
         |_| {},
     ).unwrap();

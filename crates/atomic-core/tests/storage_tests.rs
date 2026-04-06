@@ -60,6 +60,7 @@ async fn test_create_and_get_atom(storage: &dyn AtomStore) {
         source_url: None,
         published_at: None,
         tag_ids: vec![],
+        ..Default::default()
     };
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -89,6 +90,7 @@ async fn test_delete_atom(storage: &dyn AtomStore) {
         source_url: None,
         published_at: None,
         tag_ids: vec![],
+        ..Default::default()
     };
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -105,6 +107,7 @@ async fn test_update_atom(storage: &dyn AtomStore) {
         source_url: None,
         published_at: None,
         tag_ids: vec![],
+        ..Default::default()
     };
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -131,6 +134,7 @@ async fn test_get_all_atoms(storage: &dyn AtomStore) {
             source_url: None,
             published_at: None,
             tag_ids: vec![],
+            ..Default::default()
         };
         let id = uuid::Uuid::new_v4().to_string();
         storage.insert_atom(&id, &request, &now).await.unwrap();
@@ -148,6 +152,7 @@ async fn test_list_atoms_pagination(storage: &dyn AtomStore) {
             source_url: None,
             published_at: None,
             tag_ids: vec![],
+            ..Default::default()
         };
         let id = uuid::Uuid::new_v4().to_string();
         storage.insert_atom(&id, &request, &now).await.unwrap();

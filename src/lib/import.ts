@@ -246,23 +246,26 @@ async function resolveTagIds(
   return tagIds;
 }
 
-// ---------- Deduplication ----------
+// ---------- Main import function ----------
 
-async function atomExistsBySourceUrl(sourceUrl: string): Promise<boolean> {
-  try {
-    const result = await getTransport().invoke('get_atom_by_source_url', { url: sourceUrl });
-    return result != null;
-  } catch {
-    return false;
-  }
+interface BulkCreateResult {
+  atoms: unknown[];
+  count: number;
+  skipped: number;
 }
 
-// ---------- Main import function ----------
+const BATCH_SIZE = 50;
+
+export interface ImportOptions {
+  importTags?: boolean;
+  onProgress?: (progress: ImportProgress) => void;
+}
 
 export async function importMarkdownFolder(
   folderPath: string,
-  onProgress?: (progress: ImportProgress) => void,
+  options?: ImportOptions,
 ): Promise<ImportResult> {
+  const { importTags = true, onProgress } = options ?? {};
   // Derive vault name from folder path
   const vaultName = folderPath.split('/').pop() ?? 'vault';
 
@@ -273,64 +276,70 @@ export async function importMarkdownFolder(
   let imported = 0;
   let skipped = 0;
   let errors = 0;
-  let tagsCreated = 0;
   let tagsLinked = 0;
 
   const tagCache = new Map<string, string>();
-  const tagCacheSizeBefore = 0;
 
+  // Parse all notes and resolve tags upfront
+  const prepared: { note: ParsedNote; tagIds: string[] }[] = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    onProgress?.({
-      current: i + 1,
-      total,
-      currentFile: file.relativePath,
-      status: 'importing',
-    });
+    onProgress?.({ current: i + 1, total, currentFile: file.relativePath, status: 'importing' });
 
     try {
       const content = await readTextFile(file.absolutePath);
       const note = parseNote(content, file.relativePath, vaultName);
-
       if (!note) {
         skipped++;
-        onProgress?.({ current: i + 1, total, currentFile: file.relativePath, status: 'skipped' });
         continue;
       }
 
-      // Dedup by source URL
-      if (await atomExistsBySourceUrl(note.sourceUrl)) {
-        skipped++;
-        onProgress?.({ current: i + 1, total, currentFile: file.relativePath, status: 'skipped' });
-        continue;
+      let tagIds: string[] = [];
+      if (importTags) {
+        tagIds = await resolveTagIds(note, tagCache);
+        tagsLinked += tagIds.length;
       }
 
-      // Resolve tags
-      const tagIds = await resolveTagIds(note, tagCache);
-      tagsLinked += tagIds.length;
-
-      // Create atom
-      await getTransport().invoke('create_atom', {
-        content: note.content,
-        sourceUrl: note.sourceUrl,
-        tagIds,
-      });
-
-      imported++;
+      prepared.push({ note, tagIds });
     } catch (e) {
       errors++;
-      console.error(`Import failed for ${file.relativePath}:`, e);
-      onProgress?.({ current: i + 1, total, currentFile: file.relativePath, status: 'error' });
+      console.error(`Import: failed to read ${file.relativePath}:`, e);
     }
   }
 
-  tagsCreated = tagCache.size - tagCacheSizeBefore;
+  // Send in batches via bulk create — server handles dedup
+  for (let i = 0; i < prepared.length; i += BATCH_SIZE) {
+    const batch = prepared.slice(i, i + BATCH_SIZE);
+    const lastFile = batch[batch.length - 1].note.relativePath;
+    onProgress?.({
+      current: Math.min(i + BATCH_SIZE, prepared.length),
+      total: prepared.length,
+      currentFile: lastFile,
+      status: 'importing',
+    });
+
+    try {
+      const result = await getTransport().invoke<BulkCreateResult>('bulk_create_atoms', {
+        atoms: batch.map(({ note, tagIds }) => ({
+          content: note.content,
+          sourceUrl: note.sourceUrl,
+          skipIfSourceExists: true,
+          tagIds,
+        })),
+      });
+      imported += result.count;
+      skipped += result.skipped;
+    } catch (e) {
+      errors += batch.length;
+      console.error(`Import: bulk create failed for batch starting at ${i}:`, e);
+    }
+  }
 
   return {
     imported,
     skipped,
     errors,
-    tags_created: tagsCreated,
+    tags_created: tagCache.size,
     tags_linked: tagsLinked,
   };
 }

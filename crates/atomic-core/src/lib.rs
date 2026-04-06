@@ -18,9 +18,7 @@
 //! let atom = core.create_atom(
 //!     CreateAtomRequest {
 //!         content: "My note content".to_string(),
-//!         source_url: None,
-//!         published_at: None,
-//!         tag_ids: vec![],
+//!         ..Default::default()
 //!     },
 //!     |event| match event {
 //!         EmbeddingEvent::EmbeddingComplete { atom_id } => println!("Done: {}", atom_id),
@@ -75,12 +73,14 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Request to create a new atom
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CreateAtomRequest {
     pub content: String,
     pub source_url: Option<String>,
     pub published_at: Option<String>,
     pub tag_ids: Vec<String>,
+    /// When true, silently skip creation if an atom with the same source_url already exists.
+    pub skip_if_source_exists: bool,
 }
 
 /// Request to update an existing atom
@@ -456,10 +456,19 @@ impl AtomicCore {
         &self,
         request: CreateAtomRequest,
         on_event: F,
-    ) -> Result<AtomWithTags, AtomicCoreError>
+    ) -> Result<Option<AtomWithTags>, AtomicCoreError>
     where
         F: Fn(EmbeddingEvent) + Send + Sync + 'static,
     {
+        // Skip if an atom with this source_url already exists
+        if request.skip_if_source_exists {
+            if let Some(ref url) = request.source_url {
+                if self.storage.source_url_exists_sync(url)? {
+                    return Ok(None);
+                }
+            }
+        }
+
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let content = request.content.clone();
@@ -475,7 +484,7 @@ impl AtomicCore {
             self.settings_for_background(),
         );
 
-        Ok(atom_with_tags)
+        Ok(Some(atom_with_tags))
     }
 
     /// Create multiple atoms in a single transaction and trigger batch embedding.
@@ -506,20 +515,28 @@ impl AtomicCore {
         let now = Utc::now().to_rfc3339();
         let mut skipped: usize = 0;
 
-        // Dedup: build set of existing source_urls
-        let source_urls: Vec<String> = requests
-            .iter()
-            .filter_map(|r| r.source_url.clone())
-            .collect();
-        let existing_urls = self.storage.check_existing_source_urls_sync(&source_urls)?;
+        // Dedup: check existing source_urls if any request opts in
+        let any_skip = requests.iter().any(|r| r.skip_if_source_exists);
+        let existing_urls = if any_skip {
+            let source_urls: Vec<String> = requests
+                .iter()
+                .filter(|r| r.skip_if_source_exists)
+                .filter_map(|r| r.source_url.clone())
+                .collect();
+            self.storage.check_existing_source_urls_sync(&source_urls)?
+        } else {
+            std::collections::HashSet::new()
+        };
 
-        // Filter requests, skipping duplicates
+        // Filter requests, skipping duplicates when flagged
         let mut atoms_to_insert: Vec<(String, CreateAtomRequest, String)> = Vec::with_capacity(requests.len());
         for request in requests {
-            if let Some(ref url) = request.source_url {
-                if existing_urls.contains(url) {
-                    skipped += 1;
-                    continue;
+            if request.skip_if_source_exists {
+                if let Some(ref url) = request.source_url {
+                    if existing_urls.contains(url) {
+                        skipped += 1;
+                        continue;
+                    }
                 }
             }
             let id = Uuid::new_v4().to_string();
@@ -1814,6 +1831,7 @@ impl AtomicCore {
                     source_url: Some(note.source_url.clone()),
                     published_at: None,
                     tag_ids: vec![],
+                    ..Default::default()
                 },
                 &note.created_at,
             ) {
@@ -1970,9 +1988,10 @@ impl AtomicCore {
                 source_url: Some(request.url.clone()),
                 published_at: request.published_at,
                 tag_ids: request.tag_ids,
+                ..Default::default()
             },
             on_embed,
-        )?;
+        )?.ok_or_else(|| AtomicCoreError::Validation("Atom creation returned None".to_string()))?;
 
         let result = ingest::IngestionResult {
             atom_id: atom.atom.id.clone(),
@@ -2155,12 +2174,17 @@ impl AtomicCore {
                             source_url: Some(link),
                             published_at: item.published_at.clone(),
                             tag_ids: feed.tag_ids.clone(),
+                            skip_if_source_exists: true,
                         },
                         on_embed.clone(),
                     ) {
-                        Ok(atom) => {
+                        Ok(Some(atom)) => {
                             self.complete_feed_item(feed_id, &item.guid, &atom.atom.id)?;
                             new_items += 1;
+                        }
+                        Ok(None) => {
+                            self.mark_feed_item_skipped(feed_id, &item.guid, "duplicate source_url")?;
+                            skipped += 1;
                         }
                         Err(e) => {
                             self.mark_feed_item_skipped(feed_id, &item.guid, &e.to_string())?;
@@ -2999,12 +3023,11 @@ mod tests {
         db.create_atom(
             CreateAtomRequest {
                 content: content.to_string(),
-                source_url: None,
-                published_at: None,
-                tag_ids: vec![],
+                ..Default::default()
             },
             |_| {}, // no-op callback
         )
+        .unwrap()
         .unwrap()
     }
 
@@ -3167,12 +3190,12 @@ mod tests {
             .create_atom(
                 CreateAtomRequest {
                     content: "Tagged content".to_string(),
-                    source_url: None,
-                    published_at: None,
                     tag_ids: vec![tag1.id.clone(), tag2.id.clone()],
+                    ..Default::default()
                 },
                 |_| {},
             )
+            .unwrap()
             .unwrap();
 
         // Verify tags are attached
@@ -3195,12 +3218,12 @@ mod tests {
             .create_atom(
                 CreateAtomRequest {
                     content: "AI content".to_string(),
-                    source_url: None,
-                    published_at: None,
                     tag_ids: vec![ai.id.clone()],
+                    ..Default::default()
                 },
                 |_| {},
             )
+            .unwrap()
             .unwrap();
 
         // Query by parent tag (Topics) should include atoms tagged with AI
@@ -3222,9 +3245,8 @@ mod tests {
             db.create_atom(
                 CreateAtomRequest {
                     content: format!("Atom {}", i),
-                    source_url: None,
-                    published_at: None,
                     tag_ids: vec![topics.id.clone()],
+                    ..Default::default()
                 },
                 |_| {},
             )
