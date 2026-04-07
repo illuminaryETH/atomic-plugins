@@ -1222,13 +1222,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             Wiki Update Prompt
                           </label>
                           <p className="text-xs text-[var(--color-text-secondary)]">
-                            System prompt for updating existing wiki articles with new sources. Leave empty to use the default.
+                            Custom instructions prepended to the update prompt. Use this to control tone, style, or focus. Leave empty to use the default.
                           </p>
                           <textarea
                             value={wikiUpdatePrompt}
                             onChange={(e) => { setWikiUpdatePrompt(e.target.value); autoSave('wiki_update_prompt', e.target.value); }}
-                            placeholder={"You are updating an existing wiki article with new information from additional sources. Integrate the new information naturally into the existing article.\n\nGuidelines:\n- Maintain the existing structure where sensible\n- Add new sections if needed for new topics\n- Do not remove existing content unless directly contradicted by new sources\n- Use [N] notation for citations, continuing from the existing numbering\n- Every new factual claim MUST have a citation\n- Keep tone consistent with the existing article\n- When mentioning topics that have their own articles, use [[Topic Name]] wiki-link notation\n- Only use [[wiki links]] for topics listed in the EXISTING WIKI ARTICLES section provided\n- Do not force wiki links where they don't fit naturally"}
-                            rows={8}
+                            placeholder={"e.g. Write in a casual, conversational tone. Focus on practical implications rather than theory."}
+                            rows={4}
                             className="w-full px-3 py-2 rounded-md bg-[var(--color-bg-main)] border border-[var(--color-border)] text-sm text-[var(--color-text-primary)] font-mono resize-y placeholder:text-[var(--color-text-secondary)]/40"
                           />
                           {wikiUpdatePrompt && (

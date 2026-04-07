@@ -76,6 +76,16 @@ impl WikiStrategyContext {
             .unwrap_or(WIKI_UPDATE_SYSTEM_PROMPT)
     }
 
+    /// Returns the section-ops update prompt. If a custom update prompt is set,
+    /// it is prepended to the structural instructions so user tone/style preferences
+    /// are respected while preserving the JSON schema contract.
+    pub fn section_ops_prompt(&self) -> String {
+        match self.custom_update_prompt.as_deref().filter(|s| !s.is_empty()) {
+            Some(custom) => format!("{}\n\n{}", custom, WIKI_UPDATE_SECTION_OPS_PROMPT),
+            None => WIKI_UPDATE_SECTION_OPS_PROMPT.to_string(),
+        }
+    }
+
     /// Returns the maximum source material tokens for wiki generation.
     /// For providers with a known context length, budgets ~60% for source material.
     /// Falls back to MAX_WIKI_SOURCE_TOKENS for providers with large/unknown context.
@@ -349,9 +359,10 @@ async fn generate_section_ops_proposal(
         }
     );
 
+    let prompt = ctx.section_ops_prompt();
     let result: WikiUpdateOpsResult = call_llm_for_wiki_typed(
         &ctx.provider_config,
-        WIKI_UPDATE_SECTION_OPS_PROMPT,
+        &prompt,
         &user_content,
         &ctx.wiki_model,
         "wiki_update_section_ops",

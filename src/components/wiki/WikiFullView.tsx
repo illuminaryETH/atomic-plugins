@@ -28,6 +28,8 @@ export function WikiFullView() {
 
   const selectedVersion = useWikiStore(s => s.selectedVersion);
 
+  const reset = useWikiStore(s => s.reset);
+
   const openDrawer = useUIStore(s => s.openDrawer);
 
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
@@ -38,6 +40,11 @@ export function WikiFullView() {
     initializedRef.current = true;
     fetchAllArticles();
   }, [fetchAllArticles]);
+
+  // Clean up wiki store state on unmount
+  useEffect(() => {
+    return () => { reset(); };
+  }, [reset]);
 
   const handleGenerate = () => {
     if (currentTagId && currentTagName) {
