@@ -512,7 +512,7 @@ async fn process_tagging_only_inner(
         .map_err(|e| e.to_string())?;
 
     // Single LLM call on full content — no per-chunk loop, no consolidation
-    let result = extract_tags_from_content(
+    let tags = extract_tags_from_content(
         &provider_config,
         &content,
         &tag_tree_json,
@@ -523,7 +523,7 @@ async fn process_tagging_only_inner(
 
     let mut all_tag_ids = Vec::new();
 
-    for tag_application in result.tags {
+    for tag_application in tags {
         let trimmed_name = tag_application.name.trim();
         if trimmed_name.is_empty() || trimmed_name.eq_ignore_ascii_case("null") {
             continue;

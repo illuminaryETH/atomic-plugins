@@ -9,10 +9,11 @@ use rusqlite::Connection;
 use serde::Deserialize;
 use std::sync::{LazyLock, Mutex};
 
-// Extraction result types
+// Extraction result types — ExtractionResult is the schema-enforced format (OpenRouter);
+// some providers (Ollama) may return a bare array instead, handled by parse_tag_extractions().
 #[derive(Debug, Clone, Deserialize)]
-pub struct ExtractionResult {
-    pub tags: Vec<TagApplication>,
+struct ExtractionResult {
+    tags: Vec<TagApplication>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -123,10 +124,31 @@ EXAMPLES:
 - {"name": "Machine Learning", "parent_name": "Topics"}
 - {"name": "San Francisco", "parent_name": "Locations"}
 
+RESPONSE FORMAT:
+Return a JSON object with a "tags" array. Each tag is an object with "name" and "parent_name":
+{"tags": [{"name": "AI", "parent_name": "Topics"}, {"name": "San Francisco", "parent_name": "Locations"}]}
+
 Guidelines:
 - Create new Level 2 tags under existing categories when needed
 - Prefer broad tags like "John Smith" rather than overly specific tags such as "Early Life of John Smith"
 - Every tag must have a valid parent_name from the top-level categories"#;
+
+/// Parse tag extractions from LLM output, handling both:
+/// - `{"tags": [...]}` (schema-enforced, OpenRouter/OpenAI)
+/// - `[...]` (bare array, common from Ollama/local models)
+fn parse_tag_extractions(json: &str, raw_content: &str) -> Result<Vec<TagApplication>, String> {
+    if let Ok(result) = serde_json::from_str::<ExtractionResult>(json) {
+        return Ok(result.tags);
+    }
+    if let Ok(tags) = serde_json::from_str::<Vec<TagApplication>>(json) {
+        return Ok(tags);
+    }
+    let err = serde_json::from_str::<serde_json::Value>(json).unwrap_err();
+    Err(format!(
+        "Failed to parse extraction result: {} - Content: {}",
+        err, raw_content
+    ))
+}
 
 /// Strip markdown code fences from LLM output before parsing as JSON.
 /// Some models wrap structured output in ```json ... ``` fences.
@@ -178,7 +200,7 @@ pub async fn extract_tags_from_content(
     tag_tree_json: &str,
     model: &str,
     supported_params: Option<Vec<String>>,
-) -> Result<ExtractionResult, String> {
+) -> Result<Vec<TagApplication>, String> {
     // Truncate based on provider's context length
     let max_chars = max_tagging_chars(provider_config, tag_tree_json, model);
     let text = if content.len() > max_chars {
@@ -253,13 +275,8 @@ pub async fn extract_tags_from_content(
                     tracing::debug!(output = %response_content, "TAG EXTRACTION LLM OUTPUT");
 
                     let cleaned = strip_markdown_fences(response_content);
-                    let result: ExtractionResult = serde_json::from_str(&cleaned).map_err(|e| {
-                        format!(
-                            "Failed to parse extraction result: {} - Content: {}",
-                            e, response_content
-                        )
-                    })?;
-                    return Ok(result);
+                    let tags = parse_tag_extractions(&cleaned, response_content)?;
+                    return Ok(tags);
                 }
                 return Err("No content in response".to_string());
             }
@@ -288,7 +305,7 @@ pub async fn extract_tags_from_chunk(
     tag_tree_json: &str,
     model: &str,
     supported_params: Option<Vec<String>>,
-) -> Result<ExtractionResult, String> {
+) -> Result<Vec<TagApplication>, String> {
     let user_content = format!(
         "EXISTING TAG HIERARCHY:\n{}\n\nTEXT TO ANALYZE:\n{}",
         tag_tree_json, chunk_content
@@ -352,13 +369,8 @@ pub async fn extract_tags_from_chunk(
 
                     // Parse the extraction result from the content
                     let cleaned = strip_markdown_fences(content);
-                    let result: ExtractionResult = serde_json::from_str(&cleaned).map_err(|e| {
-                        format!(
-                            "Failed to parse extraction result: {} - Content: {}",
-                            e, content
-                        )
-                    })?;
-                    return Ok(result);
+                    let tags = parse_tag_extractions(&cleaned, content)?;
+                    return Ok(tags);
                 }
                 return Err("No content in response".to_string());
             }
