@@ -60,6 +60,7 @@ pub async fn generate_embeddings_with_config(
     let provider = get_embedding_provider(config).map_err(|e| EmbedError {
         message: e.to_string(),
         retryable: false,
+        batch_reducible: false,
     })?;
     let embed_config = EmbeddingConfig::new(config.embedding_model());
     let model = config.embedding_model();
@@ -67,6 +68,7 @@ pub async fn generate_embeddings_with_config(
 
     let mut last_error = String::new();
     let mut last_retryable = true;
+    let mut last_batch_reducible = false;
     for attempt in 0..3u32 {
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
@@ -77,6 +79,7 @@ pub async fn generate_embeddings_with_config(
             Err(e) => {
                 last_error = e.to_string();
                 last_retryable = e.is_retryable();
+                last_batch_reducible = e.is_batch_reducible();
                 if last_retryable {
                     tracing::warn!(
                         attempt = attempt + 1,
@@ -104,6 +107,7 @@ pub async fn generate_embeddings_with_config(
     Err(EmbedError {
         message: last_error,
         retryable: last_retryable,
+        batch_reducible: last_batch_reducible,
     })
 }
 
@@ -113,6 +117,9 @@ pub async fn generate_embeddings_with_config(
 pub struct EmbedError {
     pub message: String,
     pub retryable: bool,
+    /// True when reducing batch size might resolve the error (e.g. 400 from
+    /// providers that enforce smaller batch limits than our default).
+    pub batch_reducible: bool,
 }
 
 /// Maximum texts per embedding API call for cross-atom batching.
@@ -204,9 +211,10 @@ fn embed_batch_adaptive(
             (results, vec![])
         }
         Err(e) => {
-            if batch.len() == 1 || !e.retryable {
-                // Non-retryable or single chunk: fail all chunks in the batch
-                if !e.retryable && batch.len() > 1 {
+            let can_split = batch.len() > 1 && (e.retryable || e.batch_reducible);
+            if !can_split {
+                // Unsplittable: single chunk, or non-retryable non-batch error
+                if batch.len() > 1 {
                     tracing::error!(
                         batch_size = batch.len(),
                         error = %e.message,

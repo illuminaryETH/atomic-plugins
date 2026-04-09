@@ -69,6 +69,13 @@ impl ProviderError {
         }
     }
 
+    /// Whether reducing batch size might resolve this error.
+    /// 400 errors may indicate the provider's batch limit was exceeded;
+    /// splitting the batch can succeed where retrying the same size won't.
+    pub fn is_batch_reducible(&self) -> bool {
+        matches!(self, ProviderError::Api { status: 400, .. })
+    }
+
     /// Get suggested retry delay in seconds
     pub fn retry_after(&self) -> Option<u64> {
         match self {
