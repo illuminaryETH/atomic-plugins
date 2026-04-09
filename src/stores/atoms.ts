@@ -133,6 +133,7 @@ interface AtomsStore {
   fetchNextPage: () => Promise<void>;
   createAtom: (content: string, sourceUrl?: string, tagIds?: string[]) => Promise<AtomWithTags>;
   updateAtom: (id: string, content: string, sourceUrl?: string, tagIds?: string[]) => Promise<AtomWithTags>;
+  updateAtomContentOnly: (id: string, content: string, sourceUrl?: string, tagIds?: string[]) => Promise<AtomWithTags>;
   deleteAtom: (id: string) => Promise<void>;
   clearError: () => void;
 
@@ -333,6 +334,22 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
       set({ error: String(error) });
       throw error;
     }
+  },
+
+  /** Save content/metadata without triggering embedding or tagging pipeline.
+   *  Used by auto-save during inline editing. */
+  updateAtomContentOnly: async (id: string, content: string, sourceUrl?: string, tagIds?: string[]) => {
+    const atom = await getTransport().invoke<AtomWithTags>('update_atom_content_only', {
+      id,
+      content,
+      sourceUrl: sourceUrl || null,
+      tagIds: tagIds || [],
+    });
+    const summary = toSummary(atom);
+    set((state) => ({
+      atoms: state.atoms.map((a) => (a.id === id ? summary : a)),
+    }));
+    return atom;
   },
 
   deleteAtom: async (id: string) => {
