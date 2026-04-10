@@ -6,8 +6,11 @@ FROM node:24-bookworm-slim AS frontend-builder
 WORKDIR /app
 
 # Install dependencies (cached layer)
+# --ignore-scripts skips better-sqlite3's native compile (it's a dev-only dep
+# used by local db scripts, not needed for `vite build`). Without this we'd
+# need python3/make/g++ in this stage.
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 # Copy frontend source
 COPY index.html tsconfig.json tsconfig.node.json vite.config.ts ./
