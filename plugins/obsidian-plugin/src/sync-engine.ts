@@ -308,8 +308,16 @@ export class SyncEngine {
 
     for (const batch of batches) {
       try {
+        // skip_if_source_exists prevents duplicates when re-syncing to a database
+        // that already has atoms (e.g., reverting a database name change). The
+        // server returns skipped entries' atom IDs nowhere in the response, so
+        // we fall back to getAtomBySourceUrl below for any unmatched entries.
         const result = await this.client.bulkCreateAtoms(
-          batch.map((f) => ({ content: f.content, source_url: f.sourceUrl }))
+          batch.map((f) => ({
+            content: f.content,
+            source_url: f.sourceUrl,
+            skip_if_source_exists: true,
+          }))
         );
 
         // Match returned atoms back to files via source_url
@@ -320,18 +328,55 @@ export class SyncEngine {
           }
         }
 
+        // Collect entries the bulk endpoint didn't return (skipped because the
+        // atom already existed, or otherwise dropped). Look each one up so we
+        // can register it in syncState — otherwise every subsequent sync would
+        // re-attempt and re-fail forever.
+        const unmatched = batch.filter((entry) => !atomByUrl.has(entry.sourceUrl));
+        const fallbackResults = await Promise.all(
+          unmatched.map(async (entry) => {
+            try {
+              const existing = await this.client.getAtomBySourceUrl(entry.sourceUrl);
+              return { entry, atomId: existing?.id ?? null, error: null as Error | null };
+            } catch (e) {
+              return { entry, atomId: null, error: e as Error };
+            }
+          })
+        );
+        const recovered = new Map<string, string>();
+        const lookupErrors = new Map<string, Error>();
+        for (const r of fallbackResults) {
+          if (r.atomId) recovered.set(r.entry.sourceUrl, r.atomId);
+          else if (r.error) lookupErrors.set(r.entry.sourceUrl, r.error);
+        }
+
         for (const entry of batch) {
-          const atomId = atomByUrl.get(entry.sourceUrl);
-          if (atomId) {
+          const newId = atomByUrl.get(entry.sourceUrl);
+          if (newId) {
             this.syncState.setFile(entry.file.path, {
-              atomId,
+              atomId: newId,
               contentHash: entry.hash,
               lastSynced: Date.now(),
             });
             progress.created++;
           } else {
-            progress.errors++;
-            console.error(`Atomic: No atom returned for ${entry.file.path}`);
+            const existingId = recovered.get(entry.sourceUrl);
+            if (existingId) {
+              // Atom already existed on the server — adopt it. Treat as updated
+              // for progress reporting since we didn't create anything new.
+              this.syncState.setFile(entry.file.path, {
+                atomId: existingId,
+                contentHash: entry.hash,
+                lastSynced: Date.now(),
+              });
+              progress.updated++;
+            } else {
+              progress.errors++;
+              const lookupErr = lookupErrors.get(entry.sourceUrl);
+              console.error(
+                `Atomic: No atom returned for ${entry.file.path}${lookupErr ? ` (lookup also failed: ${lookupErr.message})` : ""}`
+              );
+            }
           }
           progress.processed++;
         }

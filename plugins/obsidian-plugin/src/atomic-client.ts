@@ -88,6 +88,8 @@ export interface CreateAtomRequest {
   source_url?: string | null;
   published_at?: string | null;
   tag_ids?: string[];
+  /** When true, the server skips creation if an atom with the same source_url already exists. */
+  skip_if_source_exists?: boolean;
 }
 
 export interface UpdateAtomRequest {
