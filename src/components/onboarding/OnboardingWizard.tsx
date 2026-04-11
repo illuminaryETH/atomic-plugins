@@ -131,7 +131,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const renderStep = () => {
     switch (currentStepDef.id) {
       case 'welcome':
-        return <WelcomeStep state={state} dispatch={dispatch} onNext={handleNext} />;
+        return <WelcomeStep state={state} dispatch={dispatch} onNext={handleNext} onComplete={onComplete} />;
       case 'ai-provider':
         return <AIProviderStep state={state} dispatch={dispatch} />;
       case 'integrations':

@@ -52,11 +52,10 @@ export function LeftPanel() {
       <aside
         ref={panelRef}
         className={`
-          h-full bg-[var(--color-bg-panel)]/80 border-r border-[var(--color-border)] flex-col transition-all duration-300 ease-in-out backdrop-blur-xl z-10 overflow-hidden flex-shrink-0
+          h-full bg-[var(--color-bg-panel)]/80 border-r border-[var(--color-border)] flex flex-col transition-all duration-300 ease-in-out backdrop-blur-xl z-10 overflow-hidden flex-shrink-0
           max-md:fixed max-md:top-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl max-md:w-[250px]
           ${leftPanelOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}
           ${leftPanelOpen ? 'md:w-[250px] md:border-r' : 'md:w-0 md:border-r-0'}
-          hidden md:flex
         `}
       >
         <div className="w-[250px] h-full flex flex-col">

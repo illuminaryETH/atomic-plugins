@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Button } from '../../ui/Button';
 import { isDesktopApp, getTransport, switchTransport } from '../../../lib/transport';
+import { verifyProviderConfigured } from '../../../lib/api';
 import type { OnboardingState, OnboardingAction } from '../useOnboardingState';
 
 interface WelcomeStepProps {
   state: OnboardingState;
   dispatch: React.Dispatch<OnboardingAction>;
   onNext: () => void;
+  onComplete: () => void;
 }
 
 type SetupMode = 'checking' | 'claim' | 'manual';
 
-export function WelcomeStep({ state, dispatch, onNext }: WelcomeStepProps) {
+export function WelcomeStep({ state, dispatch, onNext, onComplete }: WelcomeStepProps) {
   const isDesktop = isDesktopApp();
   const [setupMode, setSetupMode] = useState<SetupMode>('checking');
   const [isClaiming, setIsClaiming] = useState(false);
@@ -92,6 +94,22 @@ export function WelcomeStep({ state, dispatch, onNext }: WelcomeStepProps) {
         baseUrl: state.serverUrl.trim().replace(/\/$/, ''),
         authToken: state.serverToken.trim(),
       });
+      // If the server is already fully set up, skip the rest of the
+      // onboarding wizard and drop the user straight into the app.
+      try {
+        const configured = await verifyProviderConfigured();
+        if (configured) {
+          onComplete();
+          return;
+        }
+      } catch (e) {
+        dispatch({
+          type: 'SET_SERVER_TEST',
+          result: 'error',
+          error: String(e instanceof Error ? e.message : e),
+        });
+        return;
+      }
       onNext();
     } catch (e) {
       dispatch({ type: 'SET_SERVER_TEST', result: 'error', error: String(e) });

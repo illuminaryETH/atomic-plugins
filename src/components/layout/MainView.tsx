@@ -4,6 +4,7 @@ import { AtomGrid } from '../atoms/AtomGrid';
 import { AtomList } from '../atoms/AtomList';
 import { AtomReader } from '../atoms/AtomReader';
 import { FilterBar } from '../atoms/FilterBar';
+import { FilterSheet } from '../atoms/FilterSheet';
 import { SigmaCanvas } from '../canvas/SigmaCanvas';
 import { LocalGraphView } from '../canvas/LocalGraphView';
 import { FAB } from '../ui/FAB';
@@ -16,6 +17,7 @@ import { useAtomsStore } from '../../stores/atoms';
 import { useTagsStore } from '../../stores/tags';
 import { useUIStore } from '../../stores/ui';
 import { isTauri } from '../../lib/platform';
+import { useIsMobile } from '../../hooks';
 import { readerEditorActions } from '../../lib/reader-editor-bridge';
 
 export function MainView() {
@@ -66,7 +68,34 @@ export function MainView() {
   const [filterBarOpen, setFilterBarOpen] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [readerMenuOpen, setReaderMenuOpen] = useState(false);
+  const readerMenuRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
   const hasActiveFilter = sourceFilter !== 'all' || !!sourceValue || sortBy !== 'updated' || sortOrder !== 'desc';
+
+  // Close reader overflow menu on outside click / escape
+  useEffect(() => {
+    if (!readerMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (readerMenuRef.current && !readerMenuRef.current.contains(e.target as Node)) {
+        setReaderMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setReaderMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [readerMenuOpen]);
+
+  // Auto-close the menu when the reader closes
+  useEffect(() => {
+    if (!readerState.atomId) setReaderMenuOpen(false);
+  }, [readerState.atomId]);
 
   // Debounced server-side search when searchQuery changes
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -283,8 +312,8 @@ export function MainView() {
 
             <div data-tauri-drag-region className="flex-1 h-full drag-region" />
 
-            {/* Action buttons for atom reader */}
-            {readerState.atomId && (
+            {/* Action buttons for atom reader — inline on desktop, overflow menu on mobile */}
+            {readerState.atomId && !isMobile && (
               <div className="flex items-center gap-1">
                 {/* Theme toggle */}
                 <button
@@ -338,10 +367,88 @@ export function MainView() {
               </div>
             )}
 
+            {/* Mobile reader overflow menu: edit is the primary inline action,
+                theme + delete hide behind a ⋯ button. */}
+            {readerState.atomId && isMobile && (
+              <div className="flex items-center gap-1">
+                {/* Edit / Done toggle (kept inline — primary action) */}
+                <button
+                  onClick={() => readerState.editing
+                    ? readerEditorActions.current?.stopEditing()
+                    : readerEditorActions.current?.startEditing(0)
+                  }
+                  className={`p-1.5 rounded-md transition-colors ${
+                    readerState.editing
+                      ? 'text-[var(--color-accent)] hover:bg-[var(--color-accent)]/20'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
+                  }`}
+                  title={readerState.editing ? 'Done (Esc)' : 'Edit'}
+                >
+                  {readerState.editing ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  )}
+                </button>
+
+                {/* Overflow menu */}
+                <div className="relative" ref={readerMenuRef}>
+                  <button
+                    onClick={() => setReaderMenuOpen(v => !v)}
+                    className="p-1.5 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+                    title="More actions"
+                    aria-haspopup="menu"
+                    aria-expanded={readerMenuOpen}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <circle cx="5" cy="12" r="1.5" fill="currentColor" />
+                      <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+                      <circle cx="19" cy="12" r="1.5" fill="currentColor" />
+                    </svg>
+                  </button>
+                  {readerMenuOpen && (
+                    <div
+                      role="menu"
+                      className="absolute top-full right-0 mt-1 w-48 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md shadow-lg z-50 overflow-hidden"
+                    >
+                      <button
+                        role="menuitem"
+                        onClick={() => { toggleReaderTheme(); setReaderMenuOpen(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          {readerTheme === 'dark' ? (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                          ) : (
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                          )}
+                        </svg>
+                        {readerTheme === 'dark' ? 'Light mode' : 'Dark mode'}
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={() => { setShowDeleteModal(true); setReaderMenuOpen(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-red-400 hover:bg-[var(--color-bg-hover)] transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Chat sidebar toggle */}
             <button
               onClick={handleOpenChat}
-              className={`hidden md:block p-1.5 rounded-md transition-colors ${
+              className={`p-1.5 rounded-md transition-colors ${
                 chatSidebarOpen
                   ? 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
@@ -356,66 +463,68 @@ export function MainView() {
         ) : (
           /* Normal browsing titlebar */
           <>
-            {/* View Mode Toggle */}
-            <div className="flex items-center bg-[var(--color-bg-card)] rounded-md border border-[var(--color-border)] shrink-0">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-1.5 rounded-l-md transition-colors ${
-                  viewMode === 'grid'
-                    ? 'bg-[var(--color-accent)] text-white'
-                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                }`}
-                title="Grid view"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                </svg>
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`p-1.5 transition-colors ${
-                  viewMode === 'list'
-                    ? 'bg-[var(--color-accent)] text-white'
-                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                }`}
-                title="List view"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-              <button
-                onClick={() => setViewMode('canvas')}
-                className={`p-1.5 transition-colors ${
-                  viewMode === 'canvas'
-                    ? 'bg-[var(--color-accent)] text-white'
-                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                }`}
-                title="Canvas view"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <circle cx="6" cy="6" r="2" />
-                  <circle cx="18" cy="6" r="2" />
-                  <circle cx="6" cy="18" r="2" />
-                  <circle cx="18" cy="18" r="2" />
-                  <circle cx="12" cy="12" r="2" />
-                  <path strokeLinecap="round" d="M8 7l2.5 3.5M16 7l-2.5 3.5M8 17l2.5-3.5M16 17l-2.5-3.5" />
-                </svg>
-              </button>
-              <button
-                onClick={() => setViewMode('wiki')}
-                className={`p-1.5 rounded-r-md transition-colors ${
-                  viewMode === 'wiki'
-                    ? 'bg-[var(--color-accent)] text-white'
-                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                }`}
-                title="Wiki view"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
-              </button>
-            </div>
+            {/* View Mode Toggle — desktop only; mobile accesses view mode via the filter sheet */}
+            {!isMobile && (
+              <div className="flex items-center bg-[var(--color-bg-card)] rounded-md border border-[var(--color-border)] shrink-0">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`p-1.5 rounded-l-md transition-colors ${
+                    viewMode === 'grid'
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                  title="Grid view"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`p-1.5 transition-colors ${
+                    viewMode === 'list'
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                  title="List view"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setViewMode('canvas')}
+                  className={`p-1.5 transition-colors ${
+                    viewMode === 'canvas'
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                  title="Canvas view"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <circle cx="6" cy="6" r="2" />
+                    <circle cx="18" cy="6" r="2" />
+                    <circle cx="6" cy="18" r="2" />
+                    <circle cx="18" cy="18" r="2" />
+                    <circle cx="12" cy="12" r="2" />
+                    <path strokeLinecap="round" d="M8 7l2.5 3.5M16 7l-2.5 3.5M8 17l2.5-3.5M16 17l-2.5-3.5" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setViewMode('wiki')}
+                  className={`p-1.5 rounded-r-md transition-colors ${
+                    viewMode === 'wiki'
+                      ? 'bg-[var(--color-accent)] text-white'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                  title="Wiki view"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                  </svg>
+                </button>
+              </div>
+            )}
 
             {/* Search button */}
             <button
@@ -430,8 +539,9 @@ export function MainView() {
 
             <div data-tauri-drag-region className="flex-1 h-full drag-region" />
 
-            {/* Filter toggle + atom count — right-aligned, hide for canvas/wiki */}
-            {viewMode !== 'canvas' && viewMode !== 'wiki' && (
+            {/* Filter toggle + atom count — right-aligned. On mobile, always show the
+                filter button (it opens the filter sheet which hosts view mode too). */}
+            {(isMobile || (viewMode !== 'canvas' && viewMode !== 'wiki')) && (
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => setFilterBarOpen(!filterBarOpen)}
@@ -449,16 +559,18 @@ export function MainView() {
                     <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-[var(--color-accent)] rounded-full" />
                   )}
                 </button>
-                <span className="text-sm text-[var(--color-text-secondary)]">
-                  {displayCount} atom{displayCount !== 1 ? 's' : ''}
-                </span>
+                {!isMobile && (
+                  <span className="text-sm text-[var(--color-text-secondary)]">
+                    {displayCount} atom{displayCount !== 1 ? 's' : ''}
+                  </span>
+                )}
               </div>
             )}
 
             {/* Chat sidebar toggle — right-aligned */}
             <button
               onClick={handleOpenChat}
-              className={`hidden md:block p-1.5 rounded-md transition-colors ${
+              className={`p-1.5 rounded-md transition-colors ${
                 chatSidebarOpen
                   ? 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]'
@@ -486,8 +598,17 @@ export function MainView() {
         </div>
       )}
 
-      {/* Filter bar - visible for grid/list views when toggled open */}
-      {!isSemanticSearch && viewMode !== 'canvas' && viewMode !== 'wiki' && filterBarOpen && <FilterBar />}
+      {/* Filter bar — desktop inline strip, grid/list views only */}
+      {!isMobile && !isSemanticSearch && viewMode !== 'canvas' && viewMode !== 'wiki' && filterBarOpen && <FilterBar />}
+
+      {/* Filter sheet — mobile bottom sheet hosts view mode + filter + sort */}
+      {isMobile && (
+        <FilterSheet
+          isOpen={filterBarOpen}
+          onClose={() => setFilterBarOpen(false)}
+          displayCount={displayCount}
+        />
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-hidden relative">
@@ -558,13 +679,27 @@ export function MainView() {
       </Modal>
     </main>
 
-    {/* Chat sidebar — available in all views */}
+    {/* Chat sidebar backdrop — mobile only */}
     <div
-      className={`hidden md:block flex-shrink-0 border-l border-[var(--color-border)] overflow-hidden bg-[var(--color-bg-panel)] transition-[width] duration-300 ease-in-out ${
-        chatSidebarOpen ? 'w-96' : 'w-0 border-l-0'
+      className={`fixed inset-0 bg-black/40 z-30 md:hidden transition-opacity duration-200 ${
+        chatSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
+      onClick={() => chatSidebarOpen && toggleChatSidebar()}
+    />
+
+    {/* Chat sidebar — available in all views.
+        Desktop: flex sibling that animates width.
+        Mobile: fixed overlay that slides in from the right. */}
+    <div
+      className={`
+        flex-shrink-0 border-l border-[var(--color-border)] bg-[var(--color-bg-panel)] overflow-hidden
+        max-md:fixed max-md:top-0 max-md:right-0 max-md:h-full max-md:w-full max-md:z-40 max-md:shadow-2xl
+        transition-[width,transform] duration-300 ease-in-out
+        ${chatSidebarOpen ? 'max-md:translate-x-0' : 'max-md:translate-x-full'}
+        ${chatSidebarOpen ? 'md:w-96' : 'md:w-0 md:border-l-0'}
+      `}
     >
-      <div className="w-96 h-full">
+      <div className="w-full md:w-96 h-full">
         <ChatViewer />
       </div>
     </div>
