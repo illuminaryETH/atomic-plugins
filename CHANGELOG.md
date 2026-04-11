@@ -2,6 +2,13 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.20.2 — 2026-04-11
+
+- Cache the global canvas payload in memory with automatic invalidation on atom, tag, and edge changes — eliminates redundant PCA recomputation and makes the canvas load significantly faster after the first request
+- Warm the canvas cache at server startup so the first canvas open is instant instead of waiting for a full recompute
+- Optimize canvas metadata query from two correlated subqueries per atom to a single JOIN + GROUP BY, improving canvas load time for large knowledge bases
+- Serialize concurrent cold-cache canvas rebuilds so multiple simultaneous requests share a single computation instead of racing
+
 ## v1.20.1 — 2026-04-11
 
 - Fix release notification formatting in the CI pipeline (no user-facing changes).
