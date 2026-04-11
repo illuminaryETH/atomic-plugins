@@ -82,7 +82,9 @@ export class AtomicSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             if (dbDebounce) clearTimeout(dbDebounce);
             dbDebounce = setTimeout(() => {
-              this.plugin.syncEngine.resetAndResync();
+              this.plugin.syncEngine.resetAndResync().catch((e) =>
+                console.error("Atomic: resetAndResync failed:", e)
+              );
             }, 1500);
           })
       );

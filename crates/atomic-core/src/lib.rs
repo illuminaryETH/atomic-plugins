@@ -737,82 +737,15 @@ impl AtomicCore {
     /// have no atoms or sub-tags (the safe case during onboarding). If they have
     /// content, they're unflagged instead so their data isn't lost — re-runs from
     /// settings after the user has tagged things stay non-destructive.
+    ///
+    /// All steps run in a single storage-layer transaction, so a failure mid-flight
+    /// rolls back cleanly rather than leaving the tags table partially modified.
     pub fn configure_autotag_targets(
         &self,
         keep_default_names: &[String],
         add_custom_names: &[String],
     ) -> Result<Vec<Tag>, AtomicCoreError> {
-        const DEFAULT_NAMES: &[&str] = &["Topics", "People", "Locations", "Organizations", "Events"];
-
-        let keep_lower: std::collections::HashSet<String> = keep_default_names
-            .iter()
-            .map(|n| n.trim().to_lowercase())
-            .filter(|n| !n.is_empty())
-            .collect();
-
-        // Snapshot current top-level tags so we can decide create vs. flag vs. delete.
-        let all_tags = self.storage.get_all_tags_impl()?;
-        let top_level: Vec<&TagWithCount> = all_tags
-            .iter()
-            .filter(|t| t.tag.parent_id.is_none())
-            .collect();
-
-        // Step 1: For each requested default, create it if missing and ensure it's flagged.
-        for default_name in DEFAULT_NAMES {
-            if !keep_lower.contains(&default_name.to_lowercase()) {
-                continue;
-            }
-            let existing = top_level
-                .iter()
-                .find(|t| t.tag.name.eq_ignore_ascii_case(default_name));
-            let tag_id = match existing {
-                Some(t) => t.tag.id.clone(),
-                None => self.storage.create_tag_impl(default_name, None)?.id,
-            };
-            self.storage.set_tag_autotag_target_impl(&tag_id, true)?;
-        }
-
-        // Step 2: For each existing default the user did NOT keep, delete if empty,
-        // otherwise unflag to keep their data intact.
-        for tag_with_count in &top_level {
-            let name = &tag_with_count.tag.name;
-            let is_default = DEFAULT_NAMES.iter().any(|d| d.eq_ignore_ascii_case(name));
-            let is_kept = keep_lower.contains(&name.to_lowercase());
-            if !is_default || is_kept {
-                continue;
-            }
-            if tag_with_count.atom_count == 0 && tag_with_count.children_total == 0 {
-                self.storage.delete_tag_impl(&tag_with_count.tag.id, false)?;
-            } else if tag_with_count.tag.is_autotag_target {
-                self.storage.set_tag_autotag_target_impl(&tag_with_count.tag.id, false)?;
-            }
-        }
-
-        // Step 3: Custom additions — create new top-level tags or flag existing ones.
-        let mut custom_tags: Vec<Tag> = Vec::new();
-        for name in add_custom_names {
-            let trimmed = name.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            // Refresh the top-level snapshot since we may have just created/deleted defaults.
-            let current = self.storage.get_all_tags_impl()?;
-            let existing = current.iter().find(|t| {
-                t.tag.parent_id.is_none() && t.tag.name.eq_ignore_ascii_case(trimmed)
-            });
-            let tag_id = match existing {
-                Some(t) => t.tag.id.clone(),
-                None => self.storage.create_tag_impl(trimmed, None)?.id,
-            };
-            self.storage.set_tag_autotag_target_impl(&tag_id, true)?;
-            if let Some(updated) = self.storage.get_all_tags_impl()?.into_iter()
-                .find(|t| t.tag.id == tag_id)
-            {
-                custom_tags.push(updated.tag);
-            }
-        }
-
-        Ok(custom_tags)
+        self.storage.configure_autotag_targets_impl(keep_default_names, add_custom_names)
     }
 
     // ==================== Search Operations ====================

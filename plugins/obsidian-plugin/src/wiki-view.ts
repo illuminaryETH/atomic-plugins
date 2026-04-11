@@ -180,8 +180,11 @@ export class WikiView extends ItemView {
 
       const url = citation.source_url;
       if (!url || !url.startsWith(vaultPrefix)) {
-        // Non-Obsidian (or different-vault) citation — strip the marker.
-        return "";
+        // Non-Obsidian (or different-vault) citation — leave the marker as-is
+        // so prose like "…Smith [2] and Jones [3]…" doesn't end up with a
+        // dangling gap that looks like a typo. The reader can still see the
+        // citation existed even though we can't link it.
+        return match;
       }
 
       // Decode obsidian://VaultName/encoded/path.md → vault-relative path,

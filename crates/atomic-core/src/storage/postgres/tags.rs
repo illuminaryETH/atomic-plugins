@@ -350,14 +350,169 @@ impl TagStore for PostgresStorage {
     }
 
     async fn set_tag_autotag_target(&self, id: &str, value: bool) -> StorageResult<()> {
-        sqlx::query("UPDATE tags SET is_autotag_target = $1 WHERE id = $2 AND db_id = $3")
+        let result = sqlx::query("UPDATE tags SET is_autotag_target = $1 WHERE id = $2 AND db_id = $3")
             .bind(value)
             .bind(id)
             .bind(&self.db_id)
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(AtomicCoreError::NotFound(format!("tag {}", id)));
+        }
         Ok(())
+    }
+
+    async fn configure_autotag_targets(
+        &self,
+        keep_default_names: &[String],
+        add_custom_names: &[String],
+    ) -> StorageResult<Vec<Tag>> {
+        const DEFAULT_NAMES: &[&str] = &["Topics", "People", "Locations", "Organizations", "Events"];
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        let keep_lower: std::collections::HashSet<String> = keep_default_names
+            .iter()
+            .map(|n| n.trim().to_lowercase())
+            .filter(|n| !n.is_empty())
+            .collect();
+
+        // Snapshot current top-level tags + counts.
+        let top_level: Vec<(String, String, bool, i32, i64)> = sqlx::query_as(
+            "SELECT t.id, t.name, t.is_autotag_target, t.atom_count,
+                    (SELECT COUNT(*) FROM tags c WHERE c.parent_id = t.id AND c.db_id = $1) AS children_count
+             FROM tags t
+             WHERE t.parent_id IS NULL AND t.db_id = $1",
+        )
+        .bind(&self.db_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Step 1: ensure each requested default exists and is flagged.
+        for default_name in DEFAULT_NAMES {
+            if !keep_lower.contains(&default_name.to_lowercase()) {
+                continue;
+            }
+            let existing = top_level.iter().find(|(_, n, _, _, _)| n.eq_ignore_ascii_case(default_name));
+            let id = match existing {
+                Some((id, _, _, _, _)) => id.clone(),
+                None => {
+                    let new_id = Uuid::new_v4().to_string();
+                    sqlx::query(
+                        "INSERT INTO tags (id, name, parent_id, created_at, is_autotag_target, db_id)
+                         VALUES ($1, $2, NULL, $3, TRUE, $4)",
+                    )
+                    .bind(&new_id)
+                    .bind(default_name)
+                    .bind(&now)
+                    .bind(&self.db_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+                    new_id
+                }
+            };
+            sqlx::query("UPDATE tags SET is_autotag_target = TRUE WHERE id = $1 AND db_id = $2")
+                .bind(&id)
+                .bind(&self.db_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+        }
+
+        // Step 2: handle unrequested defaults — delete if empty, otherwise unflag.
+        for (id, name, is_target, atom_count, children_count) in &top_level {
+            let is_default = DEFAULT_NAMES.iter().any(|d| d.eq_ignore_ascii_case(name));
+            let is_kept = keep_lower.contains(&name.to_lowercase());
+            if !is_default || is_kept {
+                continue;
+            }
+            if *atom_count == 0 && *children_count == 0 {
+                sqlx::query("DELETE FROM tags WHERE id = $1 AND db_id = $2")
+                    .bind(id)
+                    .bind(&self.db_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+            } else if *is_target {
+                sqlx::query("UPDATE tags SET is_autotag_target = FALSE WHERE id = $1 AND db_id = $2")
+                    .bind(id)
+                    .bind(&self.db_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+            }
+        }
+
+        // Step 3: custom additions — re-query each name since Step 2 may have deleted rows.
+        let mut custom_tags: Vec<Tag> = Vec::new();
+        for name in add_custom_names {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let existing_id: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM tags WHERE parent_id IS NULL AND LOWER(name) = LOWER($1) AND db_id = $2 LIMIT 1",
+            )
+            .bind(trimmed)
+            .bind(&self.db_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+            let id = match existing_id {
+                Some((id,)) => id,
+                None => {
+                    let new_id = Uuid::new_v4().to_string();
+                    sqlx::query(
+                        "INSERT INTO tags (id, name, parent_id, created_at, is_autotag_target, db_id)
+                         VALUES ($1, $2, NULL, $3, TRUE, $4)",
+                    )
+                    .bind(&new_id)
+                    .bind(trimmed)
+                    .bind(&now)
+                    .bind(&self.db_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+                    new_id
+                }
+            };
+            sqlx::query("UPDATE tags SET is_autotag_target = TRUE WHERE id = $1 AND db_id = $2")
+                .bind(&id)
+                .bind(&self.db_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+            let row: (String, String, Option<String>, String, bool) = sqlx::query_as(
+                "SELECT id, name, parent_id, created_at, is_autotag_target FROM tags WHERE id = $1 AND db_id = $2",
+            )
+            .bind(&id)
+            .bind(&self.db_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+            custom_tags.push(Tag {
+                id: row.0,
+                name: row.1,
+                parent_id: row.2,
+                created_at: row.3,
+                is_autotag_target: row.4,
+            });
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        Ok(custom_tags)
     }
 
     async fn delete_tag(&self, id: &str, recursive: bool) -> StorageResult<()> {
