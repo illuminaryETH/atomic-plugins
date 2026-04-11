@@ -1205,12 +1205,12 @@ impl AtomStore for PostgresStorage {
 
     async fn get_canvas_atom_metadata_light(&self) -> StorageResult<Vec<(String, String, Option<String>, i32)>> {
         let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
-            "SELECT a.id, a.title,
-                    (SELECT t.name FROM atom_tags at JOIN tags t ON at.tag_id = t.id
-                     WHERE at.atom_id = a.id AND at.db_id = $1 AND t.db_id = $1 LIMIT 1) as primary_tag,
-                    (SELECT COUNT(*) FROM atom_tags at WHERE at.atom_id = a.id AND at.db_id = $1) as tag_count
+            "SELECT a.id, a.title, MIN(t.name) AS primary_tag, COUNT(at.tag_id) AS tag_count
              FROM atoms a
-             WHERE a.db_id = $1 AND a.embedding_status = 'complete'",
+             LEFT JOIN atom_tags at ON at.atom_id = a.id AND at.db_id = $1
+             LEFT JOIN tags t ON t.id = at.tag_id AND t.db_id = $1
+             WHERE a.db_id = $1 AND a.embedding_status = 'complete'
+             GROUP BY a.id, a.title",
         )
         .bind(&self.db_id)
         .fetch_all(&self.pool)

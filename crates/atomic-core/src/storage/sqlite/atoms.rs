@@ -996,17 +996,22 @@ impl SqliteStorage {
 
     /// Lightweight canvas metadata: (atom_id, title, primary_tag_name, tag_count).
     /// No full content, no embedding blobs — just what the canvas needs.
+    ///
+    /// Uses a single LEFT JOIN + GROUP BY instead of correlated subqueries so
+    /// the query is O(atoms + tag_links) rather than O(atoms × 2) index lookups.
+    /// `primary_tag` is MIN(name) — alphabetically stable, unlike the previous
+    /// LIMIT-1 nondeterministic pick.
     pub(crate) fn get_canvas_atom_metadata_light_sync(
         &self,
     ) -> StorageResult<Vec<(String, String, Option<String>, i32)>> {
         let conn = self.db.read_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT a.id, a.title,
-                    (SELECT t.name FROM atom_tags at JOIN tags t ON at.tag_id = t.id
-                     WHERE at.atom_id = a.id LIMIT 1) as primary_tag,
-                    (SELECT COUNT(*) FROM atom_tags at WHERE at.atom_id = a.id) as tag_count
+            "SELECT a.id, a.title, MIN(t.name) AS primary_tag, COUNT(at.tag_id) AS tag_count
              FROM atoms a
-             WHERE a.embedding_status = 'complete'"
+             LEFT JOIN atom_tags at ON at.atom_id = a.id
+             LEFT JOIN tags t ON t.id = at.tag_id
+             WHERE a.embedding_status = 'complete'
+             GROUP BY a.id, a.title"
         )?;
 
         let rows = stmt.query_map([], |row| {

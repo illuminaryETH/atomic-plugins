@@ -268,6 +268,49 @@ async fn run_server(
         }
     }
 
+    // Canvas cache warmup: compute the global canvas payload for every
+    // database in the background so the first request after startup hits a
+    // warm cache. Sequenced across databases (not parallel) to avoid an
+    // N-way PCA spike on startup, and off-loaded to the blocking pool so it
+    // never ties up an async worker.
+    {
+        let warm_manager = Arc::clone(&manager);
+        tokio::spawn(async move {
+            let (databases, _) = match warm_manager.list_databases() {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(error = %e, "canvas warmup: failed to list databases");
+                    return;
+                }
+            };
+            for db_info in &databases {
+                let db_core = match warm_manager.get_core(&db_info.id) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(db = %db_info.name, error = %e, "canvas warmup: failed to load database");
+                        continue;
+                    }
+                };
+                let db_name = db_info.name.clone();
+                let started = std::time::Instant::now();
+                let result = tokio::task::spawn_blocking(move || {
+                    db_core.compute_and_get_canvas_data().map(|d| d.atoms.len())
+                })
+                .await;
+                match result {
+                    Ok(Ok(atom_count)) => tracing::info!(
+                        db = %db_name,
+                        atoms = atom_count,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "canvas cache warmed"
+                    ),
+                    Ok(Err(e)) => tracing::warn!(db = %db_name, error = %e, "canvas cache warmup failed"),
+                    Err(e) => tracing::warn!(db = %db_name, error = %e, "canvas cache warmup panicked"),
+                }
+            }
+        });
+    }
+
     // Spawn feed polling scheduler (ticks every 60 seconds, polls all databases)
     {
         let poll_manager = Arc::clone(&manager);

@@ -11,6 +11,7 @@ use crate::extraction::extract_tags_from_content;
 use crate::providers::traits::EmbeddingConfig;
 use crate::providers::{get_embedding_provider, get_model_capabilities, ProviderConfig, ProviderType};
 use crate::storage::StorageBackend;
+use crate::CanvasCache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -796,10 +797,11 @@ pub async fn process_embedding_batch<F>(
     input: AtomInput,
     skip_tagging: bool,
     on_event: F,
+    canvas_cache: Option<CanvasCache>,
 ) where
     F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
 {
-    process_embedding_batch_inner(storage, input, skip_tagging, on_event, None).await
+    process_embedding_batch_inner(storage, input, skip_tagging, on_event, None, canvas_cache).await
 }
 
 /// Process embedding batch with externally-provided settings (from registry).
@@ -809,10 +811,11 @@ pub async fn process_embedding_batch_with_settings<F>(
     skip_tagging: bool,
     on_event: F,
     settings_map: HashMap<String, String>,
+    canvas_cache: Option<CanvasCache>,
 ) where
     F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
 {
-    process_embedding_batch_inner(storage, input, skip_tagging, on_event, Some(settings_map)).await
+    process_embedding_batch_inner(storage, input, skip_tagging, on_event, Some(settings_map), canvas_cache).await
 }
 
 async fn process_embedding_batch_inner<F>(
@@ -821,6 +824,7 @@ async fn process_embedding_batch_inner<F>(
     skip_tagging: bool,
     on_event: F,
     external_settings: Option<HashMap<String, String>>,
+    canvas_cache: Option<CanvasCache>,
 ) where
     F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
 {
@@ -1190,7 +1194,7 @@ async fn process_embedding_batch_inner<F>(
 
     // === Kick off edge computation in the background ===
     if !completed_atom_ids.is_empty() {
-        match process_pending_edges(storage) {
+        match process_pending_edges(storage, canvas_cache) {
             Ok(count) if count > 0 => tracing::info!(count, "Started background edge computation"),
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "Failed to start edge computation"),
@@ -1374,11 +1378,12 @@ pub fn compute_semantic_edges_for_atom(
 pub fn process_pending_embeddings<F>(
     storage: StorageBackend,
     on_event: F,
+    canvas_cache: Option<CanvasCache>,
 ) -> Result<i32, String>
 where
     F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
 {
-    process_pending_embeddings_inner(storage, on_event, None)
+    process_pending_embeddings_inner(storage, on_event, None, canvas_cache)
 }
 
 /// Process pending embeddings with externally-provided settings (from registry).
@@ -1386,11 +1391,12 @@ pub fn process_pending_embeddings_with_settings<F>(
     storage: StorageBackend,
     on_event: F,
     settings_map: HashMap<String, String>,
+    canvas_cache: Option<CanvasCache>,
 ) -> Result<i32, String>
 where
     F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
 {
-    process_pending_embeddings_inner(storage, on_event, Some(settings_map))
+    process_pending_embeddings_inner(storage, on_event, Some(settings_map), canvas_cache)
 }
 
 /// Max atoms to process per background embedding batch (limits memory usage).
@@ -1400,6 +1406,7 @@ fn process_pending_embeddings_inner<F>(
     storage: StorageBackend,
     on_event: F,
     external_settings: Option<HashMap<String, String>>,
+    canvas_cache: Option<CanvasCache>,
 ) -> Result<i32, String>
 where
     F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
@@ -1421,6 +1428,7 @@ where
         let storage = storage.clone();
         let on_event = on_event.clone();
         let settings = external_settings.clone();
+        let canvas_cache = canvas_cache.clone();
 
         crate::executor::spawn(async move {
             // Limit concurrent batch tasks to bound memory
@@ -1437,12 +1445,14 @@ where
                     false,
                     on_event,
                     s,
+                    canvas_cache,
                 ).await,
                 None => process_embedding_batch(
                     storage,
                     input,
                     false,
                     on_event,
+                    canvas_cache,
                 ).await,
             };
         });
@@ -1720,7 +1730,10 @@ const EDGE_BATCH_SIZE: i32 = 500;
 /// Claims atoms in batches, computes edges in a single transaction, marks them
 /// complete, and repeats. Each batch is checkpointed so progress survives restarts.
 /// Returns the total number of atoms processed.
-pub fn process_pending_edges(storage: StorageBackend) -> Result<i32, String> {
+pub fn process_pending_edges(
+    storage: StorageBackend,
+    canvas_cache: Option<CanvasCache>,
+) -> Result<i32, String> {
     let pending_count = storage.count_pending_edges_sync()
         .map_err(|e| e.to_string())?;
 
@@ -1762,6 +1775,13 @@ pub fn process_pending_edges(storage: StorageBackend) -> Result<i32, String> {
             if let Err(e) = storage_clone.set_edges_status_batch_sync(&batch, "complete") {
                 tracing::error!(error = %e, "Failed to mark edges as complete");
                 break;
+            }
+
+            // Schedule a debounced canvas rebuild so subsequent reads pick
+            // up the new edges without thrashing when many batches land in
+            // quick succession — successive calls collapse into one rebuild.
+            if let Some(cache) = &canvas_cache {
+                cache.invalidate_debounced();
             }
 
             total_processed += batch_size;

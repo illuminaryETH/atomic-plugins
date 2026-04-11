@@ -279,22 +279,18 @@ impl SqliteStorage {
             .lock()
             .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
 
-        // Clear all existing edges and mark all embedded atoms as needing edge recomputation
+        // Clear all existing edges and mark all embedded atoms as needing edge recomputation.
+        // The facade (`AtomicCore::rebuild_semantic_edges`) kicks off
+        // `process_pending_edges` afterwards so it can supply the canvas cache
+        // handle — storage has no knowledge of the cache.
         conn.execute("DELETE FROM semantic_edges", [])?;
         let count = conn.execute(
             "UPDATE atoms SET edges_status = 'pending' WHERE embedding_status = 'complete'",
             [],
         )? as i32;
 
-        drop(conn);
-
-        // Kick off the batched edge computation pipeline
         if count > 0 {
-            tracing::info!(count, "Marked atoms for edge recomputation, starting pipeline");
-            embedding::process_pending_edges(
-                crate::storage::StorageBackend::Sqlite(self.clone()),
-            )
-            .map_err(|e| AtomicCoreError::Embedding(e))?;
+            tracing::info!(count, "Marked atoms for edge recomputation");
         }
 
         Ok(count)

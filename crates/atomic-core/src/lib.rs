@@ -92,6 +92,133 @@ pub struct UpdateAtomRequest {
     pub tag_ids: Option<Vec<String>>,
 }
 
+/// Rebuilder closure registered by `AtomicCore` so the cache can recompute
+/// itself in the background during debounced invalidations. Captures
+/// `StorageBackend` only (not `AtomicCore`) to avoid a reference cycle.
+type CanvasRebuilder = Box<dyn Fn() -> Result<Arc<GlobalCanvasData>, AtomicCoreError> + Send + Sync + 'static>;
+
+/// How long `invalidate_debounced` waits after the last invalidation before
+/// kicking off a background rebuild. Sized so that bulk-event storms (e.g.
+/// a 100-atom embedding batch) collapse into a single rebuild.
+const CANVAS_CACHE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// In-memory cache for the global canvas payload.
+///
+/// `compute_and_get_canvas_data` is expensive: it runs PCA on every atom
+/// embedding, materializes metadata + edges, and re-clusters from scratch.
+/// The cache holds the last computed `GlobalCanvasData` behind an `Arc` so
+/// subsequent reads are a lock-free-ish pointer clone.
+///
+/// Two invalidation flavors:
+/// - `invalidate()` — eager clear for direct user mutations. Next read pays
+///   full compute cost.
+/// - `invalidate_debounced()` — keeps the stale payload visible and spawns
+///   a background rebuild after [`CANVAS_CACHE_DEBOUNCE`]. Only the latest
+///   request wins (via a generation counter), so bursts of background events
+///   coalesce into a single rebuild. Used by the batch embedding and edge
+///   pipelines so streaming updates don't thrash the cache.
+#[derive(Clone, Default)]
+pub struct CanvasCache {
+    inner: Arc<CanvasCacheInner>,
+}
+
+#[derive(Default)]
+struct CanvasCacheInner {
+    data: std::sync::RwLock<Option<Arc<GlobalCanvasData>>>,
+    rebuild_gen: std::sync::atomic::AtomicU64,
+    rebuilder: std::sync::OnceLock<CanvasRebuilder>,
+    /// Serializes concurrent cold-cache computes so N simultaneous misses
+    /// don't all pay the full PCA + edge-load cost. Paired with a
+    /// double-checked read of `data` on either side of the lock acquire.
+    compute_lock: std::sync::Mutex<()>,
+}
+
+impl CanvasCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Return the cached payload if present.
+    pub fn get(&self) -> Option<Arc<GlobalCanvasData>> {
+        self.inner.data.read().ok().and_then(|g| g.clone())
+    }
+
+    /// Store a freshly computed payload.
+    pub fn set(&self, data: Arc<GlobalCanvasData>) {
+        if let Ok(mut g) = self.inner.data.write() {
+            *g = Some(data);
+        }
+    }
+
+    /// Eager invalidation: drop the cached payload immediately and bump the
+    /// rebuild generation so any in-flight debounced rebuild no-ops on
+    /// completion. Next read pays full compute cost.
+    pub fn invalidate(&self) {
+        self.inner.rebuild_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(mut g) = self.inner.data.write() {
+            *g = None;
+        }
+    }
+
+    /// Register the rebuilder closure used by debounced invalidations.
+    /// First call wins (backed by `OnceLock`); subsequent calls are no-ops.
+    pub(crate) fn set_rebuilder(&self, rebuilder: CanvasRebuilder) {
+        let _ = self.inner.rebuilder.set(rebuilder);
+    }
+
+    /// Acquire the compute guard used by [`AtomicCore::compute_and_get_canvas_data`]
+    /// to serialize cold-cache rebuilds. The caller double-checks the cache
+    /// after acquiring so only the first waiter pays the compute cost.
+    pub(crate) fn compute_guard(&self) -> Result<std::sync::MutexGuard<'_, ()>, AtomicCoreError> {
+        self.inner
+            .compute_lock
+            .lock()
+            .map_err(|e| AtomicCoreError::Lock(e.to_string()))
+    }
+
+    /// Debounced invalidation: schedule a background rebuild after
+    /// [`CANVAS_CACHE_DEBOUNCE`], keeping the current (stale) payload visible
+    /// to readers in the meantime. Only the latest scheduled rebuild wins —
+    /// rapid successive calls collapse into a single rebuild. No-op if no
+    /// rebuilder has been registered.
+    pub fn invalidate_debounced(&self) {
+        use std::sync::atomic::Ordering;
+        let my_gen = self.inner.rebuild_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        let cache = self.clone();
+        crate::executor::spawn(async move {
+            tokio::time::sleep(CANVAS_CACHE_DEBOUNCE).await;
+            if cache.inner.rebuild_gen.load(Ordering::SeqCst) != my_gen {
+                return;
+            }
+            let cache_compute = cache.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                cache_compute
+                    .inner
+                    .rebuilder
+                    .get()
+                    .map(|f| f())
+            })
+            .await;
+            match result {
+                Ok(Some(Ok(fresh))) => {
+                    if cache.inner.rebuild_gen.load(Ordering::SeqCst) == my_gen {
+                        cache.set(fresh);
+                    }
+                }
+                Ok(Some(Err(e))) => {
+                    tracing::warn!(error = %e, "Debounced canvas rebuild failed");
+                }
+                Ok(None) => {
+                    tracing::debug!("Debounced canvas rebuild skipped: no rebuilder registered");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Debounced canvas rebuild panicked");
+                }
+            }
+        });
+    }
+}
+
 /// Main library facade providing high-level operations
 #[derive(Clone)]
 pub struct AtomicCore {
@@ -109,6 +236,9 @@ pub struct AtomicCore {
     /// created lazily and persist for the lifetime of the process — the
     /// working set is bounded by the number of wiki articles touched.
     wiki_tag_locks: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    /// In-memory cache for `compute_and_get_canvas_data`. Shared across clones
+    /// so every handle sees the same cached payload.
+    canvas_cache: CanvasCache,
 }
 
 impl AtomicCore {
@@ -116,11 +246,14 @@ impl AtomicCore {
     pub fn open(db_path: impl AsRef<Path>) -> Result<Self, AtomicCoreError> {
         let db = Arc::new(Database::open(db_path)?);
         let storage = storage::StorageBackend::Sqlite(storage::SqliteStorage::new(db));
-        Ok(Self {
+        let core = Self {
             storage,
             registry: None,
             wiki_tag_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        })
+            canvas_cache: CanvasCache::new(),
+        };
+        core.register_canvas_rebuilder();
+        Ok(core)
     }
 
     /// Open an existing database with a larger read pool sized for server workloads.
@@ -183,21 +316,27 @@ impl AtomicCore {
             }
         }
 
-        Ok(Self {
+        let core = Self {
             storage,
             registry,
             wiki_tag_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        })
+            canvas_cache: CanvasCache::new(),
+        };
+        core.register_canvas_rebuilder();
+        Ok(core)
     }
 
     /// Create an AtomicCore from an existing PostgresStorage (for multi-db in Postgres mode).
     #[cfg(feature = "postgres")]
     pub fn from_postgres_storage(pg: storage::PostgresStorage) -> Self {
-        Self {
+        let core = Self {
             storage: storage::StorageBackend::Postgres(pg),
             registry: None,
             wiki_tag_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        }
+            canvas_cache: CanvasCache::new(),
+        };
+        core.register_canvas_rebuilder();
+        core
     }
 
     /// Open an existing database or create a new one
@@ -299,11 +438,14 @@ impl AtomicCore {
 
         let db = Arc::new(db);
         let storage = storage::StorageBackend::Sqlite(storage::SqliteStorage::new(db));
-        Ok(Self {
+        let core = Self {
             storage,
             registry,
             wiki_tag_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        })
+            canvas_cache: CanvasCache::new(),
+        };
+        core.register_canvas_rebuilder();
+        Ok(core)
     }
 
     /// Get settings map for passing to background tasks when registry is present.
@@ -462,13 +604,14 @@ impl AtomicCore {
         let content = request.content.clone();
 
         let atom_with_tags = self.storage.insert_atom_impl(&id, &request, &now)?;
+        self.canvas_cache.invalidate();
 
         // Spawn embedding task (non-blocking)
         embedding::spawn_embedding_task_single_with_settings(
             self.storage.clone(),
             id,
             content,
-            on_event,
+            self.wrap_event_for_cache(on_event),
             self.settings_for_background(),
         );
 
@@ -533,6 +676,7 @@ impl AtomicCore {
 
         // Bulk insert via storage
         let atoms_with_tags = self.storage.insert_atoms_bulk_impl(&atoms_to_insert)?;
+        self.canvas_cache.invalidate();
 
         // Collect atom IDs for background embedding (don't clone content — read from DB later)
         let atom_ids: Vec<String> = atoms_with_tags
@@ -548,6 +692,8 @@ impl AtomicCore {
 
             let storage_clone = self.storage.clone();
             let bg_settings = self.settings_for_background();
+            let on_event = self.wrap_event_for_cache(on_event);
+            let canvas_cache = Some(self.canvas_cache.clone());
             executor::spawn(async move {
                 // Limit concurrent batch tasks to bound memory from queued work
                 let _permit = executor::EMBEDDING_BATCH_SEMAPHORE
@@ -582,8 +728,8 @@ impl AtomicCore {
                 if !embedding_pairs.is_empty() {
                     let input = embedding::AtomInput::Preloaded(embedding_pairs);
                     match bg_settings {
-                        Some(s) => embedding::process_embedding_batch_with_settings(storage_clone, input, false, on_event, s).await,
-                        None => embedding::process_embedding_batch(storage_clone, input, false, on_event).await,
+                        Some(s) => embedding::process_embedding_batch_with_settings(storage_clone, input, false, on_event, s, canvas_cache).await,
+                        None => embedding::process_embedding_batch(storage_clone, input, false, on_event, canvas_cache).await,
                     };
                 }
             });
@@ -611,13 +757,14 @@ impl AtomicCore {
         let content = request.content.clone();
 
         let atom_with_tags = self.storage.update_atom_impl(id, &request, &now)?;
+        self.canvas_cache.invalidate();
 
         // Spawn embedding task (non-blocking)
         embedding::spawn_embedding_task_single_with_settings(
             self.storage.clone(),
             id.to_string(),
             content,
-            on_event,
+            self.wrap_event_for_cache(on_event),
             self.settings_for_background(),
         );
 
@@ -634,12 +781,16 @@ impl AtomicCore {
         request: UpdateAtomRequest,
     ) -> Result<AtomWithTags, AtomicCoreError> {
         let now = Utc::now().to_rfc3339();
-        self.storage.update_atom_content_only_impl(id, &request, &now)
+        let result = self.storage.update_atom_content_only_impl(id, &request, &now)?;
+        self.canvas_cache.invalidate();
+        Ok(result)
     }
 
     /// Delete an atom
     pub fn delete_atom(&self, id: &str) -> Result<(), AtomicCoreError> {
-        self.storage.delete_atom_impl(id)
+        self.storage.delete_atom_impl(id)?;
+        self.canvas_cache.invalidate();
+        Ok(())
     }
 
     /// Get atoms by tag (includes atoms with descendant tags)
@@ -709,12 +860,16 @@ impl AtomicCore {
         name: &str,
         parent_id: Option<&str>,
     ) -> Result<Tag, AtomicCoreError> {
-        self.storage.update_tag_impl(id, name, parent_id)
+        let tag = self.storage.update_tag_impl(id, name, parent_id)?;
+        self.canvas_cache.invalidate();
+        Ok(tag)
     }
 
     /// Delete a tag
     pub fn delete_tag(&self, id: &str, recursive: bool) -> Result<(), AtomicCoreError> {
-        self.storage.delete_tag_impl(id, recursive)
+        self.storage.delete_tag_impl(id, recursive)?;
+        self.canvas_cache.invalidate();
+        Ok(())
     }
 
     /// Mark or unmark a top-level tag as a candidate for AI auto-tagging to extend.
@@ -1178,10 +1333,12 @@ impl AtomicCore {
     where
         F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
     {
+        let on_event = self.wrap_event_for_cache(on_event);
+        let canvas_cache = Some(self.canvas_cache.clone());
         match self.settings_for_background() {
-            Some(s) => embedding::process_pending_embeddings_with_settings(self.storage.clone(), on_event, s)
+            Some(s) => embedding::process_pending_embeddings_with_settings(self.storage.clone(), on_event, s, canvas_cache)
                 .map_err(|e| AtomicCoreError::Embedding(e)),
-            None => embedding::process_pending_embeddings(self.storage.clone(), on_event)
+            None => embedding::process_pending_embeddings(self.storage.clone(), on_event, canvas_cache)
                 .map_err(|e| AtomicCoreError::Embedding(e)),
         }
     }
@@ -1189,7 +1346,7 @@ impl AtomicCore {
     /// Process all atoms with pending edge computation in batches.
     /// Runs in the background with checkpointing so it survives restarts.
     pub fn process_pending_edges(&self) -> Result<i32, AtomicCoreError> {
-        embedding::process_pending_edges(self.storage.clone())
+        embedding::process_pending_edges(self.storage.clone(), Some(self.canvas_cache.clone()))
             .map_err(|e| AtomicCoreError::Embedding(e))
     }
 
@@ -1218,7 +1375,7 @@ impl AtomicCore {
             self.storage.clone(),
             atom_id.to_string(),
             content,
-            on_event,
+            self.wrap_event_for_cache(on_event),
             self.settings_for_background(),
         );
 
@@ -1240,6 +1397,8 @@ impl AtomicCore {
             let storage_clone = self.storage.clone();
             let bg_settings = self.settings_for_background();
             let input = embedding::AtomInput::IdsOnly(pending_ids);
+            let on_event = self.wrap_event_for_cache(on_event);
+            let canvas_cache = Some(self.canvas_cache.clone());
             executor::spawn(async move {
                 match bg_settings {
                     Some(s) => embedding::process_embedding_batch_with_settings(
@@ -1248,12 +1407,14 @@ impl AtomicCore {
                         true, // skip tagging - re-embedding only
                         on_event,
                         s,
+                        canvas_cache,
                     ).await,
                     None => embedding::process_embedding_batch(
                         storage_clone,
                         input,
                         true,
                         on_event,
+                        canvas_cache,
                     ).await,
                 };
             });
@@ -1268,12 +1429,18 @@ impl AtomicCore {
         F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
     {
         let atom_ids = self.storage.claim_all_for_reembedding_sync()?;
+        // The claim flips every atom 'complete' → 'processing' unconditionally,
+        // so atoms disappear from the canvas query immediately. Drop any warm
+        // cache so reads during the re-embed window don't serve stale data.
+        self.canvas_cache.invalidate();
         let count = atom_ids.len() as i32;
 
         if count > 0 {
             let storage_clone = self.storage.clone();
             let bg_settings = self.settings_for_background();
             let input = embedding::AtomInput::IdsOnly(atom_ids);
+            let on_event = self.wrap_event_for_cache(on_event);
+            let canvas_cache = Some(self.canvas_cache.clone());
             executor::spawn(async move {
                 match bg_settings {
                     Some(s) => embedding::process_embedding_batch_with_settings(
@@ -1282,12 +1449,14 @@ impl AtomicCore {
                         false,
                         on_event,
                         s,
+                        canvas_cache,
                     ).await,
                     None => embedding::process_embedding_batch(
                         storage_clone,
                         input,
                         false,
                         on_event,
+                        canvas_cache,
                     ).await,
                 };
             });
@@ -1317,6 +1486,7 @@ impl AtomicCore {
         let storage = self.storage.clone();
         let atom_id = atom_id.to_string();
         let bg_settings = self.settings_for_background();
+        let on_event = self.wrap_event_for_cache(on_event);
         executor::spawn(async move {
             let settings = bg_settings.unwrap_or_default();
             embedding::process_tagging_batch_with_settings(storage, vec![atom_id], on_event, settings).await;
@@ -1361,7 +1531,9 @@ impl AtomicCore {
         &self,
         merges: &[compaction::TagMerge],
     ) -> Result<compaction::CompactionResult, AtomicCoreError> {
-        self.storage.apply_tag_merges_impl(merges)
+        let result = self.storage.apply_tag_merges_impl(merges)?;
+        self.canvas_cache.invalidate();
+        Ok(result)
     }
 
     // ==================== Chat Operations ====================
@@ -1499,15 +1671,83 @@ impl AtomicCore {
         self.storage.get_atoms_with_embeddings_impl()
     }
 
+    /// Return a handle to the canvas cache so background tasks (e.g. embedding
+    /// pipeline completion) can invalidate it from outside this facade.
+    pub fn canvas_cache(&self) -> CanvasCache {
+        self.canvas_cache.clone()
+    }
+
+    /// Invalidate the in-memory canvas cache. Called by every mutation path
+    /// that could change canvas output.
+    pub fn invalidate_canvas_cache(&self) {
+        self.canvas_cache.invalidate();
+    }
+
+    /// Wrap a user-provided embedding/tagging event callback so that
+    /// visibility-changing events (`EmbeddingComplete`, `TaggingComplete`)
+    /// schedule a debounced canvas cache rebuild. The returned closure is
+    /// `Clone` so it can be passed to both single-atom and batch spawn sites.
+    /// Debounced (not eager) so streaming batches collapse into one rebuild.
+    fn wrap_event_for_cache<F>(&self, on_event: F) -> impl Fn(EmbeddingEvent) + Send + Sync + Clone + 'static
+    where
+        F: Fn(EmbeddingEvent) + Send + Sync + 'static,
+    {
+        let cache = self.canvas_cache.clone();
+        let on_event = Arc::new(on_event);
+        move |event: EmbeddingEvent| {
+            if matches!(
+                &event,
+                EmbeddingEvent::EmbeddingComplete { .. }
+                    | EmbeddingEvent::TaggingComplete { .. }
+            ) {
+                cache.invalidate_debounced();
+            }
+            on_event(event);
+        }
+    }
+
     /// Compute PCA 2D projection of all atom embeddings and return positioned atoms,
     /// top-K edges per atom, and cluster centroid labels.
     /// Pure read operation — does not persist positions to the database.
     /// Works with both SQLite and Postgres backends via storage dispatch.
-    pub fn compute_and_get_canvas_data(&self) -> Result<GlobalCanvasData, AtomicCoreError> {
+    ///
+    /// Results are memoized via `canvas_cache`; subsequent calls return the
+    /// cached `Arc` until a mutation invalidates it. Cold-cache rebuilds are
+    /// serialized by a compute guard so N simultaneous misses collapse into
+    /// one compute (the first waiter runs it; the rest re-read the cache).
+    pub fn compute_and_get_canvas_data(&self) -> Result<Arc<GlobalCanvasData>, AtomicCoreError> {
+        if let Some(cached) = self.canvas_cache.get() {
+            return Ok(cached);
+        }
+        // Serialize the first compute so concurrent misses don't all pay the
+        // full PCA + edge-load cost. Double-checked after acquiring the
+        // guard — if another waiter already populated the cache while we
+        // blocked, use theirs.
+        let _guard = self.canvas_cache.compute_guard()?;
+        if let Some(cached) = self.canvas_cache.get() {
+            return Ok(cached);
+        }
+        let data = Self::compute_canvas_data_impl(&self.storage)?;
+        self.canvas_cache.set(Arc::clone(&data));
+        Ok(data)
+    }
+
+    /// The pure compute path for the global canvas payload. No cache
+    /// interaction — callers decide whether to read/write the cache. Takes
+    /// `&StorageBackend` instead of `&self` so the debounced rebuilder
+    /// closure (registered on `CanvasCache`) can invoke it without needing
+    /// a full `AtomicCore` handle.
+    fn compute_canvas_data_impl(
+        storage: &storage::StorageBackend,
+    ) -> Result<Arc<GlobalCanvasData>, AtomicCoreError> {
         // Load all average embeddings via storage abstraction (single scan of atom_chunks)
-        let embeddings = self.storage.get_all_embedding_pairs_sync()?;
+        let embeddings = storage.get_all_embedding_pairs_sync()?;
         if embeddings.is_empty() {
-            return Ok(GlobalCanvasData { atoms: vec![], edges: vec![], clusters: vec![] });
+            return Ok(Arc::new(GlobalCanvasData {
+                atoms: vec![],
+                edges: vec![],
+                clusters: vec![],
+            }));
         }
 
         // Run PCA projection (pure math, backend-agnostic)
@@ -1520,8 +1760,8 @@ impl AtomicCore {
 
         // Load lightweight canvas metadata (id, title, first tag, tag count, tag_ids)
         // — no full content, no embedding blobs, single query with LEFT JOIN
-        let atom_metadata = self.storage.get_canvas_atom_metadata_light_sync()?;
-        let mut atom_tag_map = self.storage.get_all_atom_tag_ids_sync()?;
+        let atom_metadata = storage.get_canvas_atom_metadata_light_sync()?;
+        let mut atom_tag_map = storage.get_all_atom_tag_ids_sync()?;
 
         let atoms: Vec<CanvasAtomPosition> = atom_metadata.into_iter()
             .filter_map(|(atom_id, title, primary_tag, tag_count)| {
@@ -1540,7 +1780,7 @@ impl AtomicCore {
             .collect();
 
         // Load semantic edges once, use for both canvas edges and clustering
-        let all_edges = self.storage.get_semantic_edges_raw_sync(0.5)?;
+        let all_edges = storage.get_semantic_edges_raw_sync(0.5)?;
 
         // Build top-k canvas edges from the loaded data
         let edges = Self::filter_top_k_edges(&all_edges, 2);
@@ -1548,10 +1788,20 @@ impl AtomicCore {
         // Compute clusters from the same edge data (no second DB scan)
         let cluster_data = clustering::compute_clusters_from_edges(&all_edges, 3);
         // Enrich clusters with dominant tag names
-        let cluster_data = self.storage.enrich_clusters_with_tags_sync(cluster_data)?;
+        let cluster_data = storage.enrich_clusters_with_tags_sync(cluster_data)?;
         let clusters = Self::build_cluster_centroids(&cluster_data, &position_map);
 
-        Ok(GlobalCanvasData { atoms, edges, clusters })
+        Ok(Arc::new(GlobalCanvasData { atoms, edges, clusters }))
+    }
+
+    /// Register the canvas cache rebuilder so background-debounced
+    /// invalidations can recompute the payload. Called once per constructor.
+    /// Captures a `StorageBackend` clone — no reference cycle.
+    fn register_canvas_rebuilder(&self) {
+        let storage = self.storage.clone();
+        self.canvas_cache.set_rebuilder(Box::new(move || {
+            Self::compute_canvas_data_impl(&storage)
+        }));
     }
 
     /// Filter edges to keep at most top_k per atom, input must be sorted by score DESC.
@@ -1646,9 +1896,27 @@ impl AtomicCore {
         self.storage.get_atom_neighborhood_sync(atom_id, depth, min_similarity)
     }
 
-    /// Rebuild semantic edges for all atoms with embeddings
+    /// Rebuild semantic edges for all atoms with embeddings.
+    ///
+    /// Returns the number of atoms **queued** for edge recomputation, not
+    /// the number of edges written. This call returns as soon as the edge
+    /// pipeline is spawned — actual edge computation runs in the background
+    /// and completes asynchronously. Callers watching for completion should
+    /// subscribe to pipeline events rather than treating the return value
+    /// as a completion signal.
     pub fn rebuild_semantic_edges(&self) -> Result<i32, AtomicCoreError> {
-        self.storage.rebuild_semantic_edges_sync()
+        let count = self.storage.rebuild_semantic_edges_sync()?;
+        self.canvas_cache.invalidate();
+        if count > 0 {
+            // Kick off the background edge pipeline with the cache handle so
+            // each completed batch invalidates the cache as edges land on disk.
+            embedding::process_pending_edges(
+                self.storage.clone(),
+                Some(self.canvas_cache.clone()),
+            )
+            .map_err(|e| AtomicCoreError::Embedding(e))?;
+        }
+        Ok(count)
     }
 
     // ==================== Hierarchical Canvas ====================
@@ -1690,6 +1958,7 @@ impl AtomicCore {
         if count > 0 {
             let storage = self.storage.clone();
             let bg_settings = self.settings_for_background();
+            let on_event = self.wrap_event_for_cache(on_event);
             executor::spawn(async move {
                 match bg_settings {
                     Some(s) => embedding::process_tagging_batch_with_settings(storage, pending_atoms, on_event, s).await,
@@ -1764,6 +2033,7 @@ impl AtomicCore {
             // This drops vec_chunks, recreates it, clears atom_chunks/semantic_edges,
             // and resets every atom's embedding_status to 'pending'.
             self.storage.recreate_vector_index_sync(new_dim)?;
+            self.canvas_cache.invalidate();
             tracing::info!(new_dim, "Recreated active database vector index for dimension change");
             // Now spawn re-embedding — atoms are in 'pending' status after the recreate.
             let queued = self.spawn_reembed_pending(on_event.clone())?;
@@ -2053,14 +2323,17 @@ impl AtomicCore {
             for (atom_id, _) in &imported_atoms {
                 self.storage.set_embedding_status_sync(atom_id, "processing", None).ok();
             }
+            self.canvas_cache.invalidate();
 
             let storage_clone = self.storage.clone();
             let bg_settings = self.settings_for_background();
             let input = embedding::AtomInput::Preloaded(imported_atoms);
+            let on_event = self.wrap_event_for_cache(on_event);
+            let canvas_cache = Some(self.canvas_cache.clone());
             executor::spawn(async move {
                 match bg_settings {
-                    Some(s) => embedding::process_embedding_batch_with_settings(storage_clone, input, false, on_event, s).await,
-                    None => embedding::process_embedding_batch(storage_clone, input, false, on_event).await,
+                    Some(s) => embedding::process_embedding_batch_with_settings(storage_clone, input, false, on_event, s, canvas_cache).await,
+                    None => embedding::process_embedding_batch(storage_clone, input, false, on_event, canvas_cache).await,
                 };
             });
         }
