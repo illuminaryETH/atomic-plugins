@@ -108,7 +108,7 @@ export function BriefingWidget() {
 
   const hasBriefing = latest !== null;
   const eyebrowLabel = hasBriefing
-    ? `TODAY'S BRIEFING · ${formatRelativeDate(latest!.briefing.last_run_at).toUpperCase()}`
+    ? `TODAY'S BRIEFING · ${formatRelativeDate(latest!.briefing.created_at).toUpperCase()}`
     : formatToday(now);
 
   return (
