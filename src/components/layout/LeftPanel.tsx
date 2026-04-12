@@ -14,10 +14,14 @@ export function LeftPanel() {
   const setLeftPanelOpen = useUIStore(s => s.setLeftPanelOpen);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Auto-collapse on small screens, auto-expand on large screens
+  // Auto-collapse on small screens, auto-expand on large screens. When an
+  // overlay is active (reader, wiki, graph) we leave the panel alone — the
+  // overlay flow has already decided the panel should be hidden, and we
+  // don't want to clobber that on mount or on a resize event.
   useEffect(() => {
     const mq = window.matchMedia(`(max-width: ${COLLAPSE_BREAKPOINT}px)`);
     const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      if (useUIStore.getState().overlayNav.index !== -1) return;
       setLeftPanelOpen(!e.matches);
     };
     handleChange(mq);

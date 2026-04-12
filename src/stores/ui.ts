@@ -2,8 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { CanvasLevel } from '../lib/api';
 import { getCanvasLevel } from '../lib/api';
-import { navigateTo, navigateBack, navigateForward } from '../router/navigate-ref';
-import { viewPath, atomReaderPath, wikiReaderPath } from '../router/routes';
+import { navigateTo, navigateBack } from '../router/navigate-ref';
+import { viewPath, atomReaderPath, wikiReaderPath, atomGraphPath } from '../router/routes';
 
 export type DrawerMode = 'editor' | 'viewer' | 'wiki';
 export type ViewMode = 'dashboard' | 'atoms' | 'canvas' | 'wiki';
@@ -330,35 +330,65 @@ export const useUIStore = create<UIStore>()(
             };
           }
         });
-        // localGraph stays UI-only (no URL) — only reader/wiki entries route.
+        const tagId = get().selectedTagId;
         if (entry.type === 'reader') {
-          navigateTo(atomReaderPath(entry.atomId, get().selectedTagId));
+          navigateTo(atomReaderPath(entry.atomId, tagId));
         } else if (entry.type === 'wiki') {
           navigateTo(wikiReaderPath(entry.tagId, entry.tagName));
+        } else {
+          navigateTo(atomGraphPath(entry.atomId, tagId));
         }
       },
 
-      // Overlay back/forward now delegate to browser history so the in-app
-      // chrome and the device's back button agree. RouterBridge reconciles
-      // state from the resulting URL. These are always-enabled in the UI —
-      // we don't try to track "is there forward history" from JS.
+      // Overlay back/forward are scoped to the *overlay session* (the
+      // stack of reader/graph/wiki entries the user has navigated through
+      // since opening the first overlay). They are NOT the same as the
+      // browser's back button — the X button plays that role, closing the
+      // whole overlay and returning to the parent view. Disable at stack
+      // boundaries.
+      //
+      // `replace: true` is deliberate: chevron navigation within an open
+      // overlay shouldn't pile up duplicate browser-history entries every
+      // time you peek at a previous atom.
       overlayBack: () => {
         const state = get();
-        navigateBack(viewPath(state.viewMode, state.selectedTagId));
+        const newIndex = state.overlayNav.index - 1;
+        if (newIndex < 0) return;
+        const entry = state.overlayNav.stack[newIndex];
+        set({ overlayNav: { ...state.overlayNav, index: newIndex } });
+        const tagId = state.selectedTagId;
+        if (entry.type === 'reader') {
+          navigateTo(atomReaderPath(entry.atomId, tagId), { replace: true });
+        } else if (entry.type === 'wiki') {
+          navigateTo(wikiReaderPath(entry.tagId, entry.tagName), { replace: true });
+        } else {
+          navigateTo(atomGraphPath(entry.atomId, tagId), { replace: true });
+        }
       },
 
       overlayForward: () => {
-        navigateForward();
+        const state = get();
+        const newIndex = state.overlayNav.index + 1;
+        if (newIndex >= state.overlayNav.stack.length) return;
+        const entry = state.overlayNav.stack[newIndex];
+        set({ overlayNav: { ...state.overlayNav, index: newIndex } });
+        const tagId = state.selectedTagId;
+        if (entry.type === 'reader') {
+          navigateTo(atomReaderPath(entry.atomId, tagId), { replace: true });
+        } else if (entry.type === 'wiki') {
+          navigateTo(wikiReaderPath(entry.tagId, entry.tagName), { replace: true });
+        } else {
+          navigateTo(atomGraphPath(entry.atomId, tagId), { replace: true });
+        }
       },
 
       overlayDismiss: () => {
-        // Clear local-graph state synchronously (it's URL-less); the router
-        // sync path handles readerState / wikiReaderState / leftPanel restore.
-        set((state) => ({
-          localGraph: { ...state.localGraph, isOpen: false },
-        }));
+        // X closes the overlay outright — regardless of how deep the
+        // in-overlay stack is. Use a direct navigate (not history.back)
+        // so one tap always exits, even if the user has navigated through
+        // several related atoms since opening the overlay.
         const state = get();
-        navigateBack(viewPath(state.viewMode, state.selectedTagId));
+        navigateTo(viewPath(state.viewMode, state.selectedTagId));
       },
 
 
@@ -444,15 +474,29 @@ export const useUIStore = create<UIStore>()(
         })),
 
       // Local graph actions
-      openLocalGraph: (atomId: string, depth: 1 | 2 = 1) =>
-        set({
-          localGraph: {
-            isOpen: true,
-            centerAtomId: atomId,
-            depth,
-            navigationHistory: [atomId],
-          },
-        }),
+      openLocalGraph: (atomId: string, depth: 1 | 2 = 1) => {
+        // Push a graph entry onto the overlay stack so it counts as
+        // in-overlay navigation — chevron back from here returns to the
+        // previous reader/wiki entry.
+        set((state) => {
+          const stack = state.overlayNav.stack.slice(0, state.overlayNav.index + 1);
+          const isFirstOpen = state.overlayNav.index === -1;
+          stack.push({ type: 'graph', atomId });
+          return {
+            localGraph: {
+              isOpen: true,
+              centerAtomId: atomId,
+              depth,
+              navigationHistory: [atomId],
+            },
+            readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' as const },
+            wikiReaderState: { tagId: null, tagName: null },
+            overlayNav: { stack, index: stack.length - 1 },
+            ...(isFirstOpen && state.leftPanelOpen ? { leftPanelOpen: false, leftPanelOpenBeforeReader: true } : {}),
+          };
+        });
+        navigateTo(atomGraphPath(atomId, get().selectedTagId));
+      },
 
       navigateLocalGraph: (atomId: string) =>
         set((state) => ({

@@ -77,6 +77,7 @@ export function MainView() {
   const readerState = useUIStore(s => s.readerState);
   const wikiReaderState = useUIStore(s => s.wikiReaderState);
   const localGraph = useUIStore(s => s.localGraph);
+  const overlayNav = useUIStore(s => s.overlayNav);
   const overlayBack = useUIStore(s => s.overlayBack);
   const overlayForward = useUIStore(s => s.overlayForward);
   const overlayDismiss = useUIStore(s => s.overlayDismiss);
@@ -319,14 +320,16 @@ export function MainView() {
                 <>
                   <button
                     onClick={overlayBack}
-                    className="p-1.5 rounded-md transition-colors text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]"
+                    disabled={overlayNav.index <= 0}
+                    className={`p-1.5 rounded-md transition-colors ${overlayNav.index > 0 ? 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]' : 'text-[var(--color-text-tertiary)] cursor-default'}`}
                     title="Back"
                   >
                     <ChevronLeft className="w-4 h-4" strokeWidth={2} />
                   </button>
                   <button
                     onClick={overlayForward}
-                    className="p-1.5 rounded-md transition-colors text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]"
+                    disabled={overlayNav.index >= overlayNav.stack.length - 1}
+                    className={`p-1.5 rounded-md transition-colors ${overlayNav.index < overlayNav.stack.length - 1 ? 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)]' : 'text-[var(--color-text-tertiary)] cursor-default'}`}
                     title="Forward"
                   >
                     <ChevronRight className="w-4 h-4" strokeWidth={2} />
@@ -672,8 +675,8 @@ export function MainView() {
         )}
       </div>
 
-      {/* FAB — only on atoms view, and only when no overlay is open */}
-      {viewMode === 'atoms' && !readerState.atomId && !wikiReaderState.tagId && !localGraph.isOpen && <FAB onClick={handleNewAtom} title="Create new atom" />}
+      {/* FAB — on atoms + dashboard views, and only when no overlay is open */}
+      {(viewMode === 'atoms' || viewMode === 'dashboard') && !readerState.atomId && !wikiReaderState.tagId && !localGraph.isOpen && <FAB onClick={handleNewAtom} title="Create new atom" />}
 
       {/* Embedding progress overlay */}
       <EmbeddingProgressBanner />

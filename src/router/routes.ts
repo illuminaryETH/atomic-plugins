@@ -14,6 +14,7 @@ import type { ViewMode } from '../stores/ui';
 export type ParsedRoute =
   | { kind: 'view'; viewMode: ViewMode; tagId: string | null }
   | { kind: 'reader'; atomId: string; tagId: string | null }
+  | { kind: 'graph'; atomId: string; tagId: string | null }
   | { kind: 'wiki-reader'; tagId: string; tagName: string | null };
 
 const VIEW_MODES: ViewMode[] = ['dashboard', 'atoms', 'canvas', 'wiki'];
@@ -27,6 +28,12 @@ export function viewPath(mode: ViewMode, tagId?: string | null): string {
 /// Build the URL for an open atom reader.
 export function atomReaderPath(atomId: string, tagId?: string | null): string {
   const base = `/atoms/${encodeURIComponent(atomId)}`;
+  return tagId ? `${base}?tag=${encodeURIComponent(tagId)}` : base;
+}
+
+/// Build the URL for the local-graph view centered on an atom.
+export function atomGraphPath(atomId: string, tagId?: string | null): string {
+  const base = `/atoms/${encodeURIComponent(atomId)}/graph`;
   return tagId ? `${base}?tag=${encodeURIComponent(tagId)}` : base;
 }
 
@@ -48,6 +55,13 @@ export function parseLocation(pathname: string, search: string): ParsedRoute {
   const path = pathname !== '/' && pathname.endsWith('/')
     ? pathname.slice(0, -1)
     : pathname;
+
+  // Local-graph overlay: /atoms/<id>/graph  (checked before reader so the
+  // more specific path wins).
+  const graphMatch = path.match(/^\/atoms\/([^/]+)\/graph$/);
+  if (graphMatch) {
+    return { kind: 'graph', atomId: decodeURIComponent(graphMatch[1]), tagId };
+  }
 
   // Atom reader overlay: /atoms/<id>
   const atomMatch = path.match(/^\/atoms\/([^/]+)$/);

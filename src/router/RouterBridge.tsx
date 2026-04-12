@@ -73,6 +73,10 @@ export function RouterBridge() {
           saveStatus: sameAtom ? store.readerState.saveStatus : 'idle',
         },
         wikiReaderState: { tagId: null, tagName: null },
+        // MainView gives `localGraph.isOpen` priority over reader in its
+        // dispatch — so we must close it here or chevron-back from graph
+        // to reader leaves the graph visible.
+        localGraph: { ...store.localGraph, isOpen: false },
         overlayNav: alreadyTopOfStack
           ? store.overlayNav
           : {
@@ -81,6 +85,37 @@ export function RouterBridge() {
             },
         // Auto-collapse left panel on first overlay open (desktop), matching
         // the pre-routing behavior.
+        ...(store.overlayNav.index === -1 && store.leftPanelOpen
+          ? { leftPanelOpen: false, leftPanelOpenBeforeReader: true }
+          : {}),
+      });
+    } else if (parsed.kind === 'graph') {
+      const prevStack = store.overlayNav.stack;
+      const lastEntry = prevStack[store.overlayNav.index];
+      const alreadyTopOfStack =
+        lastEntry && lastEntry.type === 'graph' && lastEntry.atomId === parsed.atomId;
+
+      useUIStore.setState({
+        selectedTagId: parsed.tagId,
+        readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' },
+        wikiReaderState: { tagId: null, tagName: null },
+        localGraph: {
+          isOpen: true,
+          centerAtomId: parsed.atomId,
+          depth: store.localGraph.depth,
+          // Reset graph-internal nav history when entering via URL — that
+          // history is ephemeral and belongs to this graph session.
+          navigationHistory: [parsed.atomId],
+        },
+        overlayNav: alreadyTopOfStack
+          ? store.overlayNav
+          : {
+              stack: [
+                ...prevStack.slice(0, store.overlayNav.index + 1),
+                { type: 'graph', atomId: parsed.atomId },
+              ],
+              index: store.overlayNav.index + 1,
+            },
         ...(store.overlayNav.index === -1 && store.leftPanelOpen
           ? { leftPanelOpen: false, leftPanelOpenBeforeReader: true }
           : {}),
@@ -97,6 +132,9 @@ export function RouterBridge() {
           tagName: parsed.tagName ?? store.wikiReaderState.tagName,
         },
         readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' },
+        // Close the graph if it was showing — MainView prioritizes graph
+        // over wiki in its render dispatch.
+        localGraph: { ...store.localGraph, isOpen: false },
         overlayNav: alreadyTopOfStack
           ? store.overlayNav
           : {
