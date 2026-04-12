@@ -675,8 +675,8 @@ export function MainView() {
         )}
       </div>
 
-      {/* FAB — only on atoms view, and only when no overlay is open */}
-      {viewMode === 'atoms' && !readerState.atomId && !wikiReaderState.tagId && !localGraph.isOpen && <FAB onClick={handleNewAtom} title="Create new atom" />}
+      {/* FAB — on atoms + dashboard views, and only when no overlay is open */}
+      {(viewMode === 'atoms' || viewMode === 'dashboard') && !readerState.atomId && !wikiReaderState.tagId && !localGraph.isOpen && <FAB onClick={handleNewAtom} title="Create new atom" />}
 
       {/* Embedding progress overlay */}
       <EmbeddingProgressBanner />

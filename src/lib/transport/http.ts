@@ -13,6 +13,8 @@ export class HttpTransport implements Transport {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private wsUrl: string | null = null;
   private authExpired = false;
+  private visibilityHandler: (() => void) | null = null;
+  private onlineHandler: (() => void) | null = null;
   onConnectionChange?: (connected: boolean) => void;
 
   constructor(config: HttpTransportConfig) {
@@ -30,6 +32,7 @@ export class HttpTransport implements Transport {
       .replace(/^http/, 'ws')
       .replace(/\/$/, '')
       + `/ws?token=${encodeURIComponent(this.config.authToken)}`;
+    this.attachLifecycleListeners();
     try {
       await this.connectWs();
     } catch {
@@ -37,6 +40,64 @@ export class HttpTransport implements Transport {
       // HTTP calls will detect auth issues; reconnect will retry in background.
       this.scheduleReconnect();
     }
+  }
+
+  /// On mobile (and whenever a browser tab is backgrounded) the OS will kill
+  /// the WebSocket silently. When we come back to foreground or the network
+  /// returns, we want to reconnect immediately instead of waiting out the
+  /// current exponential-backoff delay (which can be up to 30s).
+  private attachLifecycleListeners(): void {
+    if (typeof window === 'undefined') return;
+    if (this.visibilityHandler || this.onlineHandler) return; // already attached
+
+    const wakeUp = () => {
+      if (!this.shouldReconnect || this.connected) return;
+      // If a connection attempt is already in flight, don't start another
+      // one — overwriting `this.ws` would orphan the pending socket, which
+      // could then resolve later, fire a spurious onConnectionChange, and
+      // leak an open WebSocket we'll never close.
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING) return;
+      this.forceReconnectSoon();
+    };
+
+    this.visibilityHandler = () => {
+      if (document.visibilityState === 'visible') wakeUp();
+    };
+    this.onlineHandler = wakeUp;
+
+    document.addEventListener('visibilitychange', this.visibilityHandler);
+    window.addEventListener('online', this.onlineHandler);
+  }
+
+  private detachLifecycleListeners(): void {
+    if (typeof window === 'undefined') return;
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+    if (this.onlineHandler) {
+      window.removeEventListener('online', this.onlineHandler);
+      this.onlineHandler = null;
+    }
+  }
+
+  private forceReconnectSoon(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectDelay = 1000; // reset backoff — we have a fresh reason to hope
+    // Fire on next tick rather than immediately, so multiple wake signals
+    // (visibility + online firing back-to-back) collapse into one attempt.
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      try {
+        await this.connectWs();
+      } catch {
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+        this.scheduleReconnect();
+      }
+    }, 0);
   }
 
   private connectWs(): Promise<void> {
@@ -89,6 +150,7 @@ export class HttpTransport implements Transport {
 
   disconnect(): void {
     this.shouldReconnect = false;
+    this.detachLifecycleListeners();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

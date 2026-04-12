@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { getTransport } from '../lib/transport';
+import { cacheKey, readCache, writeCache } from '../lib/cache/idb';
+import { useDatabasesStore } from './databases';
 
 export interface Tag {
   id: string;
@@ -33,6 +35,7 @@ interface TagsStore {
   isLoading: boolean;
   isCompacting: boolean;
   error: string | null;
+  hydrateFromCache: (dbId?: string | null) => Promise<void>;
   fetchTags: () => Promise<void>;
   fetchTagChildren: (parentId: string) => Promise<void>;
   fetchMoreTagChildren: (parentId: string) => Promise<void>;
@@ -90,6 +93,16 @@ function findTagInTree(nodes: TagWithCount[], tagId: string): TagWithCount | nul
   return null;
 }
 
+/// Fetch the full tag tree from the server and persist it to the IDB cache.
+/// Several mutation endpoints refetch-then-set for the updated tree; this
+/// helper keeps the cache in sync with each of those writes in one place.
+async function fetchAllTagsFresh(): Promise<TagWithCount[]> {
+  const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+  const dbId = useDatabasesStore.getState().activeId;
+  if (dbId) void writeCache(cacheKey('tags', dbId), tags);
+  return tags;
+}
+
 export const useTagsStore = create<TagsStore>((set, get) => ({
   tags: [],
   isLoading: false,
@@ -99,11 +112,22 @@ export const useTagsStore = create<TagsStore>((set, get) => ({
   fetchTags: async () => {
     set({ isLoading: true, error: null });
     try {
-      const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+      const tags = await fetchAllTagsFresh();
       set({ tags, isLoading: false });
     } catch (error) {
       set({ error: String(error), isLoading: false });
     }
+  },
+
+  hydrateFromCache: async (dbId?: string | null) => {
+    const resolvedDbId = dbId ?? useDatabasesStore.getState().activeId;
+    if (!resolvedDbId) return;
+    // Don't clobber a freshly-fetched tree.
+    if (get().tags.length > 0) return;
+    const cached = await readCache<TagWithCount[]>(cacheKey('tags', resolvedDbId));
+    if (!cached) return;
+    if (get().tags.length > 0) return;
+    set({ tags: cached.data });
   },
 
   fetchTagChildren: async (parentId: string) => {
@@ -151,7 +175,7 @@ export const useTagsStore = create<TagsStore>((set, get) => ({
         parentId: parentId || null,
       });
       // Refetch tags to get updated tree structure
-      const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+      const tags = await fetchAllTagsFresh();
       set({ tags });
       return tag;
     } catch (error) {
@@ -169,7 +193,7 @@ export const useTagsStore = create<TagsStore>((set, get) => ({
         parentId: parentId || null,
       });
       // Refetch tags to get updated tree structure
-      const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+      const tags = await fetchAllTagsFresh();
       set({ tags });
       return tag;
     } catch (error) {
@@ -183,7 +207,7 @@ export const useTagsStore = create<TagsStore>((set, get) => ({
     try {
       await getTransport().invoke('delete_tag', { id, recursive: recursive ?? false });
       // Refetch tags to get updated tree structure
-      const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+      const tags = await fetchAllTagsFresh();
       set({ tags });
     } catch (error) {
       set({ error: String(error) });
@@ -195,7 +219,7 @@ export const useTagsStore = create<TagsStore>((set, get) => ({
     set({ error: null });
     try {
       await getTransport().invoke('set_tag_autotag_target', { id, value });
-      const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+      const tags = await fetchAllTagsFresh();
       set({ tags });
     } catch (error) {
       set({ error: String(error) });
@@ -210,7 +234,7 @@ export const useTagsStore = create<TagsStore>((set, get) => ({
         keepDefaults,
         addCustom,
       });
-      const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+      const tags = await fetchAllTagsFresh();
       set({ tags });
       return created;
     } catch (error) {
@@ -224,7 +248,7 @@ export const useTagsStore = create<TagsStore>((set, get) => ({
     try {
       const result = await getTransport().invoke<CompactionResult>('compact_tags');
       // Refetch tags to get updated tree structure
-      const tags = await getTransport().invoke<TagWithCount[]>('get_all_tags');
+      const tags = await fetchAllTagsFresh();
       set({ tags, isCompacting: false });
       return result;
     } catch (error) {

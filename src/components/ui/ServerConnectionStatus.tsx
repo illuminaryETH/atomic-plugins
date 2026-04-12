@@ -1,39 +1,60 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useUIStore } from '../../stores/ui';
 
+// Don't surface transient disconnects. Mobile in particular cycles WS
+// connections constantly (backgrounding, signal dips) and surfacing every
+// blip is just noise. Only show the indicator once we've been down long
+// enough that the user would notice something is broken.
+const SHOW_OFFLINE_AFTER_MS = 4000;
+// Only celebrate a reconnect if the outage was visible to the user —
+// otherwise we're shouting about something they never saw.
+const CELEBRATE_RECONNECT_AFTER_MS = 8000;
+
 export function ServerConnectionStatus() {
   const serverConnected = useUIStore(s => s.serverConnected);
-  const prevConnected = useRef<boolean | null>(null);
   const hasEverConnected = useRef(false);
+  const disconnectedAt = useRef<number | null>(null);
+  const [showOffline, setShowOffline] = useState(false);
 
   useEffect(() => {
     if (serverConnected) {
-      // Only show reconnection toast if we previously had a successful connection
-      // that was then lost — not on the very first connect
-      if (hasEverConnected.current && prevConnected.current === false) {
-        toast.success('Reconnected to server', { duration: 3000 });
+      const downFor = disconnectedAt.current
+        ? Date.now() - disconnectedAt.current
+        : 0;
+      if (hasEverConnected.current && downFor > CELEBRATE_RECONNECT_AFTER_MS) {
+        toast.success('Reconnected', { duration: 2500 });
       }
       hasEverConnected.current = true;
+      disconnectedAt.current = null;
+      setShowOffline(false);
+      return;
     }
-    prevConnected.current = serverConnected;
+
+    // Just went offline (or started offline). Arm a timer; only flip the
+    // indicator on if we're still down when it fires.
+    if (!hasEverConnected.current) return;
+    disconnectedAt.current ??= Date.now();
+    const timer = setTimeout(() => setShowOffline(true), SHOW_OFFLINE_AFTER_MS);
+    return () => clearTimeout(timer);
   }, [serverConnected]);
 
-  if (serverConnected || !hasEverConnected.current) {
-    return null;
-  }
+  if (!showOffline) return null;
 
   return (
-    <div className="fixed bottom-5 left-5 z-40 animate-in fade-in slide-in-from-bottom-2 duration-200">
-      <div className="flex items-center gap-3 px-4 py-3 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg shadow-lg">
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
-        </span>
-        <span className="text-sm text-[var(--color-text-secondary)]">
-          Server disconnected — reconnecting...
-        </span>
-      </div>
+    <div
+      role="status"
+      aria-label="Disconnected from server, attempting to reconnect"
+      title="Disconnected — attempting to reconnect"
+      className="fixed bottom-3 right-3 z-40 flex items-center gap-1.5 px-2 py-1 rounded-full bg-[var(--color-bg-card)]/90 border border-[var(--color-border)] shadow-sm backdrop-blur-sm animate-in fade-in duration-300"
+    >
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-60" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+      </span>
+      <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+        Offline
+      </span>
     </div>
   );
 }

@@ -4,11 +4,13 @@ import { MainView } from './MainView';
 import { RightDrawer } from './RightDrawer';
 import { LoadingIndicator } from '../ui/LoadingIndicator';
 import { ServerConnectionStatus } from '../ui/ServerConnectionStatus';
+import { RouterBridge } from '../../router/RouterBridge';
 import { SettingsModal } from '../settings/SettingsModal';
 import { OnboardingWizard } from '../onboarding';
 import { CommandPalette } from '../command-palette';
 import { useAtomsStore } from '../../stores/atoms';
 import { useTagsStore } from '../../stores/tags';
+import { useDatabasesStore } from '../../stores/databases';
 import { useUIStore } from '../../stores/ui';
 import { useTheme, useFont } from '../../hooks';
 import { verifyProviderConfigured } from '../../lib/api';
@@ -115,6 +117,19 @@ export function Layout() {
   }, []);
 
   const initializeApp = async () => {
+    // Paint cached tag tree + atoms first (if any) so the UI has something
+    // to show while the network call races. Hydration reads the persisted
+    // `activeId`; it no-ops on first-ever session (no cache yet).
+    //
+    // `fetchDatabases` runs in parallel so `activeId` is fresh by the time
+    // atoms/tags fetches finish and want to write to the cache. We don't
+    // await it because we don't want cache hydration to block on a network
+    // round-trip — the offline case still needs to paint instantly.
+    void useDatabasesStore.getState().fetchDatabases();
+    await Promise.all([
+      useAtomsStore.getState().hydrateFromCache(),
+      useTagsStore.getState().hydrateFromCache(),
+    ]);
     await Promise.all([fetchAtoms(), fetchTags()]);
   };
 
@@ -144,6 +159,7 @@ export function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-bg-main)]">
+      <RouterBridge />
       <LeftPanel />
       <MainView />
       <RightDrawer />
