@@ -1,9 +1,12 @@
 //! Per-task state helpers.
 //!
-//! Scheduled task state is stored in the per-database `settings` table under
-//! keys of the form `task.{task_id}.{field}`. Using the settings table means
-//! we get the existing registry/data-db routing for free — no new tables, no
-//! new migrations, no new query paths.
+//! Scheduled task state is stored in each data database's `settings` table
+//! under keys of the form `task.{task_id}.{field}`. State is intentionally
+//! **per-database**, not per-deployment — a multi-DB server runs each task
+//! independently for every database, so `last_run` / `enabled` /
+//! `interval_hours` must not be shared through the registry. We therefore
+//! bypass `AtomicCore::get_settings` (which falls through to the registry)
+//! and go straight to the per-DB storage backend.
 //!
 //! Storage layout per task:
 //!
@@ -14,10 +17,15 @@
 use crate::AtomicCore;
 use crate::error::AtomicCoreError;
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 use std::time::Duration;
 
 fn key(task_id: &str, field: &str) -> String {
     format!("task.{}.{}", task_id, field)
+}
+
+fn per_db_settings(core: &AtomicCore) -> Result<HashMap<String, String>, AtomicCoreError> {
+    core.storage().get_all_settings_sync()
 }
 
 /// Read the last successful run timestamp for a task. Returns `None` if the
@@ -26,7 +34,7 @@ pub fn get_last_run(
     core: &AtomicCore,
     task_id: &str,
 ) -> Result<Option<DateTime<Utc>>, AtomicCoreError> {
-    let settings = core.get_settings()?;
+    let settings = per_db_settings(core)?;
     let Some(raw) = settings.get(&key(task_id, "last_run")) else {
         return Ok(None);
     };
@@ -53,14 +61,15 @@ pub fn set_last_run(
     task_id: &str,
     when: DateTime<Utc>,
 ) -> Result<(), AtomicCoreError> {
-    core.set_setting(&key(task_id, "last_run"), &when.to_rfc3339())
+    core.storage()
+        .set_setting_sync(&key(task_id, "last_run"), &when.to_rfc3339())
 }
 
 /// Check whether a task is enabled. Defaults to `default` when the setting
 /// is missing; treats any non-`"false"` value as enabled to tolerate casing
 /// differences.
 pub fn is_enabled(core: &AtomicCore, task_id: &str, default: bool) -> bool {
-    match core.get_settings() {
+    match per_db_settings(core) {
         Ok(settings) => match settings.get(&key(task_id, "enabled")) {
             Some(v) => !matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "no" | "off"),
             None => default,
@@ -72,7 +81,7 @@ pub fn is_enabled(core: &AtomicCore, task_id: &str, default: bool) -> bool {
 /// Read the configured interval for a task. Falls back to `default` when the
 /// setting is missing or unparseable.
 pub fn get_interval(core: &AtomicCore, task_id: &str, default: Duration) -> Duration {
-    let settings = match core.get_settings() {
+    let settings = match per_db_settings(core) {
         Ok(s) => s,
         Err(_) => return default,
     };
