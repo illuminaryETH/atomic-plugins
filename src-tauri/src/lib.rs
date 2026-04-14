@@ -4,6 +4,8 @@ use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
 use tracing;
 
+mod apple_notes;
+
 const SIDECAR_PORT: u16 = 44380;
 const HEALTH_POLL_INTERVAL_MS: u64 = 100;
 const HEALTH_TIMEOUT_MS: u64 = 10_000;
@@ -234,6 +236,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_local_server_config,
             get_mcp_bridge_path,
+            apple_notes::read_apple_notes,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

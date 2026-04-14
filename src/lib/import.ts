@@ -8,6 +8,12 @@
 import type { DirEntry } from '@tauri-apps/plugin-fs';
 import { getTransport } from './transport';
 import type { ImportResult } from './api';
+import {
+  createTagCache,
+  resolveTagIds as resolveTagIdsShared,
+  type HierarchicalTag,
+  type TagCache,
+} from './import-tags';
 
 // Lazy-load Tauri FS plugin (only available in desktop app, not web builds)
 async function tauriFs() {
@@ -25,10 +31,7 @@ interface ParsedNote {
   relativePath: string;
 }
 
-interface HierarchicalTag {
-  name: string;
-  parentPath: string[]; // e.g. ["Projects", "Work"] for tag "Tasks" under Projects > Work
-}
+export type { HierarchicalTag };
 
 export interface ImportProgress {
   current: number;
@@ -208,50 +211,6 @@ function parseNote(
   };
 }
 
-// ---------- Tag resolution ----------
-
-async function getOrCreateTag(
-  name: string,
-  parentId: string | null,
-  cache: Map<string, string>,
-): Promise<string> {
-  const cacheKey = parentId ? `${parentId}:${name}` : name;
-  const cached = cache.get(cacheKey);
-  if (cached) return cached;
-
-  const tag = await getTransport().invoke<{ id: string }>('create_tag', {
-    name,
-    parentId,
-  });
-  cache.set(cacheKey, tag.id);
-  return tag.id;
-}
-
-async function resolveTagIds(
-  note: ParsedNote,
-  tagCache: Map<string, string>,
-): Promise<string[]> {
-  const tagIds: string[] = [];
-
-  // Hierarchical folder tags
-  for (const ht of note.folderTags) {
-    let parentId: string | null = null;
-    for (let i = 0; i < ht.parentPath.length; i++) {
-      parentId = await getOrCreateTag(ht.parentPath[i], parentId, tagCache);
-    }
-    const id = await getOrCreateTag(ht.name, parentId, tagCache);
-    if (!tagIds.includes(id)) tagIds.push(id);
-  }
-
-  // Flat frontmatter tags (root level)
-  for (const name of note.frontmatterTags) {
-    const id = await getOrCreateTag(name, null, tagCache);
-    if (!tagIds.includes(id)) tagIds.push(id);
-  }
-
-  return tagIds;
-}
-
 // ---------- Main import function ----------
 
 interface BulkCreateResult {
@@ -287,7 +246,7 @@ export async function importMarkdownFolder(
   let errors = 0;
   let tagsLinked = 0;
 
-  const tagCache = new Map<string, string>();
+  const tagCache: TagCache = createTagCache();
 
   // Parse all notes and resolve tags upfront
   const prepared: { note: ParsedNote; tagIds: string[] }[] = [];
@@ -305,7 +264,7 @@ export async function importMarkdownFolder(
 
       let tagIds: string[] = [];
       if (importTags) {
-        tagIds = await resolveTagIds(note, tagCache);
+        tagIds = await resolveTagIdsShared(note.folderTags, note.frontmatterTags, tagCache);
         tagsLinked += tagIds.length;
       }
 

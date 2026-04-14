@@ -546,7 +546,10 @@ name = "atomic"
 version = "1.21.7"
 dependencies = [
  "atomic-core",
+ "base64 0.22.1",
+ "flate2",
  "reqwest 0.12.26",
+ "rusqlite",
  "serde",
  "tauri",
  "tauri-build",
@@ -554,6 +557,8 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tauri-plugin-shell",
+ "tempfile",
+ "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
 ]
