@@ -1,6 +1,6 @@
 {
   "name": "obsidian-atomic",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Obsidian plugin for Atomic knowledge base — semantic search, live sync, and AI wiki articles",
   "main": "main.js",
   "scripts": {
