@@ -156,7 +156,7 @@ npm run release:patch         # Bump version and build
 
 ## Database
 
-SQLite with sqlite-vec extension. Multi-database support with a registry/data split:
+SQLite with sqlite-vec extension is the default. A parallel Postgres backend lives under `storage/postgres/` and implements the same storage traits — used when running against shared infrastructure. Everything below describes the SQLite layout; Postgres swaps file-per-DB for schema-per-DB but exposes the same API. Multi-database support with a registry/data split:
 
 ### File Layout
 
@@ -175,7 +175,20 @@ When running the Tauri desktop app, the base directory is platform-specific:
 ### Registry vs Data Databases
 
 - **`registry.db`** holds cross-database state: settings (provider config, model selection), API tokens, and the `databases` table mapping UUIDs to names.
-- **Data databases** (`default.db`, `{uuid}.db`) each hold atoms, tags, chunks, embeddings, wiki articles, conversations, messages, semantic edges, and atom positions.
+- **Data databases** (`default.db`, `{uuid}.db`) each hold atoms, tags, chunks, embeddings, wiki articles, conversations, messages, semantic edges, and atom positions. Each data DB *also* has its own `settings` table (seeded by `migrate_settings` in `db.rs`) — this is where per-DB configuration lives.
+
+### Multi-DB Gotchas (read before adding per-DB state)
+
+Atomic can run with N data databases under a single process. `atomic-server`'s background loops (`main.rs`) fan out over every database returned by `manager.list_databases()` — feed polling, the scheduled-task runner, etc. Any code that reads or writes "per-database" state needs to actually be per-database. Two traps:
+
+1. **`AtomicCore::get_settings()` / `set_setting()` silently route to `registry.db` when a registry is attached** (see `lib.rs` — it checks `self.registry` first). That's correct for *global* config (provider, models, wiki prompt), but it means any helper that calls these methods from within a per-DB context is writing a single shared key, not a per-DB key. If you want per-DB settings, call `core.storage().get_all_settings_sync()` / `set_setting_sync()` directly to bypass the registry. The scheduler state helpers (`scheduler::state`) are the canonical example.
+
+2. **Background loops that iterate all DBs need per-(task, db) state and locks, or only one DB will ever make progress.** The scheduled-task runner holds a `(task_id, db_id)` keyed lock map and each task's `last_run` lives in its DB's settings table. Feed polling follows the same shape. If you add a new cross-DB background job, mirror that pattern — don't introduce a singleton timestamp or lock.
+
+Quick checklist when touching anything that runs per-DB:
+- Does this state need to be isolated between DBs? If yes, write via `core.storage()`, not `core.get_settings()` / `set_setting()`.
+- Does this lock/guard need to be per-DB? If yes, key it on `db_id`, not just `task_id` or a process-global `Mutex`.
+- If you're adding a scheduled or polling loop in `atomic-server::main`, iterate `manager.list_databases()` and resolve a fresh `core` per DB via `manager.get_core(&db_id)`.
 
 ### Direct Access with sqlite3
 
