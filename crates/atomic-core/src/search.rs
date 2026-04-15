@@ -454,6 +454,11 @@ async fn search_semantic_chunks(
     // sqlite-vec requires MATCH to be the sole constraint on vec_chunks, so the
     // cutoff is applied in an outer JOIN over the top-k by-distance set.
     let similar_chunks: Vec<(String, f32)> = if let Some(ref c) = cutoff {
+        // sqlite-vec requires MATCH to be the sole predicate on vec_chunks, so the
+        // cutoff filter runs over the top-k result set. Inflate the inner LIMIT so
+        // that if most of the nearest chunks predate the cutoff we still have
+        // enough survivors to reach the caller's requested limit.
+        let knn_limit = fetch_limit.saturating_mul(5);
         let mut stmt = conn
             .prepare(
                 "SELECT v.chunk_id, v.distance
@@ -467,11 +472,12 @@ async fn search_semantic_chunks(
                  INNER JOIN atom_chunks ac ON ac.id = v.chunk_id
                  INNER JOIN atoms a ON a.id = ac.atom_id
                  WHERE a.created_at >= ?3
-                 ORDER BY v.distance",
+                 ORDER BY v.distance
+                 LIMIT ?4",
             )
             .map_err(|e| format!("Failed to prepare vec query: {}", e))?;
         let rows: Vec<_> = stmt
-            .query_map(rusqlite::params![&query_blob, fetch_limit, c], row_map)
+            .query_map(rusqlite::params![&query_blob, knn_limit, c, fetch_limit], row_map)
             .map_err(|e| format!("Failed to query similar chunks: {}", e))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("Failed to collect similar chunks: {}", e))?;

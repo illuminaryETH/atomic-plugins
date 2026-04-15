@@ -475,6 +475,11 @@ fn vec_knn_with_cutoff(
 ) -> Result<Vec<(String, f32)>, AtomicCoreError> {
     let row_map = |row: &rusqlite::Row| Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?));
     if let Some(cutoff) = created_after {
+        // sqlite-vec requires MATCH to be the sole predicate on vec_chunks, so the
+        // cutoff filter runs over the top-k result set. Inflate the inner LIMIT so
+        // that if most of the nearest chunks predate the cutoff we still have
+        // enough survivors to reach the caller's requested limit.
+        let knn_limit = fetch_limit.saturating_mul(5);
         let mut stmt = conn
             .prepare(
                 "SELECT v.chunk_id, v.distance
@@ -488,11 +493,12 @@ fn vec_knn_with_cutoff(
                  INNER JOIN atom_chunks c ON c.id = v.chunk_id
                  INNER JOIN atoms a ON a.id = c.atom_id
                  WHERE a.created_at >= ?3
-                 ORDER BY v.distance",
+                 ORDER BY v.distance
+                 LIMIT ?4",
             )
             .map_err(|e| AtomicCoreError::Search(format!("Failed to prepare vec query: {}", e)))?;
         let rows: Vec<_> = stmt
-            .query_map(rusqlite::params![query_blob, fetch_limit, cutoff], row_map)
+            .query_map(rusqlite::params![query_blob, knn_limit, cutoff, fetch_limit], row_map)
             .map_err(|e| AtomicCoreError::Search(format!("Failed to query similar chunks: {}", e)))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| AtomicCoreError::Search(format!("Failed to collect similar chunks: {}", e)))?;

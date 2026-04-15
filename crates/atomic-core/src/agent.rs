@@ -572,7 +572,7 @@ where
                         let query = tool_args["query"].as_str().unwrap_or("");
                         let limit = tool_args["limit"].as_i64().unwrap_or(5) as i32;
                         let since_days = tool_args.get("since_days")
-                            .and_then(|v| v.as_i64())
+                            .and_then(|v| v.as_f64())
                             .map(|v| v as i32)
                             .filter(|d| *d > 0);
                         match execute_search_atoms(&storage, query, limit, since_days, &ctx.scope_tag_ids, external_settings.clone()).await {
