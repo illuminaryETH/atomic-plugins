@@ -442,7 +442,7 @@ export class SyncEngine {
   startWatching(): void {
     if (this.watching) return;
     this.watching = true;
-    console.log("Atomic: auto-sync started, watching vault events");
+    console.debug("Atomic: auto-sync started, watching vault events");
 
     this.eventRefs.push(
       this.app.vault.on("modify", (file) => this.onFileChange(file)),

@@ -41,55 +41,63 @@ export default class AtomicPlugin extends Plugin {
     // Commands
     this.addCommand({
       id: "semantic-search",
-      name: "Semantic Search",
+      name: "Semantic search",
       callback: () => new SearchModal(this.app, this.client).open(),
     });
 
     this.addCommand({
       id: "sync-current-note",
-      name: "Sync Current Note",
-      callback: () => this.syncEngine.syncCurrentFile(),
+      name: "Sync current note",
+      editorCheckCallback: (checking, _editor, ctx) => {
+        if (!ctx.file) return false;
+        if (!checking) this.syncEngine.syncCurrentFile();
+        return true;
+      },
     });
 
     this.addCommand({
       id: "sync-vault",
-      name: "Sync Entire Vault",
+      name: "Sync entire vault",
       callback: () => this.syncEngine.syncAll(),
     });
 
     this.addCommand({
       id: "toggle-auto-sync",
-      name: "Toggle Auto Sync",
+      name: "Toggle auto sync",
       callback: () => this.syncEngine.toggleAutoSync(),
     });
 
     this.addCommand({
       id: "open-similar-notes",
-      name: "Open Similar Notes",
-      callback: () => this.activateView(SIMILAR_VIEW_TYPE),
+      name: "Open similar notes",
+      editorCheckCallback: (checking, _editor, ctx) => {
+        if (!ctx.file) return false;
+        if (!checking) this.activateView(SIMILAR_VIEW_TYPE);
+        return true;
+      },
     });
 
     this.addCommand({
       id: "open-wiki",
-      name: "Open Wiki",
+      name: "Open wiki",
       callback: () => this.activateView(WIKI_VIEW_TYPE),
     });
 
     this.addCommand({
       id: "open-chat",
-      name: "Open Chat",
+      name: "Open chat",
       callback: () => this.activateView(CHAT_VIEW_TYPE),
     });
 
     this.addCommand({
       id: "open-canvas",
-      name: "Open Knowledge Graph Canvas",
+      name: "Open knowledge graph canvas",
       callback: () => this.activateCanvasView(),
     });
 
     this.addCommand({
       id: "setup-wizard",
-      name: "Setup Wizard",
+      name: "Setup wizard",
       callback: () => new OnboardingModal(this.app, this).open(),
     });
 

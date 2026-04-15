@@ -37,10 +37,7 @@ export class AtomicSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Atomic Settings" });
-
-    // Connection
-    containerEl.createEl("h3", { text: "Connection" });
+    new Setting(containerEl).setName("Connection").setHeading();
 
     new Setting(containerEl)
       .setName("Server URL")
@@ -56,7 +53,7 @@ export class AtomicSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Auth Token")
+      .setName("Auth token")
       .setDesc("Bearer token for API authentication")
       .addText((text) => {
         text
@@ -90,7 +87,7 @@ export class AtomicSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Test Connection")
+      .setName("Test connection")
       .setDesc("Verify that the server is reachable and the token is valid")
       .addButton((button) =>
         button.setButtonText("Test").onClick(async () => {
@@ -103,11 +100,10 @@ export class AtomicSettingTab extends PluginSettingTab {
         })
       );
 
-    // Sync
-    containerEl.createEl("h3", { text: "Sync" });
+    new Setting(containerEl).setName("Sync").setHeading();
 
     new Setting(containerEl)
-      .setName("Vault Name")
+      .setName("Vault name")
       .setDesc("Identifier used in source URLs (defaults to vault name)")
       .addText((text) =>
         text
@@ -120,7 +116,7 @@ export class AtomicSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Auto Sync")
+      .setName("Auto sync")
       .setDesc("Automatically sync notes when they change")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.autoSync).onChange(async (value) => {
@@ -135,7 +131,7 @@ export class AtomicSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Sync Debounce (ms)")
+      .setName("Sync debounce (ms)")
       .setDesc("Wait this long after the last edit before syncing (default: 2000)")
       .addText((text) =>
         text
@@ -151,7 +147,7 @@ export class AtomicSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Sync Folder Tags")
+      .setName("Sync folder tags")
       .setDesc("Create hierarchical tags from folder structure")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.syncFolderTags).onChange(async (value) => {
@@ -161,7 +157,7 @@ export class AtomicSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Delete on Remove")
+      .setName("Delete on remove")
       .setDesc("Delete atoms from Atomic when the note is deleted in Obsidian")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.deleteOnRemove).onChange(async (value) => {
@@ -171,7 +167,7 @@ export class AtomicSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Exclude Patterns")
+      .setName("Exclude patterns")
       .setDesc("Glob patterns to exclude from sync, one per line")
       .addTextArea((text) =>
         text
