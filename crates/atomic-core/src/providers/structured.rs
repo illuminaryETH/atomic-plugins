@@ -977,12 +977,33 @@ mod tests {
             .join("src/providers/testdata/schemas.snap.json")
     }
 
+    // serde_json::Map's backing store is BTreeMap by default but flips to
+    // IndexMap when any crate in the graph enables serde_json's
+    // `preserve_order` feature (utoipa does, so an atomic-server workspace
+    // build unifies it on). That means we can't rely on serialization order
+    // — canonicalize by recursively sorting object keys before comparing.
+    fn canonicalize(v: &Value) -> Value {
+        match v {
+            Value::Object(m) => {
+                let mut keys: Vec<&String> = m.keys().collect();
+                keys.sort();
+                let mut out = serde_json::Map::new();
+                for k in keys {
+                    out.insert(k.clone(), canonicalize(&m[k]));
+                }
+                Value::Object(out)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(canonicalize).collect()),
+            _ => v.clone(),
+        }
+    }
+
     #[test]
     fn schema_snapshot_matches_live_schemas() {
         let live = collect_live_schemas();
-        // serde_json::Map is BTreeMap-backed by default, so serialized keys
-        // are deterministically sorted — no canonicalization needed.
-        let current = serde_json::to_string_pretty(&live)
+        let canonical: std::collections::BTreeMap<&'static str, Value> =
+            live.iter().map(|(k, v)| (*k, canonicalize(v))).collect();
+        let current = serde_json::to_string_pretty(&canonical)
             .expect("schema snapshot should serialize");
 
         let path = snapshot_path();
