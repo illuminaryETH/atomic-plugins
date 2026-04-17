@@ -6,6 +6,10 @@ export async function getConfig() {
   return result[CONFIG_KEY] || { serverUrl: DEFAULT_URL, apiToken: '', database: '' };
 }
 
+export async function setConfig(config) {
+  await chrome.storage.local.set({ [CONFIG_KEY]: config });
+}
+
 export function authHeaders(apiToken, database) {
   const headers = { 'Content-Type': 'application/json' };
   if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
