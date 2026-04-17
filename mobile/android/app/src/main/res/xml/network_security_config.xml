@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mirror of the iOS NSAllowsLocalNetworking carve-out: allow cleartext HTTP
+  to localhost (for dev:mobile:android via `adb reverse`) and to 10.0.2.2
+  (the Android emulator's alias for the host machine). Everything else uses
+  the platform default (cleartext blocked on SDK 28+).
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

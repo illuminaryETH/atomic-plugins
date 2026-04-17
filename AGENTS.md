@@ -108,6 +108,8 @@ crates/mcp-bridge/          # stdio-to-HTTP MCP bridge (for Claude Desktop, etc.
 src-tauri/                  # Tauri desktop app (sidecar launcher)
 src/                        # React frontend (TypeScript)
 ios/                        # Native iOS app (SwiftUI, HTTP client)
+mobile/ios/                 # Capacitor iOS wrapper around the React frontend
+mobile/android/             # Capacitor Android wrapper around the React frontend
 scripts/                    # Import, build, and database utilities
 databases/                  # Local data dir (registry.db + per-DB files)
 ```
@@ -152,6 +154,13 @@ xcrun simctl install booted <path-to-.app>       # Install on running simulator
 xcrun simctl launch booted com.atomic.mobile     # Launch app
 xcrun simctl terminate booted com.atomic.mobile  # Stop app before reinstall
 open -a Simulator                                # Show simulator window (view via screen sharing)
+
+# Capacitor mobile (shared React frontend packaged as a webview)
+npm run dev:mobile:ios         # Build, install, launch iOS Capacitor app with Vite HMR
+npm run dev:mobile:android     # Build, install, launch Android Capacitor app with Vite HMR
+npm run build:mobile           # Production build for both platforms (cap sync ios + android)
+npm run cap:open:ios           # Open mobile/ios/App in Xcode
+npm run cap:open:android       # Open mobile/android in Android Studio
 
 # Production
 npm run tauri build

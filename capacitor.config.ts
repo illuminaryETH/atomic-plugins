@@ -14,6 +14,10 @@ const config: CapacitorConfig = {
     contentInset: 'never',
     backgroundColor: '#1e1e1e',
   },
+  android: {
+    path: 'mobile/android',
+    backgroundColor: '#1e1e1e',
+  },
   ...(devUrl
     ? { server: { url: devUrl, cleartext: true } }
     : {}),
