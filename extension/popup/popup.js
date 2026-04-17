@@ -36,11 +36,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function updateStatus() {
   const statusEl = document.getElementById('status');
   const labelEl = document.getElementById('status-label');
-  const { serverUrl, apiToken } = await getConfig();
+  const { serverUrl, apiToken, database } = await getConfig();
 
   try {
     const response = await fetch(`${serverUrl}/health`, {
-      headers: authHeaders(apiToken)
+      headers: authHeaders(apiToken, database)
     });
     if (response.ok) {
       statusEl.classList.remove('offline');
@@ -93,7 +93,7 @@ async function extractFromTab(tabId, mode) {
 // Capture from current tab
 async function captureCurrentTab(mode) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const { serverUrl, apiToken } = await getConfig();
+  const { serverUrl, apiToken, database } = await getConfig();
 
   try {
     const result = await extractFromTab(tab.id, mode);
@@ -101,7 +101,7 @@ async function captureCurrentTab(mode) {
     if (result && result.content) {
       const response = await fetch(`${serverUrl}/api/atoms`, {
         method: 'POST',
-        headers: authHeaders(apiToken),
+        headers: authHeaders(apiToken, database),
         body: JSON.stringify({
           content: result.content,
           source_url: result.url,

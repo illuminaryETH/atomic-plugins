@@ -3,11 +3,12 @@ const DEFAULT_URL = 'http://localhost:44380';
 
 export async function getConfig() {
   const result = await chrome.storage.local.get(CONFIG_KEY);
-  return result[CONFIG_KEY] || { serverUrl: DEFAULT_URL, apiToken: '' };
+  return result[CONFIG_KEY] || { serverUrl: DEFAULT_URL, apiToken: '', database: '' };
 }
 
-export function authHeaders(apiToken) {
+export function authHeaders(apiToken, database) {
   const headers = { 'Content-Type': 'application/json' };
   if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
+  if (database) headers['X-Atomic-Database'] = database;
   return headers;
 }

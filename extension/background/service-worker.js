@@ -76,10 +76,10 @@ async function captureContent(tabId, mode) {
 
 // Send to desktop app via HTTP
 async function sendToDesktop(capture) {
-  const { serverUrl, apiToken } = await getConfig();
+  const { serverUrl, apiToken, database } = await getConfig();
   const response = await fetch(`${serverUrl}/api/atoms`, {
     method: 'POST',
-    headers: authHeaders(apiToken),
+    headers: authHeaders(apiToken, database),
     body: JSON.stringify({
       content: capture.content,
       source_url: capture.url,
@@ -114,11 +114,11 @@ async function getQueue() {
 
 // Check connection and sync queue
 async function syncQueue() {
-  const { serverUrl, apiToken } = await getConfig();
+  const { serverUrl, apiToken, database } = await getConfig();
   try {
     // Health check
     const response = await fetch(`${serverUrl}/health`, {
-      headers: authHeaders(apiToken)
+      headers: authHeaders(apiToken, database)
     });
     if (!response.ok) throw new Error('Unhealthy');
 
@@ -165,9 +165,9 @@ async function updateBadge() {
     chrome.action.setBadgeBackgroundColor({ color: '#f59e0b' });
   } else {
     // Clear badge when queue is empty, show connection status dot
-    const { serverUrl, apiToken } = await getConfig();
+    const { serverUrl, apiToken, database } = await getConfig();
     const response = await fetch(`${serverUrl}/health`, {
-      headers: authHeaders(apiToken)
+      headers: authHeaders(apiToken, database)
     }).catch(() => null);
     if (response && response.ok) {
       chrome.action.setBadgeBackgroundColor({ color: '#22c55e' });
