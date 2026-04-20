@@ -5,6 +5,8 @@ export interface ReaderEditorActions {
   stopEditing: () => Promise<void>;
   undo: () => void;
   redo: () => void;
+  openSearch: (query?: string) => void;
+  closeSearch: () => void;
 }
 
 export const readerEditorActions: { current: ReaderEditorActions | null } = { current: null };

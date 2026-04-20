@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { Bold, Code2, Italic, Link2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from 'react';
+import { createPortal } from 'react-dom';
+import { Bold, ChevronDown, ChevronUp, Code2, Italic, Link2, Search, X } from 'lucide-react';
 import { Crepe } from '@milkdown/crepe';
 import type { CrepeConfig } from '@milkdown/crepe';
-import { commandsCtx, editorViewCtx } from '@milkdown/kit/core';
+import { commandsCtx, editorViewCtx, prosePluginsCtx } from '@milkdown/kit/core';
 import {
   emphasisSchema,
   inlineCodeSchema,
@@ -19,6 +20,12 @@ import { redo, undo } from '@milkdown/prose/history';
 import '@milkdown/crepe/theme/common/style.css';
 import '../../styles/crepe-atomic-theme.css';
 import { withAtomicImageConfig } from '../../editor/milkdown/crepe-config';
+import {
+  createAtomicEditorSearchPlugin,
+  getAtomicEditorSearchState,
+  setAtomicEditorSearch,
+} from '../../editor/milkdown/search-plugin';
+import { openExternalUrl } from '../../lib/platform';
 
 type SelectionToolbarState = {
   visible: boolean;
@@ -48,6 +55,20 @@ type ImagePopoverState = {
   src: string;
 };
 
+type SearchPanelState = {
+  open: boolean;
+  query: string;
+  currentIndex: number;
+  totalMatches: number;
+};
+
+type SearchPanelPosition = {
+  top: number;
+  left?: number;
+  right?: number;
+  width?: number;
+};
+
 const HIDDEN_SELECTION_TOOLBAR: SelectionToolbarState = {
   visible: false,
   left: 0,
@@ -75,6 +96,100 @@ const HIDDEN_IMAGE_POPOVER: ImagePopoverState = {
   top: 0,
   src: '',
 };
+
+function AtomicSearchPanel({
+  state,
+  position,
+  inputRef,
+  onQueryChange,
+  onNext,
+  onPrevious,
+  onClose,
+}: {
+  state: SearchPanelState;
+  position: SearchPanelPosition | null;
+  inputRef: MutableRefObject<HTMLInputElement | null>;
+  onQueryChange: (value: string) => void;
+  onNext: () => void;
+  onPrevious: () => void;
+  onClose: () => void;
+}) {
+  if (!state.open || !position || typeof document === 'undefined') return null;
+
+  const currentDisplay = state.totalMatches === 0 ? 0 : state.currentIndex + 1;
+
+  return createPortal(
+    <div
+      className="atomic-editor-search-panel"
+      style={{
+        top: `${position.top}px`,
+        ...(position.left !== undefined ? { left: `${position.left}px` } : {}),
+        ...(position.right !== undefined ? { right: `${position.right}px` } : {}),
+        ...(position.width !== undefined ? { width: `${position.width}px` } : {}),
+      }}
+    >
+      <Search className="atomic-editor-search-panel__icon" size={14} strokeWidth={2.1} />
+      <input
+        ref={inputRef}
+        value={state.query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.shiftKey) {
+              onPrevious();
+            } else {
+              onNext();
+            }
+            return;
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+        placeholder="Find in note"
+        className="atomic-editor-search-panel__input"
+      />
+      <span className="atomic-editor-search-panel__count">
+        {currentDisplay}/{state.totalMatches}
+      </span>
+      <button
+        type="button"
+        className="atomic-editor-search-panel__button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onPrevious}
+        aria-label="Previous match"
+        title="Previous match"
+      >
+        <ChevronUp size={14} strokeWidth={2.1} />
+      </button>
+      <button
+        type="button"
+        className="atomic-editor-search-panel__button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onNext}
+        aria-label="Next match"
+        title="Next match"
+      >
+        <ChevronDown size={14} strokeWidth={2.1} />
+      </button>
+      <button
+        type="button"
+        className="atomic-editor-search-panel__button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onClose}
+        aria-label="Close find"
+        title="Close find"
+        >
+          <X size={14} strokeWidth={2.1} />
+        </button>
+    </div>,
+    document.body
+  );
+}
 
 function AtomicSelectionToolbar({
   state,
@@ -210,6 +325,7 @@ function AtomicImagePopover({
 type AtomicMilkdownEditorInnerProps = {
   documentId?: string;
   markdownSource: string;
+  initialSearchText?: string | null;
   crepeConfig?: CrepeConfig;
   blurEditorOnMount?: boolean;
   onMarkdownChange?: (markdown: string) => void;
@@ -220,6 +336,8 @@ export interface AtomicMilkdownEditorHandle {
   focus: () => void;
   undo: () => void;
   redo: () => void;
+  openSearch: (query?: string) => void;
+  closeSearch: () => void;
   getMarkdown: () => string;
   getContentDOM: () => HTMLElement | null;
 }
@@ -229,6 +347,7 @@ export type AtomicMilkdownEditorProps = AtomicMilkdownEditorInnerProps;
 export function AtomicMilkdownEditor({
   markdownSource,
   documentId,
+  initialSearchText,
   crepeConfig,
   blurEditorOnMount = false,
   onMarkdownChange,
@@ -248,6 +367,15 @@ export function AtomicMilkdownEditor({
   );
   const [linkPopover, setLinkPopover] = useState<LinkPopoverState>(HIDDEN_LINK_POPOVER);
   const [imagePopover, setImagePopover] = useState<ImagePopoverState>(HIDDEN_IMAGE_POPOVER);
+  const [searchPanel, setSearchPanel] = useState<SearchPanelState>(() => ({
+    open: Boolean(initialSearchText?.trim()),
+    query: initialSearchText?.trim() ?? '',
+    currentIndex: 0,
+    totalMatches: 0,
+  }));
+  const [searchPanelPosition, setSearchPanelPosition] = useState<SearchPanelPosition | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const lastAppliedInitialSearchRef = useRef<string | null>(initialSearchText?.trim() ?? null);
 
   const effectiveCrepeConfig = useMemo(() => withAtomicImageConfig(crepeConfig), [crepeConfig]);
   const editorIdentity = documentId ?? markdownSource;
@@ -278,6 +406,99 @@ export function AtomicMilkdownEditor({
     hasUserEditRef.current = true;
   }, []);
 
+  const computeSearchPanelPosition = useCallback((): SearchPanelPosition | null => {
+    const root = rootRef.current;
+    if (!root || typeof window === 'undefined') return null;
+
+    const rect = root.getBoundingClientRect();
+    const viewportPadding = window.innerWidth <= 900 ? 8 : 12;
+    const top = 64;
+
+    if (window.innerWidth <= 900) {
+      return {
+        top,
+        left: viewportPadding,
+        width: Math.max(window.innerWidth - viewportPadding * 2, 0),
+      };
+    }
+
+    const right = Math.max(window.innerWidth - rect.right + viewportPadding, viewportPadding);
+    return {
+      top,
+      right,
+      width: Math.min(360, Math.max(rect.width - viewportPadding * 2, 260)),
+    };
+  }, []);
+
+  const scrollCurrentSearchMatchIntoView = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    window.requestAnimationFrame(() => {
+      const current = root.querySelector<HTMLElement>('.search-highlight[data-current="true"]');
+      current?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    });
+  }, []);
+
+  const syncSearch = useCallback(
+    (query: string, currentIndex: number, scrollIntoView = false) => {
+      const result = runEditorAction((crepe) =>
+        crepe.editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          view.dispatch(setAtomicEditorSearch(view.state, query, currentIndex));
+          const state = getAtomicEditorSearchState(view.state);
+          return {
+            currentIndex: state?.currentIndex ?? 0,
+            totalMatches: state?.matchCount ?? 0,
+          };
+        })
+      );
+
+      setSearchPanel((prev) => ({
+        ...prev,
+        query,
+        currentIndex: result?.currentIndex ?? 0,
+        totalMatches: result?.totalMatches ?? 0,
+      }));
+
+      if (scrollIntoView && query.trim() && (result?.totalMatches ?? 0) > 0) {
+        scrollCurrentSearchMatchIntoView();
+      }
+    },
+    [runEditorAction, scrollCurrentSearchMatchIntoView]
+  );
+
+  const openSearchPanel = useCallback(
+    (query?: string) => {
+      const nextQuery = (query ?? searchPanel.query).trim();
+      const nextIndex = query !== undefined && query !== searchPanel.query ? 0 : searchPanel.currentIndex;
+      setSearchPanelPosition(computeSearchPanelPosition());
+
+      setSearchPanel((prev) => ({
+        ...prev,
+        open: true,
+        query: nextQuery,
+        currentIndex: nextIndex,
+      }));
+      syncSearch(nextQuery, nextIndex, true);
+      window.requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+    },
+    [computeSearchPanelPosition, searchPanel.currentIndex, searchPanel.query, syncSearch]
+  );
+
+  const closeSearchPanel = useCallback(() => {
+    setSearchPanel({
+      open: false,
+      query: '',
+      currentIndex: 0,
+      totalMatches: 0,
+    });
+    syncSearch('', 0, false);
+  }, [syncSearch]);
+
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) {
@@ -289,6 +510,9 @@ export function AtomicMilkdownEditor({
       root: mount,
       defaultValue: markdownSource,
       ...effectiveCrepeConfig,
+    });
+    crepe.editor.config((ctx) => {
+      ctx.update(prosePluginsCtx, (plugins) => [...plugins, createAtomicEditorSearchPlugin()]);
     });
 
     crepe.on((listeners) => {
@@ -312,6 +536,12 @@ export function AtomicMilkdownEditor({
     setSelectionToolbar(HIDDEN_SELECTION_TOOLBAR);
     setLinkPopover(HIDDEN_LINK_POPOVER);
     setImagePopover(HIDDEN_IMAGE_POPOVER);
+    setSearchPanel({
+      open: Boolean(initialSearchText?.trim()),
+      query: initialSearchText?.trim() ?? '',
+      currentIndex: 0,
+      totalMatches: 0,
+    });
 
     void crepe.create().then(() => {
       if (cancelled) {
@@ -320,6 +550,11 @@ export function AtomicMilkdownEditor({
 
       isReadyRef.current = true;
       setIsReady(true);
+      if (initialSearchText?.trim()) {
+        syncSearch(initialSearchText.trim(), 0, true);
+      } else {
+        syncSearch('', 0, false);
+      }
 
       if (blurEditorOnMount) {
         const root = rootRef.current;
@@ -392,7 +627,44 @@ export function AtomicMilkdownEditor({
       crepeRef.current = null;
       void crepe.destroy();
     };
-  }, [blurEditorOnMount, editorIdentity, effectiveCrepeConfig]);
+  }, [blurEditorOnMount, editorIdentity, effectiveCrepeConfig, initialSearchText, syncSearch]);
+
+  useEffect(() => {
+    if (!searchPanel.open) return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [searchPanel.open]);
+
+  useEffect(() => {
+    if (!searchPanel.open) {
+      setSearchPanelPosition(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      setSearchPanelPosition(computeSearchPanelPosition());
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [computeSearchPanelPosition, searchPanel.open]);
+
+  useEffect(() => {
+    const normalized = initialSearchText?.trim() ?? null;
+    if (!normalized) {
+      lastAppliedInitialSearchRef.current = null;
+      return;
+    }
+    if (!isReady || lastAppliedInitialSearchRef.current === normalized) return;
+    lastAppliedInitialSearchRef.current = normalized;
+    openSearchPanel(normalized);
+  }, [initialSearchText, isReady, openSearchPanel]);
 
   useEffect(() => {
     if (!editorHandleRef) {
@@ -423,6 +695,12 @@ export function AtomicMilkdownEditor({
           });
         });
       },
+      openSearch: (query?: string) => {
+        openSearchPanel(query);
+      },
+      closeSearch: () => {
+        closeSearchPanel();
+      },
       getMarkdown: () => runEditorAction((crepe) => crepe.getMarkdown()) ?? '',
       getContentDOM: () => rootRef.current?.querySelector('.ProseMirror') as HTMLElement | null,
     };
@@ -430,7 +708,24 @@ export function AtomicMilkdownEditor({
     return () => {
       editorHandleRef.current = null;
     };
-  }, [editorHandleRef, runEditorAction]);
+  }, [closeSearchPanel, editorHandleRef, openSearchPanel, runEditorAction]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        openSearchPanel();
+      }
+    };
+
+    root.addEventListener('keydown', handleKeyDown);
+    return () => {
+      root.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [openSearchPanel]);
 
   useEffect(() => {
     const element = rootRef.current;
@@ -682,7 +977,7 @@ export function AtomicMilkdownEditor({
       if (clickedIconArea) {
         const href = anchor.getAttribute('href')?.trim();
         if (!href) return;
-        window.open(href, '_blank', 'noopener,noreferrer');
+        void openExternalUrl(href);
         return;
       }
 
@@ -909,7 +1204,7 @@ export function AtomicMilkdownEditor({
   const handleOpenImage = useCallback(() => {
     const src = imagePopover.src.trim();
     if (!src) return;
-    window.open(src, '_blank', 'noopener,noreferrer');
+    void openExternalUrl(src);
   }, [imagePopover.src]);
 
   const handleCopyImageUrl = useCallback(() => {
@@ -918,11 +1213,56 @@ export function AtomicMilkdownEditor({
     void navigator.clipboard.writeText(src);
   }, [imagePopover.src]);
 
+  const handleSearchQueryChange = useCallback(
+    (value: string) => {
+      setSearchPanel((prev) => ({
+        ...prev,
+        open: true,
+        query: value,
+        currentIndex: 0,
+      }));
+      syncSearch(value, 0, true);
+    },
+    [syncSearch]
+  );
+
+  const handleSearchNext = useCallback(() => {
+    setSearchPanel((prev) => {
+      const nextIndex = prev.totalMatches > 0 ? (prev.currentIndex + 1) % prev.totalMatches : 0;
+      syncSearch(prev.query, nextIndex, true);
+      return {
+        ...prev,
+        currentIndex: nextIndex,
+      };
+    });
+  }, [syncSearch]);
+
+  const handleSearchPrevious = useCallback(() => {
+    setSearchPanel((prev) => {
+      const nextIndex =
+        prev.totalMatches > 0 ? (prev.currentIndex - 1 + prev.totalMatches) % prev.totalMatches : 0;
+      syncSearch(prev.query, nextIndex, true);
+      return {
+        ...prev,
+        currentIndex: nextIndex,
+      };
+    });
+  }, [syncSearch]);
+
   return (
     <div
       ref={rootRef}
       className="atomic-milkdown-editor pm-eval-editor relative mx-auto w-full max-w-6xl"
     >
+      <AtomicSearchPanel
+        state={searchPanel}
+        position={searchPanelPosition}
+        inputRef={searchInputRef}
+        onQueryChange={handleSearchQueryChange}
+        onNext={handleSearchNext}
+        onPrevious={handleSearchPrevious}
+        onClose={closeSearchPanel}
+      />
       <div ref={mountRef} />
       <AtomicSelectionToolbar
         state={selectionToolbar}

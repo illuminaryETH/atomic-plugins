@@ -53,6 +53,66 @@
   position: relative;
 }
 
+.atomic-editor-search-panel {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-bg-card) 94%, black 6%);
+  box-shadow: var(--crepe-shadow-1);
+  backdrop-filter: blur(10px);
+}
+
+.atomic-editor-search-panel__icon {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.atomic-editor-search-panel__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  line-height: 1.2;
+  outline: none;
+}
+
+.atomic-editor-search-panel__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.atomic-editor-search-panel__count {
+  flex: 0 0 auto;
+  min-width: 2.75rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.atomic-editor-search-panel__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.atomic-editor-search-panel__button:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
 :is(.pm-eval-shell, .atomic-milkdown-editor) .milkdown .ProseMirror h1,
 :is(.pm-eval-shell, .atomic-milkdown-editor) .milkdown .ProseMirror h2,
 :is(.pm-eval-shell, .atomic-milkdown-editor) .milkdown .ProseMirror h3,
@@ -169,6 +229,18 @@
 :is(.pm-eval-shell, .atomic-milkdown-editor) .milkdown .ProseMirror a:hover::after {
   background-color: color-mix(in srgb, var(--atomic-prose-link-hover) 84%, white 16%);
   opacity: 1;
+}
+
+:is(.pm-eval-shell, .atomic-milkdown-editor) .milkdown .ProseMirror .search-highlight {
+  background-color: rgba(255, 213, 79, 0.4);
+  color: inherit;
+  border-radius: 2px;
+  box-decoration-break: clone;
+}
+
+:is(.pm-eval-shell, .atomic-milkdown-editor) .milkdown .ProseMirror .search-highlight[data-current='true'] {
+  background-color: rgba(255, 152, 0, 0.7);
+  outline: 2px solid var(--color-accent);
 }
 
 :is(.pm-eval-shell, .atomic-milkdown-editor) .milkdown .ProseMirror code {

@@ -141,7 +141,7 @@ interface AtomReaderContentProps {
 }
 
 function AtomReaderContent({
-  atom, initialEditing,
+  atom, highlightText, initialEditing,
   onDismiss, onDelete, onTagClick, onRelatedAtomClick, onViewGraph, onAtomUpdated,
 }: AtomReaderContentProps) {
   const readerTheme = useUIStore(s => s.readerTheme);
@@ -198,6 +198,8 @@ function AtomReaderContent({
       },
       undo: () => editorHandleRef.current?.undo(),
       redo: () => editorHandleRef.current?.redo(),
+      openSearch: (query?: string) => editorHandleRef.current?.openSearch(query),
+      closeSearch: () => editorHandleRef.current?.closeSearch(),
     };
     return () => {
       readerEditorActions.current = null;
@@ -206,19 +208,33 @@ function AtomReaderContent({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && document.querySelector('.atomic-editor-search-panel')) {
+        e.preventDefault();
+        readerEditorActions.current?.closeSearch();
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         void saveNow();
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        editorHandleRef.current?.openSearch();
+        return;
+      }
       if (e.key === 'Escape' && !showDeleteModal) {
         e.preventDefault();
-        onDismiss();
+        void (async () => {
+          await flushDraft();
+          onDismiss();
+        })();
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onDismiss, saveNow, showDeleteModal]);
+  }, [flushDraft, onDismiss, saveNow, showDeleteModal]);
 
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
@@ -255,6 +271,7 @@ function AtomReaderContent({
                 key={atom.id}
                 documentId={atom.id}
                 markdownSource={editContent}
+                initialSearchText={highlightText}
                 crepeConfig={ATOMIC_CREPE_BASE_CONFIG}
                 blurEditorOnMount={!initialEditing}
                 onMarkdownChange={setEditContent}
