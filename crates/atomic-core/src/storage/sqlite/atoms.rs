@@ -10,6 +10,7 @@ use crate::{
     UpdateAtomRequest, ATOM_COLUMNS, ATOM_COLUMNS_A,
 };
 use async_trait::async_trait;
+use rusqlite::OptionalExtension;
 
 impl SqliteStorage {
     pub(crate) fn count_atoms_impl(&self) -> StorageResult<i32> {
@@ -266,11 +267,30 @@ impl SqliteStorage {
             conn.execute_batch("BEGIN")?;
 
             if let Err(e) = (|| -> Result<(), AtomicCoreError> {
+                let content_changed = if reset_embedding_status {
+                    true
+                } else {
+                    let existing: Option<String> = conn
+                        .query_row("SELECT content FROM atoms WHERE id = ?1", [id], |row| row.get(0))
+                        .optional()?;
+                    existing.as_deref() != Some(request.content.as_str())
+                };
+
                 if reset_embedding_status {
                     conn.execute(
-                        "UPDATE atoms SET content = ?1, source_url = ?2, source = ?3, published_at = ?4, updated_at = ?5, embedding_status = ?6,
-                         title = ?7, snippet = ?8
-                         WHERE id = ?9",
+                        "UPDATE atoms
+                         SET content = ?1,
+                             source_url = ?2,
+                             source = ?3,
+                             published_at = ?4,
+                             updated_at = ?5,
+                             embedding_status = ?6,
+                             tagging_status = ?7,
+                             embedding_error = NULL,
+                             tagging_error = NULL,
+                             title = ?8,
+                             snippet = ?9
+                         WHERE id = ?10",
                         (
                             &request.content,
                             &request.source_url,
@@ -278,27 +298,58 @@ impl SqliteStorage {
                             &request.published_at,
                             updated_at,
                             "pending",
+                            "pending",
                             &title,
                             &snippet,
                             id,
                         ),
                     )?;
                 } else {
-                    conn.execute(
-                        "UPDATE atoms SET content = ?1, source_url = ?2, source = ?3, published_at = ?4, updated_at = ?5,
-                         title = ?6, snippet = ?7
-                         WHERE id = ?8",
-                        (
-                            &request.content,
-                            &request.source_url,
-                            &source,
-                            &request.published_at,
-                            updated_at,
-                            &title,
-                            &snippet,
-                            id,
-                        ),
-                    )?;
+                    if content_changed {
+                        conn.execute(
+                            "UPDATE atoms
+                             SET content = ?1,
+                                 source_url = ?2,
+                                 source = ?3,
+                                 published_at = ?4,
+                                 updated_at = ?5,
+                                 embedding_status = ?6,
+                                 tagging_status = ?7,
+                                 embedding_error = NULL,
+                                 tagging_error = NULL,
+                                 title = ?8,
+                                 snippet = ?9
+                             WHERE id = ?10",
+                            (
+                                &request.content,
+                                &request.source_url,
+                                &source,
+                                &request.published_at,
+                                updated_at,
+                                "pending",
+                                "pending",
+                                &title,
+                                &snippet,
+                                id,
+                            ),
+                        )?;
+                    } else {
+                        conn.execute(
+                            "UPDATE atoms SET content = ?1, source_url = ?2, source = ?3, published_at = ?4, updated_at = ?5,
+                             title = ?6, snippet = ?7
+                             WHERE id = ?8",
+                            (
+                                &request.content,
+                                &request.source_url,
+                                &source,
+                                &request.published_at,
+                                updated_at,
+                                &title,
+                                &snippet,
+                                id,
+                            ),
+                        )?;
+                    }
                 }
 
                 if let Some(ref tag_ids) = request.tag_ids {

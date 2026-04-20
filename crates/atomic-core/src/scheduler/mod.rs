@@ -51,6 +51,7 @@ pub trait ScheduledTask: Send + Sync {
 /// can emit events without knowing about the host transport.
 pub struct TaskContext {
     pub event_cb: Arc<dyn Fn(TaskEvent) + Send + Sync>,
+    pub embedding_event_cb: Arc<dyn Fn(crate::EmbeddingEvent) + Send + Sync>,
 }
 
 /// Events emitted by scheduled tasks. The host runtime adapts these into its

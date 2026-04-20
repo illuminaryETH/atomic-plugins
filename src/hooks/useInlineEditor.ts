@@ -22,7 +22,7 @@ interface UseInlineEditorReturn {
   cursorOffset: number | null;
 
   startEditing: (cursorOffset?: number) => void;
-  stopEditing: () => void;
+  stopEditing: () => Promise<void>;
   setEditContent: (content: string) => void;
   setEditSourceUrl: (url: string) => void;
   setEditTags: (tags: Tag[]) => void;
@@ -34,7 +34,7 @@ export function useInlineEditor({
   onAtomUpdated,
 }: UseInlineEditorOptions): UseInlineEditorReturn {
   const updateAtomContentOnly = useAtomsStore(s => s.updateAtomContentOnly);
-  const updateAtom = useAtomsStore(s => s.updateAtom);
+  const processAtomPipeline = useAtomsStore(s => s.processAtomPipeline);
   const deleteAtom = useAtomsStore(s => s.deleteAtom);
   const fetchTags = useTagsStore(s => s.fetchTags);
 
@@ -89,6 +89,13 @@ export function useInlineEditor({
     );
   }, [editContent, editSourceUrl, editTags]);
 
+  const hasPipelineRelevantChanges = useCallback(() => {
+    return (
+      editContent !== lastSavedRef.current.content ||
+      editSourceUrl !== lastSavedRef.current.sourceUrl
+    );
+  }, [editContent, editSourceUrl]);
+
   /** Content-only save (no pipeline). */
   const doContentSave = useCallback(async () => {
     if (isSavingRef.current) return;
@@ -97,6 +104,7 @@ export function useInlineEditor({
     const promise = (async () => {
       try {
         const tagIds = editTags.map(t => t.id);
+        const needsPipelineForThisSave = hasPipelineRelevantChanges();
         const saved = await updateAtomContentOnly(
           atom.id,
           editContent,
@@ -108,7 +116,9 @@ export function useInlineEditor({
           sourceUrl: editSourceUrl,
           tagIds: tagIds.sort().join(','),
         };
-        needsPipelineRef.current = true;
+        if (needsPipelineForThisSave) {
+          needsPipelineRef.current = true;
+        }
         setSaveStatus('saved');
         onAtomUpdated?.(saved);
       } catch {
@@ -119,38 +129,27 @@ export function useInlineEditor({
     })();
     savingPromiseRef.current = promise;
     await promise;
-  }, [atom.id, editContent, editSourceUrl, editTags, updateAtomContentOnly, onAtomUpdated]);
+  }, [atom.id, editContent, editSourceUrl, editTags, hasPipelineRelevantChanges, updateAtomContentOnly, onAtomUpdated]);
 
-  /** Full save with pipeline (embedding + tagging). */
-  const doFullSave = useCallback(async () => {
+  /** Flush latest draft and only kick the pipeline when content/source changed. */
+  const finalizeDraft = useCallback(async () => {
     // Wait for any in-flight content-only save to complete first
     await savingPromiseRef.current;
-    if (isSavingRef.current) return;
-    isSavingRef.current = true;
     setSaveStatus('saving');
     try {
-      const tagIds = editTags.map(t => t.id);
-      const saved = await updateAtom(
-        atom.id,
-        editContent,
-        editSourceUrl || undefined,
-        tagIds,
-      );
-      lastSavedRef.current = {
-        content: editContent,
-        sourceUrl: editSourceUrl,
-        tagIds: tagIds.sort().join(','),
-      };
-      needsPipelineRef.current = false;
+      if (isDirty()) {
+        await doContentSave();
+      }
+      if (needsPipelineRef.current) {
+        await processAtomPipeline(atom.id);
+        needsPipelineRef.current = false;
+      }
       setSaveStatus('saved');
-      onAtomUpdated?.(saved);
       await fetchTags();
     } catch {
       setSaveStatus('error');
-    } finally {
-      isSavingRef.current = false;
     }
-  }, [atom.id, editContent, editSourceUrl, editTags, updateAtom, fetchTags, onAtomUpdated]);
+  }, [atom.id, isDirty, doContentSave, processAtomPipeline, fetchTags]);
 
   /** Schedule a debounced content-only save. */
   const scheduleSave = useCallback(() => {
@@ -184,7 +183,7 @@ export function useInlineEditor({
     setSaveStatus('idle');
   }, []);
 
-  const stopEditing = useCallback(() => {
+  const stopEditing = useCallback(async () => {
     // Cancel pending debounced save
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -199,24 +198,29 @@ export function useInlineEditor({
       return;
     }
 
-    // Phase 1: blur the editor content (rendered this frame)
-    setIsTransitioning(true);
+    await new Promise<void>((resolve) => {
+      // Phase 1: blur the editor content (rendered this frame)
+      setIsTransitioning(true);
 
-    // Phase 2: after the blur paints, save + swap to view mode
-    requestAnimationFrame(() => {
-      const finish = () => {
-        setIsEditing(false);
-        setCursorOffset(null);
-        // Phase 3: after the rendered markdown mounts, clear blur
-        requestAnimationFrame(() => setIsTransitioning(false));
-      };
-      if (isDirty() || needsPipelineRef.current) {
-        doFullSave().then(finish, finish);
-      } else {
-        finish();
-      }
+      // Phase 2: after the blur paints, save + swap to view mode
+      requestAnimationFrame(() => {
+        const finish = () => {
+          setIsEditing(false);
+          setCursorOffset(null);
+          // Phase 3: after the rendered markdown mounts, clear blur
+          requestAnimationFrame(() => {
+            setIsTransitioning(false);
+            resolve();
+          });
+        };
+        if (isDirty() || needsPipelineRef.current) {
+          finalizeDraft().then(finish, finish);
+        } else {
+          finish();
+        }
+      });
     });
-  }, [isDirty, doFullSave, editContent, atom.id, deleteAtom, fetchTags]);
+  }, [isDirty, finalizeDraft, editContent, atom.id, deleteAtom, fetchTags]);
 
   /** Immediate content-only save (for Cmd+S). */
   const saveNow = useCallback(async () => {
@@ -252,7 +256,7 @@ export function useInlineEditor({
           const sourceUrl = editSourceUrlRef.current;
           const tags = editTagsRef.current;
           const tagIds = tags.map(t => t.id);
-          useAtomsStore.getState().updateAtom(atom.id, content, sourceUrl || undefined, tagIds).catch(console.error);
+          useAtomsStore.getState().updateAtomContentOnly(atom.id, content, sourceUrl || undefined, tagIds).catch(console.error);
         }
       }
     };

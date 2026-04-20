@@ -151,13 +151,24 @@ impl Respond for ChatResponder {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
+        let request_text = body.to_string().to_lowercase();
+
         let content = match schema_name {
-            "extraction_result" => json!({
-                "tags": [
-                    { "name": "Physics", "parent_name": "Topics" },
-                ]
-            })
-            .to_string(),
+            "extraction_result" => {
+                let tag_name = if request_text.contains("biology") {
+                    "Biology"
+                } else if request_text.contains("cooking") || request_text.contains("pasta") {
+                    "Cooking"
+                } else {
+                    "Physics"
+                };
+                json!({
+                    "tags": [
+                        { "name": tag_name, "parent_name": "Topics" },
+                    ]
+                })
+                .to_string()
+            }
             // Default: empty content, still valid JSON for callers that
             // tolerate-parse. Individual tests can assert on the request
             // shape they care about.

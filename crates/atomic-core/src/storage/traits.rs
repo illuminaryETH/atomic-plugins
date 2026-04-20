@@ -373,6 +373,14 @@ pub trait ChunkStore: Send + Sync {
     /// and returns (atom_id, content) pairs. Ensures no double-processing.
     async fn claim_pending_embeddings(&self, limit: i32) -> StorageResult<Vec<(String, String)>>;
 
+    /// Atomically claim pending atoms for embedding only when the atom's
+    /// `updated_at` is older than or equal to `max_updated_at` (RFC3339).
+    async fn claim_pending_embeddings_due(
+        &self,
+        limit: i32,
+        max_updated_at: &str,
+    ) -> StorageResult<Vec<(String, String)>>;
+
     /// Delete chunks for multiple atoms in batch.
     async fn delete_chunks_batch(&self, atom_ids: &[String]) -> StorageResult<()>;
 
@@ -406,6 +414,10 @@ pub trait ChunkStore: Send + Sync {
     /// for atoms with embedding_status='complete' and tagging_status='pending'.
     /// Returns the atom IDs that were claimed.
     async fn claim_pending_tagging(&self) -> StorageResult<Vec<String>>;
+
+    /// Atomically claim pending tagging only when the atom's `updated_at` is
+    /// older than or equal to `max_updated_at` (RFC3339).
+    async fn claim_pending_tagging_due(&self, max_updated_at: &str) -> StorageResult<Vec<String>>;
 
     /// Get the current embedding dimension from the vector index.
     /// Returns None if the vector index doesn't exist or dimension can't be determined.

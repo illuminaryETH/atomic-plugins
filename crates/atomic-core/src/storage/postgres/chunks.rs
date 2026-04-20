@@ -811,6 +811,32 @@ impl ChunkStore for PostgresStorage {
         Ok(rows)
     }
 
+    async fn claim_pending_embeddings_due(
+        &self,
+        limit: i32,
+        max_updated_at: &str,
+    ) -> StorageResult<Vec<(String, String)>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "UPDATE atoms SET embedding_status = 'processing'
+             WHERE id IN (
+                 SELECT id FROM atoms
+                 WHERE embedding_status = 'pending'
+                   AND updated_at <= $3
+                   AND db_id = $2
+                 LIMIT $1
+             )
+             AND db_id = $2
+             RETURNING id, content",
+        )
+        .bind(limit)
+        .bind(&self.db_id)
+        .bind(max_updated_at)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+        Ok(rows)
+    }
+
     async fn delete_chunks_batch(&self, atom_ids: &[String]) -> StorageResult<()> {
         sqlx::query("DELETE FROM atom_chunks WHERE atom_id = ANY($1) AND db_id = $2")
             .bind(atom_ids)
@@ -865,6 +891,23 @@ impl ChunkStore for PostgresStorage {
              RETURNING id",
         )
         .bind(&self.db_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    async fn claim_pending_tagging_due(&self, max_updated_at: &str) -> StorageResult<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "UPDATE atoms SET tagging_status = 'processing'
+             WHERE embedding_status = 'complete'
+               AND tagging_status = 'pending'
+               AND updated_at <= $2
+               AND db_id = $1
+             RETURNING id",
+        )
+        .bind(&self.db_id)
+        .bind(max_updated_at)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;

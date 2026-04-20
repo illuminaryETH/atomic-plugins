@@ -33,6 +33,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/atoms/{id}", web::get().to(atoms::get_atom));
     cfg.route("/atoms/{id}", web::put().to(atoms::update_atom));
     cfg.route("/atoms/{id}/content", web::put().to(atoms::update_atom_content_only));
+    cfg.route("/atoms/{id}/process", web::post().to(atoms::process_atom_pipeline));
     cfg.route("/atoms/{id}", web::delete().to(atoms::delete_atom));
     cfg.route("/atoms/{id}/similar", web::get().to(search::find_similar));
     cfg.route(

@@ -53,6 +53,10 @@ export async function processPendingTagging(): Promise<number> {
   return getTransport().invoke('process_pending_tagging');
 }
 
+export async function processAtomPipeline(atomId: string): Promise<void> {
+  return getTransport().invoke('process_atom_pipeline', { id: atomId });
+}
+
 // Get embedding status
 export async function getEmbeddingStatus(atomId: string): Promise<string> {
   return getTransport().invoke('get_embedding_status', { atomId });

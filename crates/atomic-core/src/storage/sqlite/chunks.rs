@@ -447,6 +447,32 @@ impl SqliteStorage {
         Ok(results)
     }
 
+    pub(crate) fn claim_pending_embeddings_due_sync(
+        &self,
+        limit: i32,
+        max_updated_at: &str,
+    ) -> StorageResult<Vec<(String, String)>> {
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "UPDATE atoms SET embedding_status = 'processing'
+             WHERE id IN (
+                 SELECT id FROM atoms
+                 WHERE embedding_status = 'pending'
+                   AND updated_at <= ?2
+                 LIMIT ?1
+             )
+             RETURNING id, content",
+        )?;
+        let results = stmt
+            .query_map((limit, max_updated_at), |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
     /// Atomically claim atoms that need edge computation: sets edges_status to 'processing'
     /// and returns their IDs.
     pub(crate) fn claim_pending_edges_sync(&self, limit: i32) -> StorageResult<Vec<String>> {
@@ -628,6 +654,25 @@ impl SqliteStorage {
         )?;
         let results = stmt
             .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
+    pub(crate) fn claim_pending_tagging_due_sync(&self, max_updated_at: &str) -> StorageResult<Vec<String>> {
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "UPDATE atoms SET tagging_status = 'processing'
+             WHERE embedding_status = 'complete'
+               AND tagging_status = 'pending'
+               AND updated_at <= ?1
+             RETURNING id",
+        )?;
+        let results = stmt
+            .query_map([max_updated_at], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
     }
@@ -861,6 +906,14 @@ impl ChunkStore for SqliteStorage {
         self.claim_pending_embeddings_sync(limit)
     }
 
+    async fn claim_pending_embeddings_due(
+        &self,
+        limit: i32,
+        max_updated_at: &str,
+    ) -> StorageResult<Vec<(String, String)>> {
+        self.claim_pending_embeddings_due_sync(limit, max_updated_at)
+    }
+
     async fn delete_chunks_batch(&self, atom_ids: &[String]) -> StorageResult<()> {
         self.delete_chunks_batch_sync(atom_ids)
     }
@@ -880,6 +933,10 @@ impl ChunkStore for SqliteStorage {
 
     async fn claim_pending_tagging(&self) -> StorageResult<Vec<String>> {
         self.claim_pending_tagging_sync()
+    }
+
+    async fn claim_pending_tagging_due(&self, max_updated_at: &str) -> StorageResult<Vec<String>> {
+        self.claim_pending_tagging_due_sync(max_updated_at)
     }
 
     async fn get_embedding_dimension(&self) -> StorageResult<Option<usize>> {

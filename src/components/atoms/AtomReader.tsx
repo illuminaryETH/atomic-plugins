@@ -61,6 +61,13 @@ export function AtomReader({ atomId, highlightText, initialEditing }: AtomReader
   const [atom, setAtom] = useState<AtomWithTags | null>(null);
   const [isLoadingAtom, setIsLoadingAtom] = useState(true);
   const [showLoading, setShowLoading] = useState(false);
+  const lastFetchedAt = useRef<string | null>(null);
+
+  const refreshAtom = useCallback(async () => {
+    const fetchedAtom = await getTransport().invoke<AtomWithTags | null>('get_atom_by_id', { id: atomId });
+    setAtom(fetchedAtom);
+    lastFetchedAt.current = fetchedAtom?.updated_at ?? null;
+  }, [atomId]);
 
 
   // Watch the atoms store for updates to the currently viewed atom
@@ -76,12 +83,10 @@ export function AtomReader({ atomId, highlightText, initialEditing }: AtomReader
     // Only show loading indicator if fetch takes longer than 200ms
     const loadingTimer = setTimeout(() => setShowLoading(true), 200);
 
-    getTransport().invoke<AtomWithTags | null>('get_atom_by_id', { id: atomId })
-      .then((fetchedAtom) => {
+    refreshAtom()
+      .then(() => {
         clearTimeout(loadingTimer);
-        setAtom(fetchedAtom);
         setIsLoadingAtom(false);
-        lastFetchedAt.current = fetchedAtom?.updated_at ?? null;
       })
       .catch((error) => {
         clearTimeout(loadingTimer);
@@ -92,21 +97,27 @@ export function AtomReader({ atomId, highlightText, initialEditing }: AtomReader
       });
 
     return () => clearTimeout(loadingTimer);
-  }, [atomId]);
+  }, [atomId, refreshAtom]);
 
   // Re-fetch when store summary changes (e.g., after tag extraction)
   const storeAtomUpdatedAt = storeAtom?.updated_at;
-  const lastFetchedAt = useRef<string | null>(null);
   useEffect(() => {
     if (storeAtomUpdatedAt && !isLoadingAtom && storeAtomUpdatedAt !== lastFetchedAt.current) {
       lastFetchedAt.current = storeAtomUpdatedAt;
-      getTransport().invoke<AtomWithTags | null>('get_atom_by_id', { id: atomId })
-        .then((fetchedAtom) => {
-          if (fetchedAtom) setAtom(fetchedAtom);
-        })
-        .catch(console.error);
+      refreshAtom().catch(console.error);
     }
-  }, [atomId, storeAtomUpdatedAt, isLoadingAtom]);
+  }, [storeAtomUpdatedAt, isLoadingAtom, refreshAtom]);
+
+  // Refresh the open reader immediately when tagging completes for this atom.
+  // The list store gets its status update from the global event hook, but the
+  // reader owns full atom details and needs its own refresh to pick up new tags.
+  useEffect(() => {
+    const transport = getTransport();
+    return transport.subscribe<{ atom_id: string }>('tagging-complete', (payload) => {
+      if (payload.atom_id !== atomId) return;
+      refreshAtom().catch(console.error);
+    });
+  }, [atomId, refreshAtom]);
 
   return (
     <div className="h-full bg-[var(--color-bg-main)]">
@@ -158,6 +169,7 @@ function AtomReaderContent({
   onDismiss, onDelete, onTagClick, onRelatedAtomClick, onViewGraph, onAtomUpdated,
 }: AtomReaderContentProps) {
   const readerTheme = useUIStore(s => s.readerTheme);
+  const retryTagging = useAtomsStore(s => s.retryTagging);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const articleRef = useRef<HTMLElement | null>(null);
   const editorRef = useRef<ReactCodeMirrorRef>(null);
@@ -172,6 +184,12 @@ function AtomReaderContent({
   } = useInlineEditor({ atom, onAtomUpdated });
 
   const setReaderEditState = useUIStore(s => s.setReaderEditState);
+  const isTaggingInFlight = atom.tagging_status === 'pending' || atom.tagging_status === 'processing';
+
+  const handleAutoTag = useCallback(async () => {
+    await retryTagging(atom.id);
+    onAtomUpdated?.({ ...atom, tagging_status: 'pending' });
+  }, [retryTagging, atom, onAtomUpdated]);
 
   // Sync editing state to UI store so MainView titlebar can read it
   useEffect(() => {
@@ -362,9 +380,9 @@ function AtomReaderContent({
         pendingPositionRef.current = capturePosition();
         startEditing(offset);
       },
-      stopEditing: () => {
+      stopEditing: async () => {
         pendingPositionRef.current = capturePosition();
-        stopEditing();
+        await stopEditing();
       },
       undo: () => { const v = editorRef.current?.view; if (v) undo(v); },
       redo: () => { const v = editorRef.current?.view; if (v) redo(v); },
@@ -485,8 +503,11 @@ function AtomReaderContent({
       }
       if (e.key === 'Escape') {
         if (showDeleteModal || isSearchOpen) return;
-        // When editing, Escape is handled by the CodeMirror keymap directly
-        if (isEditing) return;
+        if (isEditing) {
+          e.preventDefault();
+          void stopEditing();
+          return;
+        }
         onDismiss();
       }
     };
@@ -601,7 +622,7 @@ function AtomReaderContent({
         e.stopImmediatePropagation();
         e.stopPropagation();
         e.preventDefault();
-        stopEditingRef.current();
+        void stopEditingRef.current();
       }
     };
     document.addEventListener('keydown', handler, true);
@@ -751,7 +772,25 @@ function AtomReaderContent({
                   />
                 ))}
               </div>
-            ) : null}
+            ) : (
+              <div className="mb-4 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm text-[var(--color-text-primary)]">No tags yet</p>
+                    <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                      Run tagging for this atom manually.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { void handleAutoTag(); }}
+                    disabled={isTaggingInFlight}
+                    className="shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isTaggingInFlight ? 'Tagging...' : 'Auto-tag'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Dates */}
             <div className="text-xs text-[var(--color-text-tertiary)] space-y-0.5">

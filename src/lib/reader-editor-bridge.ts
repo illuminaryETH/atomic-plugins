@@ -2,7 +2,7 @@
  *  AtomReaderContent populates this ref; MainView reads it to dispatch actions. */
 export interface ReaderEditorActions {
   startEditing: (offset?: number) => void;
-  stopEditing: () => void;
+  stopEditing: () => Promise<void>;
   undo: () => void;
   redo: () => void;
 }

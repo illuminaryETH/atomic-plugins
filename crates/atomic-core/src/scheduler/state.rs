@@ -12,7 +12,8 @@
 //!
 //! - `task.{task_id}.last_run`      RFC3339 timestamp of the last successful run
 //! - `task.{task_id}.enabled`       `"true"` / `"false"`
-//! - `task.{task_id}.interval_hours`  integer hour count (stored as string)
+//! - `task.{task_id}.interval_minutes` integer minute count (stored as string)
+//! - `task.{task_id}.interval_hours`   integer hour count (stored as string)
 
 use crate::AtomicCore;
 use crate::error::AtomicCoreError;
@@ -86,6 +87,12 @@ pub async fn get_interval(core: &AtomicCore, task_id: &str, default: Duration) -
         Ok(s) => s,
         Err(_) => return default,
     };
+    if let Some(raw) = settings.get(&key(task_id, "interval_minutes")) {
+        match raw.parse::<u64>() {
+            Ok(minutes) if minutes > 0 => return Duration::from_secs(minutes * 60),
+            _ => {}
+        }
+    }
     let Some(raw) = settings.get(&key(task_id, "interval_hours")) else {
         return default;
     };

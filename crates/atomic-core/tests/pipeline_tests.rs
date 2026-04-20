@@ -152,11 +152,10 @@ async fn update_lifecycle_postgres() {
     run_update_lifecycle(Backend::Postgres).await;
 }
 
-/// Editing an atom's content must re-run the embedding half of the pipeline
-/// (new chunks, new embeddings, recomputed edges) while preserving tags —
-/// the current design keeps user-assigned tags across content edits. This
-/// test pins both behaviors by swapping vocabulary completely and watching
-/// the edge drop out.
+/// Editing an atom's content must re-run both halves of the pipeline:
+/// embeddings/chunks/edges and auto-tagging. This test swaps vocabulary
+/// completely, verifies the old semantic edge disappears, and proves the
+/// tagger actually ran again by expecting a new content-derived tag.
 async fn run_update_lifecycle(backend: Backend) {
     let mock = MockAiServer::start().await;
     let handle = setup_core(backend, &mock.base_url())
@@ -183,7 +182,7 @@ async fn run_update_lifecycle(backend: Backend) {
     // Replace a's content with disjoint vocabulary. The bag-of-words embedder
     // will place it far from b, so the old edge must be cleaned up.
     let (cb, mut rx) = event_collector();
-    let new_content = "cooking italian pasta recipes carbonara sauce".to_string();
+    let new_content = "biology cells organisms dna evolution".to_string();
     core.update_atom(
         &a,
         UpdateAtomRequest {
@@ -201,12 +200,15 @@ async fn run_update_lifecycle(backend: Backend) {
     let a_after = core.get_atom(&a).await.unwrap().expect("a still exists");
     assert_eq!(a_after.atom.content, new_content);
     assert_eq!(a_after.atom.embedding_status, "complete");
-
-    // Tags persist across content updates — update_atom does not reset
-    // tagging_status, so the existing Physics assignment must remain.
+    assert_eq!(a_after.atom.tagging_status, "complete");
     assert!(
         a_after.tags.iter().any(|t| t.name == "Physics"),
         "tags should be preserved across update; got {:?}",
+        a_after.tags
+    );
+    assert!(
+        a_after.tags.iter().any(|t| t.name == "Biology"),
+        "updated content should trigger a fresh tagging pass; got {:?}",
         a_after.tags
     );
 
@@ -220,6 +222,62 @@ async fn run_update_lifecycle(backend: Backend) {
             .any(|e| e.source_atom_id == a || e.target_atom_id == a),
         "no edges should reference a after its vocabulary swap; got {:?}",
         edges_after
+    );
+}
+
+#[tokio::test]
+async fn draft_save_then_finalize_sqlite() {
+    run_draft_save_then_finalize(Backend::Sqlite).await;
+}
+
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn draft_save_then_finalize_postgres() {
+    if std::env::var("ATOMIC_TEST_DATABASE_URL").is_err() {
+        eprintln!("draft_save_then_finalize_postgres: skipping (ATOMIC_TEST_DATABASE_URL not set)");
+        return;
+    }
+    run_draft_save_then_finalize(Backend::Postgres).await;
+}
+
+async fn run_draft_save_then_finalize(backend: Backend) {
+    let mock = MockAiServer::start().await;
+    let handle = setup_core(backend, &mock.base_url())
+        .await
+        .expect("test harness setup");
+    let core = &handle.core;
+
+    let atom_id = create_and_await(core, "quantum mechanics particles waves atomic scales").await;
+
+    core.update_atom_content_only(
+        &atom_id,
+        UpdateAtomRequest {
+            content: "biology cells organisms dna evolution".to_string(),
+            source_url: None,
+            published_at: None,
+            tag_ids: None,
+        },
+    )
+    .await
+    .expect("draft save should succeed");
+
+    let after_draft = core.get_atom(&atom_id).await.unwrap().expect("atom exists");
+    assert_eq!(after_draft.atom.embedding_status, "pending");
+    assert_eq!(after_draft.atom.tagging_status, "pending");
+
+    let (cb, mut rx) = event_collector();
+    core.process_atom_pipeline(&atom_id, cb)
+        .await
+        .expect("finalize pipeline");
+    await_pipeline(&mut rx, &atom_id).await;
+
+    let finalized = core.get_atom(&atom_id).await.unwrap().expect("atom exists");
+    assert_eq!(finalized.atom.embedding_status, "complete");
+    assert_eq!(finalized.atom.tagging_status, "complete");
+    assert!(
+        finalized.tags.iter().any(|t| t.name == "Biology"),
+        "finalized draft should have fresh biology tag: {:?}",
+        finalized.tags
     );
 }
 

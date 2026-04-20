@@ -354,6 +354,7 @@ async fn run_server(
         tokio::spawn(async move {
             let mut registry = atomic_core::scheduler::TaskRegistry::new();
             registry.register(Arc::new(atomic_core::briefing::DailyBriefingTask));
+            registry.register(Arc::new(atomic_core::pipeline_task::DraftPipelineTask));
             let registry = Arc::new(registry);
 
             let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -376,10 +377,12 @@ async fn run_server(
                         let task_clone = Arc::clone(task);
                         let db_core_clone = db_core.clone();
                         let tx = task_tx.clone();
+                        let embedding_tx = task_tx.clone();
                         let db_id = db_info.id.clone();
                         tokio::spawn(async move {
                             let ctx = atomic_core::scheduler::TaskContext {
                                 event_cb: event_bridge::task_event_callback(tx),
+                                embedding_event_cb: Arc::new(event_bridge::embedding_event_callback(embedding_tx)),
                             };
                             if let Err(e) = task_clone.run(&db_core_clone, &ctx).await {
                                 tracing::debug!(

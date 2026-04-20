@@ -316,6 +316,29 @@ pub async fn update_atom_content_only(
 }
 
 #[utoipa::path(
+    post,
+    path = "/api/atoms/{id}/process",
+    params(
+        ("id" = String, Path, description = "Atom ID"),
+    ),
+    responses(
+        (status = 200, description = "Queued atom pipeline processing"),
+        (status = 404, description = "Atom not found", body = ApiErrorResponse),
+    ),
+    tag = "atoms",
+)]
+pub async fn process_atom_pipeline(
+    state: web::Data<AppState>,
+    db: Db,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    tracing::info!(atom_id = %id, "Received explicit atom pipeline request");
+    let on_event = embedding_event_callback(state.event_tx.clone());
+    ok_or_error(db.0.process_atom_pipeline(&id, on_event).await)
+}
+
+#[utoipa::path(
     delete,
     path = "/api/atoms/{id}",
     params(

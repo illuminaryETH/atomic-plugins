@@ -167,6 +167,8 @@ export function useEmbeddingEvents() {
         toast.error('Tagging failed', { id: 'tagging-failure', description: payload.error });
       }
 
+      useAtomsStore.getState().updateTaggingStatus(payload.atom_id, payload.status);
+
       // First tagging event of the session: flip taggingSeen and catch the
       // denominator up to the embedding denominator, so atoms enqueued before
       // we knew tagging was active still get counted. Then advance the

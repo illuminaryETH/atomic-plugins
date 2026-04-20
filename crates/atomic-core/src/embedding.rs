@@ -506,6 +506,12 @@ async fn process_tagging_only_inner(
     }
 
     let tagging_model = provider_config.llm_model().to_string();
+    tracing::info!(
+        atom_id = %atom_id,
+        provider = ?provider_config.provider_type,
+        model = %tagging_model,
+        "Starting auto-tagging"
+    );
 
     // Read raw content directly from atoms table — no dependency on embedding
     let content = storage.get_atom_content_impl(atom_id).await
@@ -513,6 +519,7 @@ async fn process_tagging_only_inner(
         .ok_or_else(|| format!("Atom not found: {}", atom_id))?;
 
     if content.trim().is_empty() {
+        tracing::info!(atom_id = %atom_id, "Auto-tagging skipped because atom content is empty");
         storage.set_tagging_status_sync(atom_id, "skipped", None).await
             .map_err(|e| e.to_string())?;
         return Ok((Vec::new(), Vec::new()));
@@ -583,6 +590,12 @@ async fn process_tagging_only_inner(
     all_tag_ids.sort();
     all_tag_ids.dedup();
     let all_new_tag_ids = all_tag_ids.clone();
+    tracing::info!(
+        atom_id = %atom_id,
+        tags_applied = all_tag_ids.len(),
+        new_tags_created = all_new_tag_ids.len(),
+        "Auto-tagging complete"
+    );
 
     Ok((all_tag_ids, all_new_tag_ids))
 }
@@ -1402,6 +1415,34 @@ where
     process_pending_embeddings_inner(storage, on_event, Some(settings_map), canvas_cache).await
 }
 
+/// Process pending embeddings only for atoms last updated at or before
+/// `max_updated_at` (RFC3339).
+pub async fn process_pending_embeddings_due<F>(
+    storage: StorageBackend,
+    on_event: F,
+    max_updated_at: String,
+    canvas_cache: Option<CanvasCache>,
+) -> Result<i32, String>
+where
+    F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+{
+    process_pending_embeddings_due_inner(storage, on_event, max_updated_at, None, canvas_cache).await
+}
+
+/// Like `process_pending_embeddings_due` but with externally-provided settings.
+pub async fn process_pending_embeddings_due_with_settings<F>(
+    storage: StorageBackend,
+    on_event: F,
+    max_updated_at: String,
+    settings_map: HashMap<String, String>,
+    canvas_cache: Option<CanvasCache>,
+) -> Result<i32, String>
+where
+    F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+{
+    process_pending_embeddings_due_inner(storage, on_event, max_updated_at, Some(settings_map), canvas_cache).await
+}
+
 /// Max atoms to process per background embedding batch (limits memory usage).
 const PENDING_BATCH_SIZE: i32 = 100;
 
@@ -1435,6 +1476,65 @@ where
 
         crate::executor::spawn(async move {
             // Limit concurrent batch tasks to bound memory
+            let _permit = crate::executor::EMBEDDING_BATCH_SEMAPHORE
+                .acquire()
+                .await
+                .expect("Embedding batch semaphore closed unexpectedly");
+
+            let input = AtomInput::Preloaded(pending_atoms);
+            match settings {
+                Some(s) => process_embedding_batch_with_settings(
+                    storage,
+                    input,
+                    false,
+                    on_event,
+                    s,
+                    canvas_cache,
+                ).await,
+                None => process_embedding_batch(
+                    storage,
+                    input,
+                    false,
+                    on_event,
+                    canvas_cache,
+                ).await,
+            };
+        });
+    }
+
+    Ok(total_count)
+}
+
+async fn process_pending_embeddings_due_inner<F>(
+    storage: StorageBackend,
+    on_event: F,
+    max_updated_at: String,
+    external_settings: Option<HashMap<String, String>>,
+    canvas_cache: Option<CanvasCache>,
+) -> Result<i32, String>
+where
+    F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+{
+    let mut total_count = 0i32;
+
+    loop {
+        let pending_atoms = storage
+            .claim_pending_embeddings_due_sync(PENDING_BATCH_SIZE, &max_updated_at)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if pending_atoms.is_empty() {
+            break;
+        }
+
+        total_count += pending_atoms.len() as i32;
+
+        let storage = storage.clone();
+        let on_event = on_event.clone();
+        let settings = external_settings.clone();
+        let canvas_cache = canvas_cache.clone();
+
+        crate::executor::spawn(async move {
             let _permit = crate::executor::EMBEDDING_BATCH_SEMAPHORE
                 .acquire()
                 .await

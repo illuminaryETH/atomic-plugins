@@ -83,6 +83,10 @@ export const COMMAND_MAP: Record<string, CommandSpec> = {
     argsMode: 'body',
     transformArgs: atomBody,
   },
+  process_atom_pipeline: {
+    method: 'POST',
+    path: (a) => `/api/atoms/${encodeURIComponent(a.id as string)}/process`,
+  },
   delete_atom: {
     method: 'DELETE',
     path: (a) => `/api/atoms/${encodeURIComponent(a.id as string)}`,

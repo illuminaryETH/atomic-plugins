@@ -260,6 +260,13 @@ export function MainView() {
     openCommandPalette('/');
   }, [openCommandPalette]);
 
+  const handleReaderDismiss = useCallback(async () => {
+    if (readerState.atomId && readerState.editing) {
+      await readerEditorActions.current?.stopEditing();
+    }
+    overlayDismiss();
+  }, [readerState.atomId, readerState.editing, overlayDismiss]);
+
   const handleLoadMore = useCallback(() => {
     if (!isSemanticSearch && hasMore) {
       fetchNextPage();
@@ -292,7 +299,7 @@ export function MainView() {
           <>
             <div className="flex items-center gap-1">
               <button
-                onClick={overlayDismiss}
+                onClick={() => { void handleReaderDismiss(); }}
                 className="p-1.5 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors"
                 title="Close"
               >

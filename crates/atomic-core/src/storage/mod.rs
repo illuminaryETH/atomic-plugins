@@ -414,6 +414,8 @@ dispatch! {
         => sqlite: check_vector_extension_sync, pg_trait: ChunkStore, pg_method: check_vector_extension;
     fn claim_pending_embeddings_sync(&self, limit: i32) -> Result<Vec<(String, String)>, AtomicCoreError>
         => sqlite: claim_pending_embeddings_sync, pg_trait: ChunkStore, pg_method: claim_pending_embeddings;
+    fn claim_pending_embeddings_due_sync(&self, limit: i32, max_updated_at: &str) -> Result<Vec<(String, String)>, AtomicCoreError>
+        => sqlite: claim_pending_embeddings_due_sync, pg_trait: ChunkStore, pg_method: claim_pending_embeddings_due;
     fn delete_chunks_batch_sync(&self, atom_ids: &[String]) -> Result<(), AtomicCoreError>
         => sqlite: delete_chunks_batch_sync, pg_trait: ChunkStore, pg_method: delete_chunks_batch;
     fn compute_semantic_edges_for_atom_sync(&self, atom_id: &str, threshold: f32, max_edges: i32) -> Result<i32, AtomicCoreError>
@@ -424,6 +426,8 @@ dispatch! {
         => sqlite: rebuild_fts_index_sync, pg_trait: ChunkStore, pg_method: rebuild_fts_index;
     fn claim_pending_tagging_sync(&self) -> Result<Vec<String>, AtomicCoreError>
         => sqlite: claim_pending_tagging_sync, pg_trait: ChunkStore, pg_method: claim_pending_tagging;
+    fn claim_pending_tagging_due_sync(&self, max_updated_at: &str) -> Result<Vec<String>, AtomicCoreError>
+        => sqlite: claim_pending_tagging_due_sync, pg_trait: ChunkStore, pg_method: claim_pending_tagging_due;
     fn recreate_vector_index_sync(&self, dimension: usize) -> Result<(), AtomicCoreError>
         => sqlite: recreate_vector_index_sync, pg_trait: ChunkStore, pg_method: recreate_vector_index;
     fn claim_pending_reembedding_sync(&self) -> Result<Vec<String>, AtomicCoreError>

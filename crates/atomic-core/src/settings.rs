@@ -35,6 +35,9 @@ pub const DEFAULT_SETTINGS: &[(&str, &str)] = &[
     // Scheduled tasks — see crate::scheduler::state for key format
     ("task.daily_briefing.enabled", "true"),
     ("task.daily_briefing.interval_hours", "24"),
+    ("task.draft_pipeline.enabled", "true"),
+    ("task.draft_pipeline.interval_minutes", "1"),
+    ("task.draft_pipeline.quiet_minutes", "1"),
 ];
 
 /// Migrate settings - add any missing default settings

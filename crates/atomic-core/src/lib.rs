@@ -45,6 +45,7 @@ pub mod manager;
 pub mod models;
 pub mod projection;
 pub mod providers;
+pub mod pipeline_task;
 pub mod registry;
 pub mod scheduler;
 pub mod search;
@@ -766,14 +767,15 @@ impl AtomicCore {
         let atom_with_tags = self.storage.insert_atom_impl(&id, &request, &now).await?;
         self.canvas_cache.invalidate();
 
-        // Spawn embedding task (non-blocking)
-        embedding::spawn_embedding_task_single_with_settings(
-            self.storage.clone(),
-            id,
-            content,
-            self.wrap_event_for_cache(on_event),
-            self.settings_for_background(),
-        );
+        if !content.trim().is_empty() {
+            embedding::spawn_embedding_task_single_with_settings(
+                self.storage.clone(),
+                id,
+                content,
+                self.wrap_event_for_cache(on_event),
+                self.settings_for_background(),
+            );
+        }
 
         Ok(Some(atom_with_tags))
     }
@@ -941,8 +943,22 @@ impl AtomicCore {
         request: UpdateAtomRequest,
     ) -> Result<AtomWithTags, AtomicCoreError> {
         let now = Utc::now().to_rfc3339();
+        let had_content_before = self
+            .storage
+            .get_atom_content_impl(id)
+            .await?
+            .map(|content| !content.trim().is_empty())
+            .unwrap_or(false);
         let result = self.storage.update_atom_content_only_impl(id, &request, &now).await?;
         self.canvas_cache.invalidate();
+        tracing::info!(
+            atom_id = %id,
+            had_content_before,
+            has_content_now = !request.content.trim().is_empty(),
+            embedding_status = %result.atom.embedding_status,
+            tagging_status = %result.atom.tagging_status,
+            "Draft atom save persisted"
+        );
         Ok(result)
     }
 
@@ -1556,6 +1572,44 @@ impl AtomicCore {
         }
     }
 
+    /// Process pending embeddings only for atoms last updated at or before
+    /// `cutoff`. Used by the draft-pipeline scheduler so active edits can
+    /// settle before background AI work begins.
+    pub async fn process_pending_embeddings_due<F>(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+        on_event: F,
+    ) -> Result<i32, AtomicCoreError>
+    where
+        F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+    {
+        let cutoff_rfc3339 = cutoff.to_rfc3339();
+        let on_event = self.wrap_event_for_cache(on_event);
+        let canvas_cache = Some(self.canvas_cache.clone());
+        let count = match self.settings_for_background() {
+            Some(s) => embedding::process_pending_embeddings_due_with_settings(
+                self.storage.clone(),
+                on_event,
+                cutoff_rfc3339.clone(),
+                s,
+                canvas_cache,
+            )
+            .await,
+            None => embedding::process_pending_embeddings_due(
+                self.storage.clone(),
+                on_event,
+                cutoff_rfc3339.clone(),
+                canvas_cache,
+            )
+            .await,
+        }
+        .map_err(|e| AtomicCoreError::Embedding(e))?;
+        if count > 0 {
+            tracing::info!(cutoff = %cutoff_rfc3339, count, "Queued pending embeddings due for processing");
+        }
+        Ok(count)
+    }
+
     /// Process all atoms with pending edge computation in batches.
     /// Runs in the background with checkpointing so it survives restarts.
     pub async fn process_pending_edges(&self) -> Result<i32, AtomicCoreError> {
@@ -1699,11 +1753,11 @@ impl AtomicCore {
 
         let storage = self.storage.clone();
         let atom_id = atom_id.to_string();
-        let bg_settings = self.settings_for_background();
+        let mut bg_settings = self.settings_for_background().unwrap_or_default();
+        bg_settings.insert("auto_tagging_enabled".to_string(), "true".to_string());
         let on_event = self.wrap_event_for_cache(on_event);
         executor::spawn(async move {
-            let settings = bg_settings.unwrap_or_default();
-            embedding::process_tagging_batch_with_settings(storage, vec![atom_id], on_event, settings).await;
+            embedding::process_tagging_batch_with_settings(storage, vec![atom_id], on_event, bg_settings).await;
         });
 
         Ok(())
@@ -2190,6 +2244,75 @@ impl AtomicCore {
         }
 
         Ok(count)
+    }
+
+    /// Process pending tagging only for atoms last updated at or before `cutoff`.
+    pub async fn process_pending_tagging_due<F>(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+        on_event: F,
+    ) -> Result<i32, AtomicCoreError>
+    where
+        F: Fn(EmbeddingEvent) + Send + Sync + Clone + 'static,
+    {
+        let cutoff_rfc3339 = cutoff.to_rfc3339();
+        let pending_atoms = self
+            .storage
+            .claim_pending_tagging_due_sync(&cutoff_rfc3339)
+            .await?;
+
+        let count = pending_atoms.len() as i32;
+
+        if count > 0 {
+            tracing::info!(cutoff = %cutoff_rfc3339, count, "Queued pending tagging due for processing");
+            let storage = self.storage.clone();
+            let bg_settings = self.settings_for_background();
+            let on_event = self.wrap_event_for_cache(on_event);
+            executor::spawn(async move {
+                match bg_settings {
+                    Some(s) => embedding::process_tagging_batch_with_settings(storage, pending_atoms, on_event, s).await,
+                    None => embedding::process_tagging_batch(storage, pending_atoms, on_event).await,
+                };
+            });
+        }
+
+        Ok(count)
+    }
+
+    /// Process a single atom's pipeline immediately using the latest persisted
+    /// content. Intended for editor dismiss/finalize after draft autosaves.
+    pub async fn process_atom_pipeline<F>(&self, atom_id: &str, on_event: F) -> Result<(), AtomicCoreError>
+    where
+        F: Fn(EmbeddingEvent) + Send + Sync + 'static,
+    {
+        let content = self
+            .storage
+            .get_atom_content_impl(atom_id)
+            .await?
+            .ok_or_else(|| AtomicCoreError::NotFound(format!("Atom not found: {}", atom_id)))?;
+
+        self.storage.set_embedding_status_sync(atom_id, "pending", None).await?;
+        self.storage.set_tagging_status_sync(atom_id, "pending", None).await?;
+        tracing::info!(
+            atom_id = %atom_id,
+            has_content = !content.trim().is_empty(),
+            "Explicit atom pipeline processing requested"
+        );
+
+        if content.trim().is_empty() {
+            tracing::info!(atom_id = %atom_id, "Explicit atom pipeline request skipped because content is empty");
+            return Ok(());
+        }
+
+        embedding::spawn_embedding_task_single_with_settings(
+            self.storage.clone(),
+            atom_id.to_string(),
+            content,
+            self.wrap_event_for_cache(on_event),
+            self.settings_for_background(),
+        );
+
+        Ok(())
     }
 
     // ==================== Cluster Cache ====================

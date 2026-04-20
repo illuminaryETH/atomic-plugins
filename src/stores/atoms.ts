@@ -140,6 +140,7 @@ interface AtomsStore {
   createAtom: (content: string, sourceUrl?: string, tagIds?: string[]) => Promise<AtomWithTags>;
   updateAtom: (id: string, content: string, sourceUrl?: string, tagIds?: string[]) => Promise<AtomWithTags>;
   updateAtomContentOnly: (id: string, content: string, sourceUrl?: string, tagIds?: string[]) => Promise<AtomWithTags>;
+  processAtomPipeline: (atomId: string) => Promise<void>;
   deleteAtom: (id: string) => Promise<void>;
   clearError: () => void;
 
@@ -149,6 +150,7 @@ interface AtomsStore {
   // New methods
   updateAtomStatus: (atomId: string, status: string) => void;
   batchUpdateAtomStatuses: (updates: Array<{atomId: string, status: string}>) => void;
+  updateTaggingStatus: (atomId: string, status: string) => void;
   addAtom: (atom: AtomWithTags) => void;
   search: (query: string) => Promise<void>;
   clearSemanticSearch: () => void;
@@ -183,6 +185,24 @@ function toSummary(atom: AtomWithTags): AtomSummary {
     tagging_status: atom.tagging_status,
     tags: atom.tags,
   };
+}
+
+function uniqueAtomsById(atoms: AtomSummary[]): AtomSummary[] {
+  const seen = new Set<string>();
+  const unique: AtomSummary[] = [];
+
+  for (const atom of atoms) {
+    if (seen.has(atom.id)) continue;
+    seen.add(atom.id);
+    unique.push(atom);
+  }
+
+  return unique;
+}
+
+function upsertAtomSummary(atoms: AtomSummary[], atom: AtomSummary, opts?: { prepend?: boolean }): AtomSummary[] {
+  const filtered = atoms.filter((existing) => existing.id !== atom.id);
+  return opts?.prepend ? [atom, ...filtered] : [...filtered, atom];
 }
 
 export const useAtomsStore = create<AtomsStore>((set, get) => ({
@@ -230,11 +250,12 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
       if (sortBy !== 'updated') args.sortBy = sortBy;
       if (sortOrder !== 'desc') args.sortOrder = sortOrder;
       const result = await getTransport().invoke<PaginatedAtoms>('list_atoms', args);
+      const atoms = uniqueAtomsById(result.atoms);
       set({
-        atoms: result.atoms,
+        atoms,
         totalCount: result.total_count,
-        currentOffset: result.atoms.length,
-        hasMore: result.atoms.length < result.total_count,
+        currentOffset: atoms.length,
+        hasMore: atoms.length < result.total_count,
         isLoadingInitial: false,
         nextCursor: result.next_cursor ?? null,
         nextCursorId: result.next_cursor_id ?? null,
@@ -244,7 +265,7 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
         const dbId = useDatabasesStore.getState().activeId;
         if (dbId) {
           void writeCache(cacheKey('atoms-default', dbId), {
-            atoms: result.atoms,
+            atoms,
             totalCount: result.total_count,
             nextCursor: result.next_cursor ?? null,
             nextCursorId: result.next_cursor_id ?? null,
@@ -296,11 +317,12 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
       if (sortBy !== 'updated') args.sortBy = sortBy;
       if (sortOrder !== 'desc') args.sortOrder = sortOrder;
       const result = await getTransport().invoke<PaginatedAtoms>('list_atoms', args);
+      const atoms = uniqueAtomsById(result.atoms);
       set({
-        atoms: result.atoms,
+        atoms,
         totalCount: result.total_count,
-        currentOffset: result.atoms.length,
-        hasMore: result.atoms.length < result.total_count,
+        currentOffset: atoms.length,
+        hasMore: atoms.length < result.total_count,
         isLoadingInitial: false,
         nextCursor: result.next_cursor ?? null,
         nextCursorId: result.next_cursor_id ?? null,
@@ -333,7 +355,7 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
 
       const result = await getTransport().invoke<PaginatedAtoms>('list_atoms', args);
       set((state) => {
-        const newAtoms = [...state.atoms, ...result.atoms];
+        const newAtoms = uniqueAtomsById([...state.atoms, ...result.atoms]);
         return {
           atoms: newAtoms,
           totalCount: result.total_count,
@@ -358,11 +380,15 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
         sourceUrl: sourceUrl || null,
         tagIds: tagIds || [],
       });
+      const summary = toSummary(atom);
       // Prepend summary to list and bump total count
-      set((state) => ({
-        atoms: [toSummary(atom), ...state.atoms],
-        totalCount: state.totalCount + 1,
-      }));
+      set((state) => {
+        const alreadyExists = state.atoms.some((existing) => existing.id === atom.id);
+        return {
+          atoms: upsertAtomSummary(state.atoms, summary, { prepend: true }),
+          totalCount: alreadyExists ? state.totalCount : state.totalCount + 1,
+        };
+      });
       return atom;
     } catch (error) {
       set({ error: String(error) });
@@ -411,6 +437,22 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
     }
   },
 
+  processAtomPipeline: async (atomId: string) => {
+    try {
+      await getTransport().invoke('process_atom_pipeline', { id: atomId });
+      set((state) => ({
+        atoms: state.atoms.map((a) =>
+          a.id === atomId
+            ? { ...a, embedding_status: 'pending' as const, tagging_status: 'pending' as const }
+            : a
+        ),
+      }));
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
+  },
+
   deleteAtom: async (id: string) => {
     set({ error: null });
     try {
@@ -451,13 +493,23 @@ export const useAtomsStore = create<AtomsStore>((set, get) => ({
     }));
   },
 
+  updateTaggingStatus: (atomId: string, status: string) => {
+    set((state) => ({
+      atoms: state.atoms.map((a) =>
+        a.id === atomId
+          ? { ...a, tagging_status: status as AtomSummary['tagging_status'] }
+          : a
+      ),
+    }));
+  },
+
   addAtom: (atom: AtomWithTags) => {
+    const summary = toSummary(atom);
     set((state) => {
-      // Skip if atom already exists (e.g., same-session create already added it)
-      if (state.atoms.some(a => a.id === atom.id)) return state;
+      const alreadyExists = state.atoms.some((existing) => existing.id === atom.id);
       return {
-        atoms: [toSummary(atom), ...state.atoms],
-        totalCount: state.totalCount + 1,
+        atoms: upsertAtomSummary(state.atoms, summary, { prepend: true }),
+        totalCount: alreadyExists ? state.totalCount : state.totalCount + 1,
       };
     });
   },
