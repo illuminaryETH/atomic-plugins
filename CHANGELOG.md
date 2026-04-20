@@ -2,6 +2,14 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.25.0 — 2026-04-20
+
+- Replace the CodeMirror markdown editor with Milkdown, a rich-text WYSIWYG editor built on ProseMirror — notes now render inline formatting, images, and code blocks live as you type
+- Add slash command menu (type `/`) to quickly insert headings, lists, blockquotes, code blocks, and horizontal rules
+- Add selection toolbar for toggling bold, italic, inline code, and links on highlighted text
+- Add in-editor find (Cmd/Ctrl+F) with match highlighting and next/previous navigation
+- Improve left panel transition animation when opening the note reader
+
 ## v1.24.1 — 2026-04-20
 
 - Add manual "Auto-tag" button in the atom reader for tagless atoms, letting you trigger AI tagging on demand
