@@ -84,7 +84,7 @@ export function MainView() {
   const deleteAtom = useAtomsStore(s => s.deleteAtom);
   const fetchTags = useTagsStore(s => s.fetchTags);
 
-  const openCommandPalette = useUIStore(s => s.openCommandPalette);
+  const openSearchPalette = useUIStore(s => s.openSearchPalette);
 
   const chatSidebarOpen = useUIStore(s => s.chatSidebarOpen);
   const chatSidebarWidth = useUIStore(s => s.chatSidebarWidth);
@@ -259,8 +259,8 @@ export function MainView() {
       readerEditorActions.current?.openSearch(readerState.highlightText ?? undefined);
       return;
     }
-    openCommandPalette('/');
-  }, [openCommandPalette, readerState.atomId, readerState.highlightText]);
+    openSearchPalette();
+  }, [openSearchPalette, readerState.atomId, readerState.highlightText]);
 
   const handleReaderDismiss = useCallback(async () => {
     if (readerState.atomId) {

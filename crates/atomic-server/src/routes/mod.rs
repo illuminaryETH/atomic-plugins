@@ -52,6 +52,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 
     // Search
     cfg.route("/search", web::post().to(search::search));
+    cfg.route("/search/global", web::post().to(search::global_search));
 
     // Wiki
     cfg.route("/wiki", web::get().to(wiki::get_all_wiki_articles));

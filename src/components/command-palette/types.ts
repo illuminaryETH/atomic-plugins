@@ -54,3 +54,44 @@ export interface TagWithCount {
   atom_count: number;
   children?: TagWithCount[];
 }
+
+export interface GlobalWikiSearchResult {
+  id: string;
+  tag_id: string;
+  tag_name: string;
+  content_snippet: string;
+  updated_at: string;
+  atom_count: number;
+  score: number;
+}
+
+export interface GlobalChatSearchResult {
+  id: string;
+  title: string | null;
+  updated_at: string;
+  message_count: number;
+  tags: Array<{
+    id: string;
+    name: string;
+    parent_id: string | null;
+    created_at: string;
+  }>;
+  matching_message_content: string;
+  score: number;
+}
+
+export interface GlobalTagSearchResult {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  created_at: string;
+  atom_count: number;
+  score: number;
+}
+
+export interface GlobalSearchResponse {
+  atoms: SemanticSearchResult[];
+  wiki: GlobalWikiSearchResult[];
+  chats: GlobalChatSearchResult[];
+  tags: GlobalTagSearchResult[];
+}

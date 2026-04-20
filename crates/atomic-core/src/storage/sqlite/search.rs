@@ -297,6 +297,36 @@ impl SqliteStorage {
         search::find_similar_atoms(&conn, atom_id, limit, threshold)
             .map_err(|e| AtomicCoreError::Search(e))
     }
+
+    pub(crate) fn global_keyword_search_sync(
+        &self,
+        query: &str,
+        section_limit: i32,
+    ) -> StorageResult<GlobalSearchResponse> {
+        let conn = self.db.read_conn()?;
+        let escaped_query = escape_fts5_query(query);
+        let trimmed_query = query.trim().to_lowercase();
+        if escaped_query.is_empty() || trimmed_query.is_empty() {
+            return Ok(GlobalSearchResponse {
+                atoms: Vec::new(),
+                wiki: Vec::new(),
+                chats: Vec::new(),
+                tags: Vec::new(),
+            });
+        }
+
+        let atoms = self.keyword_search_sync(query, section_limit, None, None)?;
+        let wiki = keyword_search_wiki(&conn, &escaped_query, section_limit)?;
+        let chats = keyword_search_chats(&conn, &escaped_query, &trimmed_query, section_limit)?;
+        let tags = keyword_search_tags(&conn, &trimmed_query, section_limit)?;
+
+        Ok(GlobalSearchResponse {
+            atoms,
+            wiki,
+            chats,
+            tags,
+        })
+    }
 }
 
 #[async_trait]
@@ -547,6 +577,255 @@ fn normalize_bm25_score(score: f64) -> f32 {
     (1.0 - (clamped / -30.0) * 0.7) as f32
 }
 
+fn keyword_search_wiki(
+    conn: &rusqlite::Connection,
+    escaped_query: &str,
+    limit: i32,
+) -> Result<Vec<GlobalWikiSearchResult>, AtomicCoreError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, tag_id, tag_name, content, bm25(wiki_articles_fts) AS score
+             FROM wiki_articles_fts
+             WHERE wiki_articles_fts MATCH ?1
+             ORDER BY bm25(wiki_articles_fts)
+             LIMIT ?2",
+        )
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to prepare wiki FTS query: {}", e)))?;
+    let rows: Vec<(String, String, String, String, f64)> = stmt
+        .query_map(rusqlite::params![escaped_query, limit], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to query wiki FTS: {}", e)))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to collect wiki FTS rows: {}", e)))?;
+
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let tag_ids: Vec<String> = rows.iter().map(|(_, tag_id, _, _, _)| tag_id.clone()).collect();
+    let mut atom_counts = HashMap::new();
+    let placeholders = tag_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let query = format!(
+        "SELECT tag_id, atom_count FROM wiki_articles WHERE tag_id IN ({})",
+        placeholders
+    );
+    let mut count_stmt = conn
+        .prepare(&query)
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to prepare wiki count query: {}", e)))?;
+    let count_rows = count_stmt
+        .query_map(rusqlite::params_from_iter(tag_ids.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+        })
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to query wiki counts: {}", e)))?;
+    for row in count_rows {
+        let (tag_id, atom_count) = row.map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+        atom_counts.insert(tag_id, atom_count);
+    }
+
+    let mut updated_stmt = conn
+        .prepare("SELECT updated_at FROM wiki_articles WHERE id = ?1")
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to prepare wiki updated_at query: {}", e)))?;
+
+    let mut results = Vec::with_capacity(rows.len());
+    for (id, tag_id, tag_name, content, score) in rows {
+        let updated_at: String = updated_stmt
+            .query_row([&id], |row| row.get(0))
+            .map_err(|e| AtomicCoreError::Search(format!("Failed to load wiki updated_at: {}", e)))?;
+        results.push(GlobalWikiSearchResult {
+            id,
+            tag_id: tag_id.clone(),
+            tag_name,
+            content_snippet: snippet(&content, 180),
+            updated_at,
+            atom_count: atom_counts.get(&tag_id).copied().unwrap_or(0),
+            score: normalize_bm25_score(score),
+        });
+    }
+
+    Ok(results)
+}
+
+fn keyword_search_chats(
+    conn: &rusqlite::Connection,
+    escaped_query: &str,
+    trimmed_query: &str,
+    limit: i32,
+) -> Result<Vec<GlobalChatSearchResult>, AtomicCoreError> {
+    let mut conversation_best: HashMap<String, (f32, String)> = HashMap::new();
+
+    let mut msg_stmt = conn
+        .prepare(
+            "SELECT conversation_id, content, bm25(chat_messages_fts) AS score
+             FROM chat_messages_fts
+             WHERE chat_messages_fts MATCH ?1
+             ORDER BY bm25(chat_messages_fts)
+             LIMIT ?2",
+        )
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to prepare chat FTS query: {}", e)))?;
+    let msg_rows = msg_stmt
+        .query_map(rusqlite::params![escaped_query, limit * 4], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                normalize_bm25_score(row.get::<_, f64>(2)?),
+            ))
+        })
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to query chat FTS: {}", e)))?;
+    for row in msg_rows {
+        let (conversation_id, content, score) =
+            row.map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+        let entry = conversation_best.entry(conversation_id).or_insert((score, content.clone()));
+        if score > entry.0 {
+            *entry = (score, content);
+        }
+    }
+
+    let title_pattern = format!("%{}%", trimmed_query);
+    let mut title_stmt = conn
+        .prepare(
+            "SELECT id, COALESCE(title, '')
+             FROM conversations
+             WHERE is_archived = 0 AND title IS NOT NULL AND lower(title) LIKE ?1
+             LIMIT ?2",
+        )
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to prepare chat title query: {}", e)))?;
+    let title_rows = title_stmt
+        .query_map(rusqlite::params![title_pattern, limit], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to query chat titles: {}", e)))?;
+    for row in title_rows {
+        let (conversation_id, title) = row.map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+        let score = if title.to_lowercase().starts_with(trimmed_query) { 0.98 } else { 0.9 };
+        let snippet_text = if title.is_empty() { String::new() } else { title };
+        let entry = conversation_best.entry(conversation_id).or_insert((score, snippet_text.clone()));
+        if score > entry.0 {
+            *entry = (score, snippet_text);
+        }
+    }
+
+    if conversation_best.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut ranked: Vec<(String, f32, String)> = conversation_best
+        .into_iter()
+        .map(|(conversation_id, (score, snippet_text))| (conversation_id, score, snippet_text))
+        .collect();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    ranked.truncate(limit as usize);
+
+    let conversation_ids: Vec<String> = ranked.iter().map(|(id, _, _)| id.clone()).collect();
+    let conversation_meta = batch_fetch_conversation_meta(conn, &conversation_ids)?;
+    let conversation_tags = batch_fetch_conversation_tags(conn, &conversation_ids)?;
+
+    let mut results = Vec::with_capacity(ranked.len());
+    for (conversation_id, score, matching_text) in ranked {
+        if let Some((title, updated_at, message_count)) = conversation_meta.get(&conversation_id) {
+            results.push(GlobalChatSearchResult {
+                id: conversation_id.clone(),
+                title: title.clone(),
+                updated_at: updated_at.clone(),
+                message_count: *message_count,
+                tags: conversation_tags.get(&conversation_id).cloned().unwrap_or_default(),
+                matching_message_content: snippet(&matching_text, 180),
+                score,
+            });
+        }
+    }
+
+    Ok(results)
+}
+
+fn keyword_search_tags(
+    conn: &rusqlite::Connection,
+    trimmed_query: &str,
+    limit: i32,
+) -> Result<Vec<GlobalTagSearchResult>, AtomicCoreError> {
+    let pattern = format!("%{}%", trimmed_query);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, parent_id, created_at, atom_count
+             FROM tags
+             WHERE lower(name) LIKE ?1
+             ORDER BY atom_count DESC, name ASC",
+        )
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to prepare tag search query: {}", e)))?;
+    let rows = stmt
+        .query_map([pattern], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i32>(4)?,
+            ))
+        })
+        .map_err(|e| AtomicCoreError::Search(format!("Failed to query tags: {}", e)))?;
+
+    let mut exactish = Vec::new();
+    for row in rows {
+        let (id, name, parent_id, created_at, atom_count) =
+            row.map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+        let lower = name.to_lowercase();
+        let score = if lower == trimmed_query {
+            1.0
+        } else if lower.starts_with(trimmed_query) {
+            0.95
+        } else if strong_substring_match(&lower, trimmed_query) {
+            0.8
+        } else {
+            continue;
+        };
+        exactish.push(GlobalTagSearchResult {
+            id,
+            name,
+            parent_id,
+            created_at,
+            atom_count,
+            score,
+        });
+    }
+
+    exactish.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.atom_count.cmp(&a.atom_count))
+            .then(a.name.cmp(&b.name))
+    });
+    exactish.truncate(limit as usize);
+    Ok(exactish)
+}
+
+fn strong_substring_match(haystack: &str, needle: &str) -> bool {
+    if needle.len() < 2 {
+        return haystack == needle;
+    }
+    haystack
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|segment| !segment.is_empty())
+        .any(|segment| segment.contains(needle))
+}
+
+fn snippet(text: &str, max_chars: usize) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = normalized.chars();
+    let snippet: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}...", snippet)
+    } else {
+        snippet
+    }
+}
+
 /// Batch fetch atoms by IDs in a single query.
 fn batch_fetch_atoms(
     conn: &rusqlite::Connection,
@@ -610,6 +889,84 @@ fn batch_fetch_tags(
     for row in rows {
         let (atom_id, tag) = row.map_err(|e| AtomicCoreError::Search(e.to_string()))?;
         map.entry(atom_id).or_default().push(tag);
+    }
+    Ok(map)
+}
+
+fn batch_fetch_conversation_meta(
+    conn: &rusqlite::Connection,
+    conversation_ids: &[String],
+) -> Result<HashMap<String, (Option<String>, String, i32)>, AtomicCoreError> {
+    if conversation_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = conversation_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let query = format!(
+        "SELECT c.id, c.title, c.updated_at, COUNT(m.id) AS message_count
+         FROM conversations c
+         LEFT JOIN chat_messages m ON m.conversation_id = c.id
+         WHERE c.id IN ({}) AND c.is_archived = 0
+         GROUP BY c.id, c.title, c.updated_at",
+        placeholders
+    );
+    let mut stmt = conn
+        .prepare(&query)
+        .map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(conversation_ids.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i32>(3)?,
+            ))
+        })
+        .map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+    let mut map = HashMap::new();
+    for row in rows {
+        let (id, title, updated_at, message_count) =
+            row.map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+        map.insert(id, (title, updated_at, message_count));
+    }
+    Ok(map)
+}
+
+fn batch_fetch_conversation_tags(
+    conn: &rusqlite::Connection,
+    conversation_ids: &[String],
+) -> Result<HashMap<String, Vec<Tag>>, AtomicCoreError> {
+    if conversation_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = conversation_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let query = format!(
+        "SELECT ct.conversation_id, t.id, t.name, t.parent_id, t.created_at, t.is_autotag_target
+         FROM conversation_tags ct
+         INNER JOIN tags t ON t.id = ct.tag_id
+         WHERE ct.conversation_id IN ({})",
+        placeholders
+    );
+    let mut stmt = conn
+        .prepare(&query)
+        .map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(conversation_ids.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                Tag {
+                    id: row.get(1)?,
+                    name: row.get(2)?,
+                    parent_id: row.get(3)?,
+                    created_at: row.get(4)?,
+                    is_autotag_target: row.get::<_, i32>(5)? != 0,
+                },
+            ))
+        })
+        .map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+    let mut map: HashMap<String, Vec<Tag>> = HashMap::new();
+    for row in rows {
+        let (conversation_id, tag) = row.map_err(|e| AtomicCoreError::Search(e.to_string()))?;
+        map.entry(conversation_id).or_default().push(tag);
     }
     Ok(map)
 }

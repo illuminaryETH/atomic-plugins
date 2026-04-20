@@ -7,6 +7,7 @@ import { RouterBridge } from '../../router/RouterBridge';
 import { SettingsModal } from '../settings/SettingsModal';
 import { OnboardingWizard } from '../onboarding';
 import { CommandPalette } from '../command-palette';
+import { SearchPalette } from '../search-palette/SearchPalette';
 import { useAtomsStore } from '../../stores/atoms';
 import { useTagsStore } from '../../stores/tags';
 import { useDatabasesStore } from '../../stores/databases';
@@ -26,10 +27,13 @@ export function Layout() {
 
   // Command palette state
   const commandPaletteOpen = useUIStore((state) => state.commandPaletteOpen);
-  const commandPaletteInitialQuery = useUIStore((state) => state.commandPaletteInitialQuery);
   const toggleCommandPalette = useUIStore((state) => state.toggleCommandPalette);
   const closeCommandPalette = useUIStore((state) => state.closeCommandPalette);
-  const openCommandPalette = useUIStore((state) => state.openCommandPalette);
+  const searchPaletteOpen = useUIStore((state) => state.searchPaletteOpen);
+  const searchPaletteInitialQuery = useUIStore((state) => state.searchPaletteInitialQuery);
+  const toggleSearchPalette = useUIStore((state) => state.toggleSearchPalette);
+  const closeSearchPalette = useUIStore((state) => state.closeSearchPalette);
+  const openSearchPalette = useUIStore((state) => state.openSearchPalette);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -40,32 +44,39 @@ export function Layout() {
         document.activeElement?.tagName === 'TEXTAREA' ||
         (document.activeElement as HTMLElement)?.isContentEditable;
 
-      // Cmd+P or Ctrl+P to toggle command palette (works even in inputs)
-      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+      // Cmd+Shift+P or Ctrl+Shift+P to toggle command palette (works even in inputs)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         toggleCommandPalette();
+        return;
+      }
+
+      // Cmd+P or Ctrl+P to toggle global search (works even in inputs)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+        e.preventDefault();
+        toggleSearchPalette();
         return;
       }
 
       // Skip other shortcuts if input is active
       if (isInputActive) return;
 
-      // "/" to open command palette in search mode
-      if (e.key === '/' && !commandPaletteOpen) {
+      // "/" to open the global search palette
+      if (e.key === '/' && !commandPaletteOpen && !searchPaletteOpen) {
         e.preventDefault();
-        openCommandPalette('/');
+        openSearchPalette();
         return;
       }
 
-      // "#" to open command palette in tag filter mode
-      if (e.key === '#' && !commandPaletteOpen) {
+      // "#" to open the search palette in tag-only mode
+      if (e.key === '#' && !commandPaletteOpen && !searchPaletteOpen) {
         e.preventDefault();
-        openCommandPalette('#');
+        openSearchPalette('#');
         return;
       }
 
-      // Cmd+N or Ctrl+N to create new atom (only when palette is closed)
-      if ((e.metaKey || e.ctrlKey) && e.key === 'n' && !commandPaletteOpen) {
+      // Cmd+N or Ctrl+N to create new atom (only when palettes are closed)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n' && !commandPaletteOpen && !searchPaletteOpen) {
         e.preventDefault();
         const { createAtom } = useAtomsStore.getState();
         createAtom('').then((newAtom) => {
@@ -77,7 +88,7 @@ export function Layout() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [toggleCommandPalette, openCommandPalette, commandPaletteOpen]);
+  }, [toggleCommandPalette, toggleSearchPalette, openSearchPalette, commandPaletteOpen, searchPaletteOpen]);
 
   // Listen for custom settings event from command palette
   useEffect(() => {
@@ -165,7 +176,11 @@ export function Layout() {
       <CommandPalette
         isOpen={commandPaletteOpen}
         onClose={closeCommandPalette}
-        initialQuery={commandPaletteInitialQuery}
+      />
+      <SearchPalette
+        isOpen={searchPaletteOpen}
+        onClose={closeSearchPalette}
+        initialQuery={searchPaletteInitialQuery}
       />
       <SettingsModal
         isOpen={settingsOpen}
@@ -174,4 +189,3 @@ export function Layout() {
     </div>
   );
 }
-

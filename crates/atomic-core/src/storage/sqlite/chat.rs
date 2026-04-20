@@ -57,6 +57,7 @@ impl SqliteStorage {
             .conn
             .lock()
             .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
+        conn.execute("DELETE FROM chat_messages_fts WHERE conversation_id = ?1", [id])?;
         crate::chat::delete_conversation(&conn, id)
     }
 
@@ -112,6 +113,10 @@ impl SqliteStorage {
             .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
         let (message_id, message_index) =
             crate::chat::save_message(&conn, conversation_id, role, content)?;
+        conn.execute(
+            "INSERT INTO chat_messages_fts(id, conversation_id, content) VALUES (?1, ?2, ?3)",
+            rusqlite::params![&message_id, conversation_id, content],
+        )?;
         // Reconstruct ChatMessage from the returned id and index
         Ok(ChatMessage {
             id: message_id,

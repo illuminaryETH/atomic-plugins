@@ -630,6 +630,20 @@ impl SqliteStorage {
             "INSERT INTO atom_chunks_fts(atom_chunks_fts) VALUES('rebuild')",
             [],
         )?;
+        conn.execute("DELETE FROM wiki_articles_fts", [])?;
+        conn.execute(
+            "INSERT INTO wiki_articles_fts(id, tag_id, tag_name, content)
+             SELECT w.id, w.tag_id, t.name, w.content
+             FROM wiki_articles w
+             JOIN tags t ON t.id = w.tag_id",
+            [],
+        )?;
+        conn.execute("DELETE FROM chat_messages_fts", [])?;
+        conn.execute(
+            "INSERT INTO chat_messages_fts(id, conversation_id, content)
+             SELECT id, conversation_id, content FROM chat_messages",
+            [],
+        )?;
         Ok(())
     }
 

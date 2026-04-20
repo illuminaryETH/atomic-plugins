@@ -49,6 +49,15 @@ impl SqliteStorage {
         // we don't have link extraction context, so pass an empty slice.
         wiki::save_wiki_article(&conn, &article, citations, &[])
             .map_err(|e| AtomicCoreError::Wiki(e))?;
+        conn.execute("DELETE FROM wiki_articles_fts WHERE tag_id = ?1", [tag_id])?;
+        conn.execute(
+            "INSERT INTO wiki_articles_fts(id, tag_id, tag_name, content)
+             SELECT w.id, w.tag_id, t.name, w.content
+             FROM wiki_articles w
+             JOIN tags t ON t.id = w.tag_id
+             WHERE w.tag_id = ?1",
+            [tag_id],
+        )?;
 
         Ok(WikiArticleWithCitations {
             article,
@@ -68,7 +77,17 @@ impl SqliteStorage {
             .lock()
             .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
         wiki::save_wiki_article(&conn, article, citations, links)
-            .map_err(|e| AtomicCoreError::Wiki(e))
+            .map_err(|e| AtomicCoreError::Wiki(e))?;
+        conn.execute("DELETE FROM wiki_articles_fts WHERE tag_id = ?1", [&article.tag_id])?;
+        conn.execute(
+            "INSERT INTO wiki_articles_fts(id, tag_id, tag_name, content)
+             SELECT w.id, w.tag_id, t.name, w.content
+             FROM wiki_articles w
+             JOIN tags t ON t.id = w.tag_id
+             WHERE w.tag_id = ?1",
+            [&article.tag_id],
+        )?;
+        Ok(())
     }
 
     pub(crate) fn delete_wiki_sync(&self, tag_id: &str) -> StorageResult<()> {
@@ -77,7 +96,9 @@ impl SqliteStorage {
             .conn
             .lock()
             .map_err(|e| AtomicCoreError::Lock(e.to_string()))?;
-        wiki::delete_article(&conn, tag_id).map_err(|e| AtomicCoreError::Wiki(e))
+        wiki::delete_article(&conn, tag_id).map_err(|e| AtomicCoreError::Wiki(e))?;
+        conn.execute("DELETE FROM wiki_articles_fts WHERE tag_id = ?1", [tag_id])?;
+        Ok(())
     }
 
     pub(crate) fn get_wiki_links_sync(&self, tag_id: &str) -> StorageResult<Vec<WikiLink>> {

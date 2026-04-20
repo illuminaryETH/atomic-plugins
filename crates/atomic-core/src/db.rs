@@ -780,6 +780,61 @@ impl Database {
             )?;
         }
 
+        let wiki_fts_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='wiki_articles_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        if wiki_fts_sql.is_empty() {
+            conn.execute_batch(
+                r#"
+                CREATE VIRTUAL TABLE wiki_articles_fts USING fts5(
+                    id UNINDEXED,
+                    tag_id UNINDEXED,
+                    tag_name,
+                    content
+                );
+                "#,
+            )?;
+            conn.execute("DELETE FROM wiki_articles_fts", [])?;
+            conn.execute(
+                "INSERT INTO wiki_articles_fts(id, tag_id, tag_name, content)
+                 SELECT w.id, w.tag_id, t.name, w.content
+                 FROM wiki_articles w
+                 JOIN tags t ON t.id = w.tag_id",
+                [],
+            )?;
+        }
+
+        let chat_fts_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='chat_messages_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        if chat_fts_sql.is_empty() {
+            conn.execute_batch(
+                r#"
+                CREATE VIRTUAL TABLE chat_messages_fts USING fts5(
+                    id UNINDEXED,
+                    conversation_id UNINDEXED,
+                    content
+                );
+                "#,
+            )?;
+            conn.execute("DELETE FROM chat_messages_fts", [])?;
+            conn.execute(
+                "INSERT INTO chat_messages_fts(id, conversation_id, content)
+                 SELECT id, conversation_id, content FROM chat_messages",
+                [],
+            )?;
+        }
+
         crate::settings::migrate_settings(conn)?;
 
         Ok(())

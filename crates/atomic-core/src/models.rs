@@ -127,6 +127,54 @@ pub struct SemanticSearchResult {
     pub matching_chunk_index: i32,
 }
 
+/// Grouped keyword search across the app for search palette discovery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct GlobalSearchResponse {
+    pub atoms: Vec<SemanticSearchResult>,
+    pub wiki: Vec<GlobalWikiSearchResult>,
+    pub chats: Vec<GlobalChatSearchResult>,
+    pub tags: Vec<GlobalTagSearchResult>,
+}
+
+/// Keyword search hit for a wiki article.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct GlobalWikiSearchResult {
+    pub id: String,
+    pub tag_id: String,
+    pub tag_name: String,
+    pub content_snippet: String,
+    pub updated_at: String,
+    pub atom_count: i32,
+    pub score: f32,
+}
+
+/// Keyword search hit for a chat conversation, collapsed from matching messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct GlobalChatSearchResult {
+    pub id: String,
+    pub title: Option<String>,
+    pub updated_at: String,
+    pub message_count: i32,
+    pub tags: Vec<Tag>,
+    pub matching_message_content: String,
+    pub score: f32,
+}
+
+/// Keyword search hit for a tag name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct GlobalTagSearchResult {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub created_at: String,
+    pub atom_count: i32,
+    pub score: f32,
+}
+
 /// Payload for embedding-complete event (embedding only, no tags)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingCompletePayload {

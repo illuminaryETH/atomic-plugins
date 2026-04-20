@@ -19,6 +19,14 @@ pub struct SearchRequest {
     pub threshold: Option<f32>,
 }
 
+#[derive(Deserialize, Serialize, ToSchema)]
+pub struct GlobalSearchRequest {
+    /// Search query text
+    pub query: String,
+    /// Per-section result cap (default: 5)
+    pub section_limit: Option<i32>,
+}
+
 #[utoipa::path(
     post,
     path = "/api/search",
@@ -49,6 +57,24 @@ pub async fn search(db: Db, body: web::Json<SearchRequest>) -> HttpResponse {
 
     let result = db.0.search(options).await;
     ok_or_error(result)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/search/global",
+    request_body = GlobalSearchRequest,
+    responses(
+        (status = 200, description = "Grouped global search results", body = atomic_core::GlobalSearchResponse),
+    ),
+    tag = "search",
+)]
+pub async fn global_search(db: Db, body: web::Json<GlobalSearchRequest>) -> HttpResponse {
+    let req = body.into_inner();
+    ok_or_error(
+        db.0
+            .search_global_keyword(&req.query, req.section_limit.unwrap_or(5))
+            .await,
+    )
 }
 
 #[derive(Deserialize, IntoParams)]

@@ -9,6 +9,7 @@ interface CommandListProps {
   selectedIndex: number;
   onSelect: (index: number) => void;
   hasQuery: boolean;
+  query: string;
 }
 
 export const CommandList = memo(function CommandList({
@@ -17,6 +18,7 @@ export const CommandList = memo(function CommandList({
   selectedIndex,
   onSelect,
   hasQuery,
+  query,
 }: CommandListProps) {
   // Group filtered commands by category
   const groupedCommands = new Map<CommandCategory, FuzzyMatch[]>();
@@ -83,7 +85,7 @@ export const CommandList = memo(function CommandList({
       {/* Empty state */}
       {filteredCommands.length === 0 && hasQuery && (
         <div className="px-4 py-8 text-center text-[var(--color-text-tertiary)] text-sm">
-          No commands found for "{hasQuery}"
+          No commands found for "{query}"
         </div>
       )}
 

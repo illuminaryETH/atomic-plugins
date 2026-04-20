@@ -105,29 +105,23 @@ export const commands: Command[] = [
   },
   {
     id: 'search-atoms',
-    label: 'Search atoms...',
+    label: 'Open search',
     category: 'atoms',
     keywords: ['search', 'find', 'query', 'semantic', 'lookup'],
-    shortcut: '/',
+    shortcut: '⌘P',
     icon: SearchIcon,
-    action: () => {
-      // This is handled specially - switches to search mode
-      // The CommandPalette will intercept this
-    },
+    action: () => useUIStore.getState().openSearchPalette(),
   },
 
   // Tag commands
   {
     id: 'filter-by-tag',
-    label: 'Filter by tag...',
+    label: 'Search tags...',
     category: 'tags',
     keywords: ['tag', 'filter', 'category', 'label'],
     shortcut: '#',
     icon: TagIcon,
-    action: () => {
-      // This is handled specially - switches to tag filter mode
-      // The CommandPalette will intercept this
-    },
+    action: () => useUIStore.getState().openSearchPalette('#'),
   },
   {
     id: 'create-tag',

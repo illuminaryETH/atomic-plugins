@@ -136,6 +136,15 @@ impl SqliteStorage {
             "UPDATE tags SET name = ?1, parent_id = ?2 WHERE id = ?3",
             (name, &parent_id, id),
         )?;
+        conn.execute("DELETE FROM wiki_articles_fts WHERE tag_id = ?1", [id])?;
+        conn.execute(
+            "INSERT INTO wiki_articles_fts(id, tag_id, tag_name, content)
+             SELECT w.id, w.tag_id, t.name, w.content
+             FROM wiki_articles w
+             JOIN tags t ON t.id = w.tag_id
+             WHERE w.tag_id = ?1",
+            [id],
+        )?;
 
         let tag = conn
             .query_row(

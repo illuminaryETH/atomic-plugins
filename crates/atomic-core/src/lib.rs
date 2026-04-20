@@ -1167,6 +1167,32 @@ impl AtomicCore {
         }
     }
 
+    /// Keyword-only search across atoms, wiki articles, chats, and tags for the global search palette.
+    pub async fn search_global_keyword(
+        &self,
+        query: &str,
+        section_limit: i32,
+    ) -> Result<GlobalSearchResponse, AtomicCoreError> {
+        if let Some(sqlite) = self.storage.as_sqlite() {
+            let sqlite = sqlite.clone();
+            let query = query.to_string();
+            return tokio::task::spawn_blocking(move || {
+                sqlite.global_keyword_search_sync(&query, section_limit)
+            })
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(format!("spawn_blocking join: {e}")))?;
+        }
+
+        #[cfg(feature = "postgres")]
+        if let Some(pg) = self.storage.as_postgres() {
+            return pg.global_keyword_search(query, section_limit).await;
+        }
+
+        Err(AtomicCoreError::Search(
+            "Global keyword search is not implemented for this storage backend".to_string(),
+        ))
+    }
+
     /// Find atoms similar to a given atom
     pub async fn find_similar(
         &self,

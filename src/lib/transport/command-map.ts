@@ -164,6 +164,12 @@ export const COMMAND_MAP: Record<string, CommandSpec> = {
     argsMode: 'body',
     transformArgs: (a) => ({ query: a.query, mode: 'hybrid', limit: a.limit, threshold: a.threshold }),
   },
+  search_global_keyword: {
+    method: 'POST',
+    path: '/api/search/global',
+    argsMode: 'body',
+    transformArgs: (a) => ({ query: a.query, section_limit: a.sectionLimit }),
+  },
   find_similar_atoms: {
     method: 'GET',
     path: (a) => `/api/atoms/${encodeURIComponent(a.atomId as string)}/similar?limit=${a.limit ?? 10}&threshold=${a.threshold ?? 0.7}`,

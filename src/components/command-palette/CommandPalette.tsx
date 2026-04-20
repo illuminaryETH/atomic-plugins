@@ -3,31 +3,24 @@ import { createPortal } from 'react-dom';
 import { useCommandPalette } from './useCommandPalette';
 import { CommandInput } from './CommandInput';
 import { CommandList } from './CommandList';
-import { SearchResults } from './SearchResults';
-import { TagResults } from './TagResults';
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  initialQuery?: string;
 }
 
-export function CommandPalette({ isOpen, onClose, initialQuery = '' }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const {
     query,
     setQuery,
-    mode,
     selectedIndex,
-    searchResults,
-    isSearching,
     filteredCommands,
     recentCommands,
-    filteredTags,
     handleKeyDown,
     handleSelect,
-  } = useCommandPalette({ isOpen, onClose, initialQuery });
+  } = useCommandPalette({ isOpen, onClose });
 
   // Close on click outside
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -62,39 +55,18 @@ export function CommandPalette({ isOpen, onClose, initialQuery = '' }: CommandPa
           query={query}
           onChange={setQuery}
           onKeyDown={handleKeyDown}
-          mode={mode}
-          isSearching={isSearching}
+          isSearching={false}
+          shortcutHint="⌘⇧P"
         />
 
-        {/* Render appropriate content based on mode */}
-        {mode === 'commands' && (
-          <CommandList
-            recentCommands={recentCommands}
-            filteredCommands={filteredCommands}
-            selectedIndex={selectedIndex}
-            onSelect={handleSelect}
-            hasQuery={!!query.trim()}
-          />
-        )}
-
-        {mode === 'search' && (
-          <SearchResults
-            results={searchResults}
-            selectedIndex={selectedIndex}
-            onSelect={handleSelect}
-            isSearching={isSearching}
-            query={query.slice(1)} // Remove "/" prefix
-          />
-        )}
-
-        {mode === 'tags' && (
-          <TagResults
-            tags={filteredTags}
-            selectedIndex={selectedIndex}
-            onSelect={handleSelect}
-            query={query.slice(1)} // Remove "#" prefix
-          />
-        )}
+        <CommandList
+          recentCommands={recentCommands}
+          filteredCommands={filteredCommands}
+          selectedIndex={selectedIndex}
+          onSelect={handleSelect}
+          hasQuery={!!query.trim()}
+          query={query}
+        />
 
         {/* Footer hints */}
         <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-[10px] text-[var(--color-text-tertiary)]">
@@ -114,12 +86,8 @@ export function CommandPalette({ isOpen, onClose, initialQuery = '' }: CommandPa
           </div>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <kbd className="px-1 py-0.5 bg-[var(--color-bg-hover)] rounded">/</kbd>
-              search atoms
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="px-1 py-0.5 bg-[var(--color-bg-hover)] rounded">#</kbd>
-              filter tags
+              <kbd className="px-1 py-0.5 bg-[var(--color-bg-hover)] rounded">⌘P</kbd>
+              open search
             </span>
           </div>
         </div>

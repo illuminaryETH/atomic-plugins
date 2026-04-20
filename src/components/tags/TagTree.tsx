@@ -58,7 +58,7 @@ export function TagTree({ onOpenTagSettings }: TagTreeProps = {}) {
   const fetchMoreTagChildren = useTagsStore(s => s.fetchMoreTagChildren);
   const selectedTagId = useUIStore(s => s.selectedTagId);
   const setSelectedTag = useUIStore(s => s.setSelectedTag);
-  const openCommandPalette = useUIStore(s => s.openCommandPalette);
+  const openSearchPalette = useUIStore(s => s.openSearchPalette);
   const expandedTagIds = useUIStore(s => s.expandedTagIds);
   const fetchAtoms = useAtomsStore(s => s.fetchAtoms);
   const fetchAtomsByTag = useAtomsStore(s => s.fetchAtomsByTag);
@@ -228,7 +228,7 @@ export function TagTree({ onOpenTagSettings }: TagTreeProps = {}) {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            openCommandPalette('#');
+            openSearchPalette('#');
           }}
           className="p-1 rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] transition-colors"
           title="Search tags"
