@@ -13,11 +13,11 @@ import { useInlineEditor } from '../../hooks';
 import { formatDate } from '../../lib/date';
 import { getTransport } from '../../lib/transport';
 import { readerEditorActions } from '../../lib/reader-editor-bridge';
-import type { AtomicMilkdownEditorHandle } from '../editor/AtomicMilkdownEditor';
+import type { AtomicCodeMirrorEditorHandle } from '@atomic/editor';
 
-const AtomicMilkdownEditor = lazy(async () => {
-  const mod = await import('../editor/AtomicMilkdownEditor');
-  return { default: mod.AtomicMilkdownEditor };
+const AtomicCodeMirrorEditor = lazy(async () => {
+  const mod = await import('@atomic/editor');
+  return { default: mod.AtomicCodeMirrorEditor };
 });
 
 interface AtomReaderProps {
@@ -147,7 +147,7 @@ function AtomReaderContent({
   const setReaderEditState = useUIStore(s => s.setReaderEditState);
   const retryTagging = useAtomsStore(s => s.retryTagging);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const editorHandleRef = useRef<AtomicMilkdownEditorHandle | null>(null);
+  const editorHandleRef = useRef<AtomicCodeMirrorEditorHandle | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showTagSelector, setShowTagSelector] = useState(false);
@@ -207,7 +207,7 @@ function AtomReaderContent({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && document.querySelector('.atomic-editor-search-panel')) {
+      if (e.key === 'Escape' && editorHandleRef.current?.isSearchOpen()) {
         e.preventDefault();
         readerEditorActions.current?.closeSearch();
         return;
@@ -266,13 +266,16 @@ function AtomReaderContent({
         <div className="max-w-6xl mx-auto px-3 py-5 sm:px-4 sm:py-6 lg:px-6 lg:flex lg:gap-10">
           <div className="flex-1 min-w-0">
             <Suspense fallback={null}>
-              <AtomicMilkdownEditor
+              <AtomicCodeMirrorEditor
                 key={atom.id}
                 documentId={atom.id}
                 markdownSource={editContent}
                 initialSearchText={highlightText}
                 blurEditorOnMount={!initialEditing}
                 onMarkdownChange={setEditContent}
+                onLinkClick={(url) => {
+                  void openExternalUrl(url);
+                }}
                 editorHandleRef={editorHandleRef}
               />
             </Suspense>

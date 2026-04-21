@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+@import "@atomic/editor/styles.css";
 
 /* Custom animations */
 @keyframes fade-in {

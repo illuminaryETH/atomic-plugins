@@ -289,6 +289,22 @@ async function probeFenceVisibility(page) {
   // lines would be considered inactive and their CodeMark/CodeInfo
   // tokens would be hidden.
 
+  // Image widgets in the showcase reserve real height via
+  // `estimatedHeight`, which can push the code block below the
+  // initial viewport. Scroll down until a fenced-code line renders.
+  await page.locator('.cm-scroller').evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.waitForTimeout(150);
+  for (let step = 0; step < 10; step++) {
+    const visible = await page.locator('.cm-line.cm-atomic-fenced-code').count();
+    if (visible >= 3) break;
+    await page.locator('.cm-scroller').evaluate((el) => {
+      el.scrollTop += 400;
+    });
+    await page.waitForTimeout(120);
+  }
+
   const codeLines = page.locator('.cm-line.cm-atomic-fenced-code');
   const count = await codeLines.count();
   if (count < 3) {
@@ -386,6 +402,13 @@ async function runNewBulletListScenario(page, label, setup, screenshotName) {
 
 async function probeNewBulletList(page) {
   // Scenario A: after a plain paragraph, two blank lines, then list.
+  // Reset scroll first — earlier probes (fence-visibility) scroll
+  // down, and the .nth(3) plain-line target is viewport-relative.
+  await page.locator('.cm-scroller').evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.waitForTimeout(200);
+
   await runNewBulletListScenario(
     page,
     'after para +2 blanks',
@@ -410,7 +433,14 @@ async function probeNewBulletList(page) {
     page,
     'after h2 +1 blank',
     async (p, uniq) => {
-      const h2 = p.locator('.cm-line.cm-atomic-h2').nth(1); // second h2 to avoid the first
+      // Reset to the top so the showcase H2 is reliably mounted.
+      // Originally this targeted nth(1) to "avoid the first", but
+      // as the showcase grew (tables, images, HR) section 1's H2
+      // moved outside CM6's initial viewport — the nth(0) showcase
+      // H2 is always present at the top.
+      await p.locator('.cm-scroller').evaluate((el) => { el.scrollTop = 0; });
+      await p.waitForTimeout(200);
+      const h2 = p.locator('.cm-line.cm-atomic-h2').first();
       const box = await h2.boundingBox();
       await p.mouse.click(box.x + 40, box.y + box.height / 2);
       await p.waitForTimeout(180);
@@ -477,11 +507,354 @@ async function probeNestedListExit(page) {
   );
 }
 
-async function probeTaskList(page) {
-  // Focus the editor, jump cursor to doc end (stable target regardless of
-  // what earlier probes typed), add a blank line, then write a task item.
+async function probeCloseBrackets(page) {
+  // Type an opening bracket — the editor should auto-insert the
+  // closer and leave the caret between them. Typing content then
+  // shows the bracket pair surrounding it.
   const content = page.locator('.cm-content').first();
   await content.click();
+  await page.waitForTimeout(180);
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+
+  async function checkPair(opener, closer, label) {
+    const uniq = `${label}${Date.now().toString(36).slice(-4)}`;
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type(opener);
+    await page.keyboard.type(uniq);
+    await page.waitForTimeout(120);
+    const lineText = await page.evaluate((marker) => {
+      const lines = Array.from(document.querySelectorAll('.cm-line'));
+      const hit = lines.find((el) => (el.textContent || '').includes(marker));
+      return hit ? (hit.textContent || '') : null;
+    }, uniq);
+    const ok = lineText?.includes(`${opener}${uniq}${closer}`) ?? false;
+    record(
+      `closeBrackets: \`${opener}\` auto-pairs`,
+      ok ? 'pass' : 'fail',
+      `line=${JSON.stringify(lineText?.slice(0, 60))}`,
+    );
+  }
+
+  await checkPair('[', ']', 'br');
+  await checkPair('*', '*', 'em');
+  await checkPair('_', '_', 'un');
+  await checkPair('`', '`', 'bt');
+
+  // Bold promote: typing `*` into an empty `*|*` pair should extend
+  // to `**|**` rather than stepping through. Then content + a single
+  // `*` should step through the inner asterisk, yielding `**foo*|*`.
+  const boldMarker = `bd${Date.now().toString(36).slice(-4)}`;
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('**'); // extend on second `*` → `**|**`
+  await page.keyboard.type(boldMarker);
+  await page.waitForTimeout(120);
+  const boldLine = await page.evaluate((marker) => {
+    const lines = Array.from(document.querySelectorAll('.cm-line'));
+    const hit = lines.find((el) => (el.textContent || '').includes(marker));
+    return hit ? (hit.textContent || '') : null;
+  }, boldMarker);
+  const boldOk = boldLine?.includes(`**${boldMarker}**`) ?? false;
+  record(
+    'closeBrackets: `**` promotes to double pair',
+    boldOk ? 'pass' : 'fail',
+    `line=${JSON.stringify(boldLine?.slice(0, 60))}`,
+  );
+}
+
+async function probeTableFromMarkdown(page) {
+  // Regression guard for "type raw table markdown → widget appears".
+  // Scroll to top, click a plain paragraph line, navigate to doc end,
+  // type the markdown, and verify a new table widget materialized.
+  await page.locator('.cm-scroller').evaluate((el) => { el.scrollTop = 0; });
+  await page.waitForTimeout(200);
+  const plain = page.locator('.cm-line:not([class*="cm-atomic"])').first();
+  const box = await plain.boundingBox();
+  if (!box) {
+    record('table: instantiate from markdown', 'fail', 'no plain line to focus');
+    return;
+  }
+  await page.mouse.click(box.x + 20, box.y + box.height / 2);
+  await page.waitForTimeout(180);
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+
+  const marker = `NEWTBL_${Date.now().toString(36).slice(-4)}`;
+  // Keyboard.type sends literal characters; `|` and `-` type as-is.
+  // Avoid closeBrackets interference: `|` isn't in the bracket set;
+  // `-` similarly won't auto-pair. But our bullet-continuation Enter
+  // might activate on the `-` row — type the whole table first, then
+  // Enter at the end to close it.
+  await page.keyboard.type(`| Col | ${marker} |`);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('| --- | --- |');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('| a | b |');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+
+  // Query all table widgets and find the one whose header contains our
+  // unique marker.
+  const found = await page.evaluate((m) => {
+    const widgets = Array.from(document.querySelectorAll('.cm-atomic-table'));
+    for (const w of widgets) {
+      const text = w.textContent || '';
+      if (text.includes(m)) return true;
+    }
+    return false;
+  }, marker);
+
+  record(
+    'table: instantiate from markdown',
+    found ? 'pass' : 'fail',
+    `marker ${marker} rendered as widget? ${found}`,
+  );
+}
+
+async function probeTableWidget(page) {
+  // The showcase section contains a markdown table; it should render
+  // as a `.cm-atomic-table` block widget with at least one `<table>`
+  // inside, and cells should be contenteditable.
+  await page.locator('.cm-scroller').evaluate((el) => { el.scrollTop = 0; });
+  await page.waitForTimeout(200);
+  // Scroll a bit to get the table into viewport
+  await page.locator('.cm-scroller').evaluate((el) => { el.scrollTop = 500; });
+  await page.waitForTimeout(400);
+
+  const info = await page.evaluate(() => {
+    const wrap = document.querySelector('.cm-atomic-table');
+    if (!wrap) return { found: false };
+    const table = wrap.querySelector('table');
+    const headerCells = table?.querySelectorAll('thead th') ?? [];
+    const bodyRows = table?.querySelectorAll('tbody tr') ?? [];
+    const firstCell = headerCells[0];
+    // Cells themselves aren't contenteditable — the inner source
+    // element is. This keeps the image preview strictly visual.
+    const source = firstCell?.querySelector('.cm-atomic-table-cell-source');
+    return {
+      found: true,
+      cols: headerCells.length,
+      rows: bodyRows.length,
+      cellEditable: source?.contentEditable === 'true',
+      firstHeader: source?.textContent ?? '',
+    };
+  });
+
+  if (!info.found) {
+    record('table widget: rendered', 'fail', 'no .cm-atomic-table');
+    return;
+  }
+  record(
+    'table widget: rendered',
+    info.cols > 0 && info.rows > 0 && info.cellEditable ? 'pass' : 'fail',
+    `${info.cols} cols × ${info.rows} rows, firstHeader=${JSON.stringify(info.firstHeader)}, editable=${info.cellEditable}`,
+  );
+}
+
+async function probeHorizontalRule(page) {
+  // The showcase section includes a `---` line. On inactive (cold)
+  // state it should be classed as `cm-atomic-hr` so the CSS rule
+  // renders, and the raw characters should be hidden.
+  await page.locator('.cm-scroller').evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.waitForTimeout(200);
+
+  const info = await page.evaluate(() => {
+    const el = document.querySelector('.cm-line.cm-atomic-hr');
+    if (!el) return { found: false };
+    return {
+      found: true,
+      text: el.textContent || '',
+    };
+  });
+
+  if (!info.found) {
+    record('horizontal rule: line class applied', 'fail', 'no .cm-atomic-hr');
+    return;
+  }
+  const hidden = info.text.trim().length === 0;
+  record(
+    'horizontal rule: line class applied',
+    'pass',
+    `text=${JSON.stringify(info.text)}`,
+  );
+  record(
+    'horizontal rule: raw chars hidden',
+    hidden ? 'pass' : 'fail',
+    `trimmed text length = ${info.text.trim().length}`,
+  );
+}
+
+async function probeBackslashEscape(page) {
+  // The showcase includes `domain\.com` style escapes. On an inactive
+  // line the backslashes should be hidden, so the visible text reads
+  // `domain.com` rather than `domain\.com`. Focusing the line should
+  // reveal the raw source again.
+  //
+  // The sample line sits late in the showcase (after images and a
+  // code block), so CM6 virtualization may leave it outside the DOM
+  // at scrollTop=0. Scroll down until a line matching the marker
+  // word is rendered, giving the probe a stable target regardless of
+  // upstream showcase length changes.
+  await page.locator('.cm-scroller').evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.waitForTimeout(150);
+  for (let step = 0; step < 12; step++) {
+    const present = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.cm-line')).some((el) =>
+        (el.textContent || '').includes('Escapes like'),
+      ),
+    );
+    if (present) break;
+    await page.locator('.cm-scroller').evaluate((el) => {
+      el.scrollTop += 200;
+    });
+    await page.waitForTimeout(120);
+  }
+
+  const inactive = await page.evaluate(() => {
+    const lines = Array.from(document.querySelectorAll('.cm-line'));
+    const line = lines.find((el) => (el.textContent || '').includes('Escapes like'));
+    return line ? (line.textContent || '') : null;
+  });
+
+  if (!inactive) {
+    record('escape: inactive line drops backslashes', 'fail', 'sample line not rendered');
+    return;
+  }
+  const hidesBackslash =
+    !inactive.includes('\\.') && inactive.includes('domain.com') && inactive.includes('3.14');
+  record(
+    'escape: inactive line drops backslashes',
+    hidesBackslash ? 'pass' : 'fail',
+    `text=${JSON.stringify(inactive.slice(0, 80))}`,
+  );
+
+  // Click the line to activate it, then confirm the raw `\.` returns.
+  const sampleLine = page
+    .locator('.cm-line', { hasText: 'Escapes like' })
+    .first();
+  const box = await sampleLine.boundingBox();
+  if (!box) return;
+  await page.mouse.click(box.x + 20, box.y + box.height / 2);
+  await page.waitForTimeout(200);
+
+  const active = await page.evaluate(() => {
+    const lines = Array.from(document.querySelectorAll('.cm-line'));
+    const line = lines.find((el) => (el.textContent || '').includes('Escapes like'));
+    return line ? (line.textContent || '') : null;
+  });
+  record(
+    'escape: active line reveals backslashes',
+    active && active.includes('\\.') ? 'pass' : 'fail',
+    `text=${JSON.stringify((active || '').slice(0, 80))}`,
+  );
+}
+
+async function probeImageBlock(page) {
+  // The sample's Block showcase section includes an image; after
+  // mount there should be at least one rendered `.cm-atomic-image`
+  // widget in the DOM, with an actual `<img>` inside pointing at the
+  // URL parsed from the source. Natural images smaller than the
+  // content width should NOT be upscaled.
+  await page.locator('.cm-scroller').evaluate((el) => {
+    el.scrollTop = 750;
+  });
+  await page.waitForTimeout(500);
+
+  const imgInfo = await page.evaluate(() => {
+    const widget = document.querySelector('.cm-atomic-image');
+    if (!widget) return { found: false };
+    const img = widget.querySelector('img');
+    if (!img) return { found: true, hasImg: false };
+    // Wait for intrinsic size
+    return {
+      found: true,
+      hasImg: true,
+      src: img.src,
+      natural: { w: img.naturalWidth, h: img.naturalHeight },
+      rendered: { w: Math.round(img.getBoundingClientRect().width), h: Math.round(img.getBoundingClientRect().height) },
+    };
+  });
+
+  if (!imgInfo.found) {
+    record('image block: widget rendered', 'fail', 'no .cm-atomic-image in DOM');
+    return;
+  }
+  if (!imgInfo.hasImg) {
+    record('image block: widget rendered', 'fail', 'widget has no <img>');
+    return;
+  }
+
+  record(
+    'image block: widget rendered',
+    'pass',
+    `src=${imgInfo.src.slice(0, 40)} natural=${imgInfo.natural.w}x${imgInfo.natural.h}`,
+  );
+
+  // Verify no upscaling: rendered width should equal natural width if
+  // natural < container width. Allow a 1px tolerance for subpixel
+  // rounding.
+  const notUpscaled = imgInfo.rendered.w <= imgInfo.natural.w + 1;
+  record(
+    'image block: no upscaling below natural size',
+    notUpscaled ? 'pass' : 'fail',
+    `natural=${imgInfo.natural.w}px rendered=${imgInfo.rendered.w}px`,
+  );
+
+  // Click the image widget and verify the source-line markdown
+  // reappears. Inactive image lines have their `![alt](url)` text
+  // hidden via a Replace decoration; activating the line (cursor
+  // on it) removes the decoration so the raw text is back in the
+  // rendered `.cm-line`'s textContent. We test that transition.
+  const widget = page.locator('.cm-atomic-image').first();
+  await widget.click({ position: { x: 40, y: 40 } });
+  await page.waitForTimeout(250);
+  const revealedSource = await page.evaluate(() => {
+    const lines = Array.from(document.querySelectorAll('.cm-line'));
+    const source = lines.find((el) =>
+      (el.textContent || '').includes('![') &&
+      (el.textContent || '').includes('](http'),
+    );
+    if (!source) return { found: false };
+    return {
+      found: true,
+      text: (source.textContent || '').slice(0, 60),
+    };
+  });
+
+  if (!revealedSource.found) {
+    record('image block: click reveals source markdown', 'fail', 'no source line with `![...](...)` in DOM');
+  } else {
+    record(
+      'image block: click reveals source markdown',
+      'pass',
+      `text=${JSON.stringify(revealedSource.text)}`,
+    );
+  }
+}
+
+async function probeTaskList(page) {
+  // Focus the editor on a known non-widget line, then jump to doc end.
+  // Tables (block widgets) sit in the middle of .cm-content, so a
+  // bare `content.click()` can land inside a table cell and trap
+  // subsequent keystrokes in its contenteditable instead of the CM6
+  // editor.
+  await page.locator('.cm-scroller').evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.waitForTimeout(200);
+  const firstPlainLine = page.locator('.cm-line:not([class*="cm-atomic"])').first();
+  const box = await firstPlainLine.boundingBox();
+  if (box) {
+    await page.mouse.click(box.x + 20, box.y + box.height / 2);
+  }
   await page.waitForTimeout(180);
   await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.press('Enter');
@@ -731,6 +1104,12 @@ async function run() {
     await probeFenceVisibility(page);
     await probeNewBulletList(page);
     await probeNestedListExit(page);
+    await probeCloseBrackets(page);
+    await probeHorizontalRule(page);
+    await probeTableWidget(page);
+    await probeTableFromMarkdown(page);
+    await probeImageBlock(page);
+    await probeBackslashEscape(page);
     await probeTaskList(page);
     await probeCursorPingPong(page);
     await probeTyping(page);
