@@ -22,6 +22,8 @@ import {
   atomicEditorTheme,
   atomicMarkdownSyntax,
 } from '../../editor/codemirror/atomic-theme';
+import { inlinePreviewExtension } from '../../editor/codemirror/inline-preview';
+import '../../styles/codemirror-inline-preview.css';
 
 // Intentionally minimal while we iterate. No handle ref, no external-source
 // sync, no search/toolbar wiring — those land once the core editing
@@ -78,6 +80,7 @@ export function AtomicCodeMirrorEditor({
             indentWithTab,
             ...defaultKeymap,
           ]),
+          inlinePreviewExtension,
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
             onMarkdownChangeRef.current?.(update.state.doc.toString());

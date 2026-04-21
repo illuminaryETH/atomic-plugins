@@ -1,0 +1,108 @@
+/*
+ * Inline-preview styling. Classes here are applied by the inline-preview
+ * state field via Decoration.line (for block-level classes on .cm-line)
+ * and Decoration.mark (for inline content classes on inner spans).
+ *
+ * The invariant: every rule here sets font-size / weight / decoration
+ * purely by CSS class, and does NOT depend on cursor state. Line heights
+ * therefore stay constant whether the line is "active" (syntax tokens
+ * visible) or "inactive" (tokens hidden by replace-decorations) — that's
+ * what eliminates the CLS problem from block-preview mode.
+ */
+
+/* Heading lines — the raw `# Foo` line is styled to look like a heading.
+ * The `# ` prefix is hidden on inactive lines via Decoration.replace; the
+ * remaining text is the heading text. Height is driven by font-size +
+ * line-height here, not by the presence/absence of the prefix. */
+.cm-line.cm-atomic-h1 {
+  font-size: 2em;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: var(--atomic-prose-heading-tight, -0.025em);
+}
+
+.cm-line.cm-atomic-h2 {
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: var(--atomic-prose-heading-normal, -0.02em);
+}
+
+.cm-line.cm-atomic-h3 {
+  font-size: 1.22em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.cm-line.cm-atomic-h4 {
+  font-size: 1.05em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.cm-line.cm-atomic-h5 {
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.cm-line.cm-atomic-h6 {
+  font-size: 0.85em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* Blockquote lines — each line in the quote gets a left rail. Putting the
+ * rail on every line means the visual continues for multi-line quotes
+ * even though each line is an independent DOM element. */
+.cm-line.cm-atomic-blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid color-mix(in srgb, var(--color-accent) 72%, white 28%);
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Fenced-code lines — subtle backdrop so the block reads as code. The
+ * opening/closing ``` lines also get this class. CodeInfo after the
+ * opening fence is hidden on inactive lines (the language tag doesn't
+ * help the reader, just the editor). */
+.cm-line.cm-atomic-fenced-code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--color-bg-card) 88%, black 12%);
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+/* Inline content marks — applied on the text inside **…**, *…*, `…`,
+ * ~~…~~, [text](url). Styling only; no height changes. */
+.cm-atomic-strong {
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.cm-atomic-em {
+  font-style: italic;
+}
+
+.cm-atomic-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: color-mix(in srgb, var(--color-text-primary) 92%, white 8%);
+  background: color-mix(in srgb, var(--color-bg-card) 88%, black 12%);
+  border-radius: 0.3rem;
+  padding: 0 0.3rem;
+}
+
+.cm-atomic-strike {
+  text-decoration: line-through;
+  color: var(--color-text-secondary);
+}
+
+.cm-atomic-link {
+  color: var(--atomic-prose-link, #60a5fa);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.14em;
+}
