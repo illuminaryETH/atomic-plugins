@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AtomicCodeMirrorEditor } from '@atomic/editor';
-import '@atomic/editor/styles.css';
+import { AtomicCodeMirrorEditor } from '@atomic-editor/editor';
+import { ATOMIC_CODE_LANGUAGES } from '@atomic-editor/editor/code-languages';
+import '@atomic-editor/editor/styles.css';
 import { useFont, useTheme } from '../../hooks';
 import { useSettingsStore } from '../../stores/settings';
 import { openExternalUrl } from '../../lib/platform';
@@ -237,7 +238,7 @@ export function EditorHarnessPage() {
             ))}
           </div>
 
-          {/* Editor flavor — `atomic` is the full @atomic/editor
+          {/* Editor flavor — `atomic` is the full @atomic-editor/editor
               build (inline preview, tables, images, theme, search,
               etc.). `minimal` is stock CM6 + lang-markdown, used to
               isolate whether scroll halts live in our extensions or
@@ -285,6 +286,7 @@ export function EditorHarnessPage() {
                 key={`atomic|${size}|${mode}|${separators}|${tables}|${lists}|${codeBlocks}`}
                 documentId={`harness-${size}-${mode}-${separators}-${tables}-${lists}-${codeBlocks}`}
                 markdownSource={markdownSource}
+                codeLanguages={ATOMIC_CODE_LANGUAGES}
                 onLinkClick={(url) => {
                   void openExternalUrl(url);
                 }}

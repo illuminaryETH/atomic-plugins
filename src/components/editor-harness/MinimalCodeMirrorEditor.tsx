@@ -5,7 +5,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 
 // Diagnostic-only editor used by the harness to isolate whether the
-// iOS momentum-halt issue lives in our `@atomic/editor` extensions
+// iOS momentum-halt issue lives in our `@atomic-editor/editor` extensions
 // or in CM6 core / lang-markdown. It mounts a CM6 view with the
 // bare minimum — no inline preview, no custom widgets, no theme —
 // so if momentum scroll is smooth here while still jittery in the
@@ -36,7 +36,7 @@ export function MinimalCodeMirrorEditor({
           // Absolute minimum to render wrapped markdown text with a
           // cursor and undo. Deliberately no widgets, no
           // decorations, no search, and nothing from
-          // `@atomic/editor`. If this scrolls smoothly on iOS, every
+          // `@atomic-editor/editor`. If this scrolls smoothly on iOS, every
           // additional extension we layer on in
           // `AtomicCodeMirrorEditor` becomes a suspect.
           lineNumbers(),

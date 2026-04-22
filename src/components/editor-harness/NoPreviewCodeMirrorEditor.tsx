@@ -24,13 +24,13 @@ import {
 import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import { search, searchKeymap } from '@codemirror/search';
 import {
-  ATOMIC_CODE_LANGUAGES,
   atomicEditorTheme,
   atomicMarkdownSyntax,
   extendEmphasisPair,
   imageBlocks,
   tables,
-} from '@atomic/editor';
+} from '@atomic-editor/editor';
+import { ATOMIC_CODE_LANGUAGES } from '@atomic-editor/editor/code-languages';
 
 // Diagnostic-only: mirrors AtomicCodeMirrorEditor's setup exactly
 // EXCEPT that it omits `inlinePreview()`. Used by the harness to

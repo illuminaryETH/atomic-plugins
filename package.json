@@ -3,9 +3,6 @@
   "private": true,
   "version": "1.26.1",
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
     "postinstall": "patch-package --error-on-fail",
     "dev": "vite",
@@ -56,6 +53,7 @@
     "stress:wikipedia": "node scripts/stress-test-wikipedia.js"
   },
   "dependencies": {
+    "@atomic-editor/editor": "^0.1.0",
     "@capacitor/android": "^8.3.1",
     "@capacitor/core": "^8.3.0",
     "@capacitor/ios": "^8.3.0",
@@ -81,6 +79,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.38.8",
+    "@lezer/common": "^1.2.3",
     "@lezer/highlight": "^1.2.3",
     "@sigma/edge-curve": "^3.1.0",
     "@tailwindcss/typography": "^0.5.19",

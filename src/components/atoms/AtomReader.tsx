@@ -13,11 +13,30 @@ import { useInlineEditor } from '../../hooks';
 import { formatDate } from '../../lib/date';
 import { getTransport } from '../../lib/transport';
 import { readerEditorActions } from '../../lib/reader-editor-bridge';
-import type { AtomicCodeMirrorEditorHandle } from '@atomic/editor';
+import type {
+  AtomicCodeMirrorEditorHandle,
+  AtomicCodeMirrorEditorProps,
+} from '@atomic-editor/editor';
 
+// Lazy-load the editor module AND the curated code-languages
+// registry together. Pinning both inside the same dynamic boundary
+// keeps them in one lazy chunk, and wrapping the base component
+// lets us pass the default `codeLanguages` without every call site
+// having to know about the sub-path import.
 const AtomicCodeMirrorEditor = lazy(async () => {
-  const mod = await import('@atomic/editor');
-  return { default: mod.AtomicCodeMirrorEditor };
+  const [mod, langs] = await Promise.all([
+    import('@atomic-editor/editor'),
+    import('@atomic-editor/editor/code-languages'),
+  ]);
+  const Base = mod.AtomicCodeMirrorEditor;
+  const DEFAULT_LANGUAGES = langs.ATOMIC_CODE_LANGUAGES;
+  const Wrapped = (props: AtomicCodeMirrorEditorProps) => (
+    <Base
+      {...props}
+      codeLanguages={props.codeLanguages ?? DEFAULT_LANGUAGES}
+    />
+  );
+  return { default: Wrapped };
 });
 
 interface AtomReaderProps {

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
-@import "@atomic/editor/styles.css";
+@import "@atomic-editor/editor/styles.css";
 
 /* Custom animations */
 @keyframes fade-in {
@@ -83,7 +83,7 @@
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   --font-family-mono: var(--font-mono);
 
-  /* Map Atomic's theme tokens onto @atomic/editor's custom properties.
+  /* Map Atomic's theme tokens onto @atomic-editor/editor's custom properties.
    * The editor package defines its own `--atomic-editor-*` namespace
    * with dark-neutral fallbacks; this block is what makes the editor
    * track our theme (including `data-theme`/`data-font` overrides). */

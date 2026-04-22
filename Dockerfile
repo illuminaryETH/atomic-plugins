@@ -54,12 +54,7 @@ WORKDIR /app
 # --ignore-scripts skips better-sqlite3's native compile (it's a dev-only dep
 # used by local db scripts, not needed for `vite build`). Without this we'd
 # need python3/make/g++ in this stage.
-#
-# packages/ must be present before `npm ci` so workspace symlinks
-# (e.g. node_modules/@atomic/editor -> packages/editor) resolve. Without
-# this, vite can't resolve imports like `@atomic/editor/styles.css`.
 COPY package.json package-lock.json ./
-COPY packages/ packages/
 RUN npm ci --ignore-scripts
 
 # Copy frontend source
