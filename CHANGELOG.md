@@ -2,6 +2,10 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.27.1 — 2026-04-23
+
+- Fix a crash in the editor when links or images contain multi-line titles
+
 ## v1.27.0 — 2026-04-23
 
 - Add dedicated search palette (⌘P or /) that searches across atoms, wiki articles, chats, and tags with rich markdown snippets — the command palette for actions moves to ⌘⇧P
