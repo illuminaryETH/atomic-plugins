@@ -2,6 +2,13 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.27.2 — 2026-04-23
+
+- Add expandable match sub-rows in the search palette — keyword results with multiple hits can be drilled into to see each match in context
+- Improve keyboard navigation in the search palette: the selected row now stays in view during arrow-key scrolling, and hover highlights no longer flash on rows that slide past the cursor
+- Fix search results silently losing atom previews when a keyword snippet collided with the preview field
+- Fix match highlighting disappearing when search terms appear inside markdown links, images, or HTML content
+
 ## v1.27.1 — 2026-04-23
 
 - Fix a crash in the editor when links or images contain multi-line titles
