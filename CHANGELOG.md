@@ -2,6 +2,12 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.27.0 — 2026-04-23
+
+- Add dedicated search palette (⌘P or /) that searches across atoms, wiki articles, chats, and tags with rich markdown snippets — the command palette for actions moves to ⌘⇧P
+- Improve search-to-editor flow: selecting a search result now scrolls to and briefly highlights the matching text in the editor instead of opening the find panel
+- Fix clicks near block widgets (e.g. tables) in the editor landing on the wrong line
+
 ## v1.26.1 — 2026-04-22
 
 - Fix Docker build failing to resolve the @atomic/editor package introduced in v1.26.0
