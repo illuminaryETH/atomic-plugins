@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, ChevronRight, FileText, Hash, MessageCircle } from 'lucide-react';
 import { CommandInput } from '../command-palette/CommandInput';
@@ -11,6 +11,11 @@ import {
   MatchOffset,
   SemanticSearchResult,
 } from '../command-palette/types';
+
+// When true, rows disable their :hover background. Set while the user is
+// driving via keyboard so rows that slide past the cursor during scroll don't
+// flash hover state — cleared on the next real mousemove inside the palette.
+const KeyboardNavContext = createContext(false);
 
 function Snippet({ text }: { text: string }) {
   const segments = useMemo(() => {
@@ -92,15 +97,24 @@ function PaletteItem({
   /** Render the row indented (used for match sub-rows under an atom). */
   indented?: boolean;
 }) {
+  const usingKeyboard = useContext(KeyboardNavContext);
+  const unselectedClass =
+    'border-l-2 border-transparent' +
+    (usingKeyboard ? '' : ' hover:bg-[var(--color-bg-hover)]');
+  // Keyboard nav needs the highlight to appear instantly — the default
+  // `transition-colors` animates bg-color over ~150ms and visibly lags the
+  // scroll, producing a delayed flash on the newly-selected row.
+  const transitionClass = usingKeyboard ? '' : 'transition-colors';
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-start gap-3 py-3 text-left transition-colors ${
+      data-palette-selected={selected ? 'true' : undefined}
+      className={`w-full flex items-start gap-3 py-3 text-left ${transitionClass} ${
         indented ? 'pl-12 pr-4' : 'px-4'
       } ${
         selected
           ? 'bg-[var(--color-bg-hover)] border-l-2 border-[var(--color-accent)]'
-          : 'border-l-2 border-transparent hover:bg-[var(--color-bg-hover)]'
+          : unselectedClass
       }`}
     >
       {disclosure ? (
@@ -159,6 +173,8 @@ function buildMatchSnippet(content: string, offset: MatchOffset): string {
 
 export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPaletteProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [usingKeyboard, setUsingKeyboard] = useState(false);
   const {
     setQuery,
     prefix,
@@ -184,6 +200,33 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
     };
   }, [isOpen]);
 
+  // Keep the currently-selected row in view as the user arrows through the
+  // list. `block: 'nearest'` means we only scroll when the row is actually
+  // off-screen. `behavior: 'instant'` guards against any ancestor with
+  // `scroll-behavior: smooth` — a smooth animation desynchronises the scroll
+  // from the selection paint and reads as jitter.
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = scrollContainerRef.current?.querySelector<HTMLElement>(
+      '[data-palette-selected="true"]',
+    );
+    el?.scrollIntoView({ block: 'nearest', behavior: 'instant' as ScrollBehavior });
+  }, [isOpen, selectedIndex]);
+
+  // When the user is driving via keyboard, rows that slide past the mouse
+  // cursor during scroll would otherwise flash :hover state — we suppress
+  // the hover class until a real mousemove indicates they're back on mouse.
+  const handleKeyDownWrapped = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (!usingKeyboard) setUsingKeyboard(true);
+      handleKeyDown(e);
+    },
+    [handleKeyDown, usingKeyboard],
+  );
+  const handleMouseMove = useCallback(() => {
+    if (usingKeyboard) setUsingKeyboard(false);
+  }, [usingKeyboard]);
+
   if (!isOpen) return null;
 
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -207,7 +250,8 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
     const rows: React.ReactNode[] = [];
     for (const result of results) {
       const offsets = result.match_offsets ?? [];
-      const expandable = offsets.length > 1;
+      const totalMatches = result.match_count ?? offsets.length;
+      const expandable = totalMatches > 1;
       const expanded = expandable && expandedAtomIds.has(result.id);
       const headerIdx = runningIndex++;
       rows.push(
@@ -222,9 +266,7 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
           subtitle={expanded ? undefined : result.match_snippet ?? result.matching_chunk_content}
           meta={
             result.match_offsets
-              ? `${result.match_offsets.length} ${
-                  result.match_offsets.length === 1 ? 'match' : 'matches'
-                }`
+              ? `${totalMatches} ${totalMatches === 1 ? 'match' : 'matches'}`
               : `${Math.round(result.similarity_score * 100)}%`
           }
           disclosure={expandable ? (expanded ? 'expanded' : 'collapsed') : undefined}
@@ -248,6 +290,20 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
             />,
           );
         }
+        const hiddenCount = totalMatches - offsets.length;
+        if (hiddenCount > 0) {
+          const moreIdx = runningIndex++;
+          rows.push(
+            <PaletteItem
+              key={`atom-${result.id}-more`}
+              selected={selectedIndex === moreIdx}
+              onClick={() => handleSelect(moreIdx)}
+              icon={null}
+              indented
+              title={`+${hiddenCount} more ${hiddenCount === 1 ? 'match' : 'matches'}`}
+            />,
+          );
+        }
       }
     }
     return (
@@ -263,7 +319,8 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
     const rows: React.ReactNode[] = [];
     for (const result of results) {
       const offsets = result.match_offsets ?? [];
-      const expandable = offsets.length > 1;
+      const totalMatches = result.match_count ?? offsets.length;
+      const expandable = totalMatches > 1;
       const expanded = expandable && expandedWikiIds.has(result.id);
       const headerIdx = runningIndex++;
       rows.push(
@@ -280,9 +337,7 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
           }
           meta={
             result.match_offsets
-              ? `${result.match_offsets.length} ${
-                  result.match_offsets.length === 1 ? 'match' : 'matches'
-                }`
+              ? `${totalMatches} ${totalMatches === 1 ? 'match' : 'matches'}`
               : `${result.atom_count} atoms`
           }
           disclosure={expandable ? (expanded ? 'expanded' : 'collapsed') : undefined}
@@ -301,6 +356,20 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
               icon={null}
               indented
               subtitle={buildMatchSnippet(result.content, offset)}
+            />,
+          );
+        }
+        const hiddenCount = totalMatches - offsets.length;
+        if (hiddenCount > 0) {
+          const moreIdx = runningIndex++;
+          rows.push(
+            <PaletteItem
+              key={`wiki-${result.id}-more`}
+              selected={selectedIndex === moreIdx}
+              onClick={() => handleSelect(moreIdx)}
+              icon={null}
+              indented
+              title={`+${hiddenCount} more ${hiddenCount === 1 ? 'match' : 'matches'}`}
             />,
           );
         }
@@ -369,6 +438,7 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
         globalResults.tags.length === 0));
 
   return createPortal(
+    <KeyboardNavContext.Provider value={usingKeyboard}>
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
@@ -379,7 +449,7 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
         <CommandInput
           query={searchQuery}
           onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
+          onKeyDown={handleKeyDownWrapped}
           isSearching={isSearching}
           prefix={prefix}
           onClearPrefix={handleClearPrefix}
@@ -393,7 +463,11 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
           }
         />
 
-        <div className="overflow-y-auto max-h-[50vh] py-2">
+        <div
+          ref={scrollContainerRef}
+          onMouseMove={handleMouseMove}
+          className="overflow-y-auto max-h-[50vh] py-2"
+        >
           {!searchQuery.trim() ? (
             <div className="px-4 py-8 text-center text-[var(--color-text-tertiary)] text-sm">
               Start typing to search across Atomic. Use `#` for tags or `&gt;` for semantic atom search.
@@ -455,7 +529,8 @@ export function SearchPalette({ isOpen, onClose, initialQuery = '' }: SearchPale
           </div>
         </div>
       </div>
-    </div>,
+    </div>
+    </KeyboardNavContext.Provider>,
     document.body
   );
 }

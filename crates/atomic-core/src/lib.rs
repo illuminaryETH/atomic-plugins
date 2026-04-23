@@ -4509,6 +4509,13 @@ mod tests {
             );
         }
 
+        // Three matches fit under the cap, so the count should match the list.
+        assert_eq!(
+            result.match_count,
+            Some(3),
+            "match_count should carry the true total"
+        );
+
         // Serialize and confirm the atom's own stored `snippet` is still at the
         // top level — the FTS excerpt must live under a distinct key so JSON
         // consumers don't silently lose the saved preview to a duplicated key.
@@ -4527,6 +4534,46 @@ mod tests {
             !preview.contains('\u{E000}'),
             "preview must not accidentally carry FTS markers, got {:?}",
             preview
+        );
+    }
+
+    #[tokio::test]
+    async fn test_global_search_caps_match_offsets_but_reports_total() {
+        let (db, _temp) = create_test_db().await;
+
+        // 25 occurrences of the token `zeta` — well past the cap of 10.
+        let mut content = String::new();
+        for _ in 0..25 {
+            content.push_str("zeta ");
+        }
+        db.create_atom(
+            CreateAtomRequest {
+                content: content.trim().to_string(),
+                ..Default::default()
+            },
+            |_| {},
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let response = db.search_global_keyword("zeta", 10).await.unwrap();
+        assert_eq!(response.atoms.len(), 1);
+        let result = &response.atoms[0];
+
+        let offsets = result
+            .match_offsets
+            .as_ref()
+            .expect("match_offsets should be populated");
+        assert_eq!(
+            offsets.len(),
+            10,
+            "match_offsets must be capped at MAX_MATCH_OFFSETS_PER_RESULT (10)"
+        );
+        assert_eq!(
+            result.match_count,
+            Some(25),
+            "match_count must carry the true total even when offsets are capped"
         );
     }
 
@@ -4594,6 +4641,11 @@ mod tests {
                 "offset should slice to the literal token 'zebra'"
             );
         }
+        assert_eq!(
+            hit.match_count,
+            Some(2),
+            "wiki match_count should match the FTS total"
+        );
     }
 
     #[tokio::test]

@@ -58,6 +58,12 @@ export interface SemanticSearchResult {
    */
   match_offsets?: MatchOffset[];
   /**
+   * Total number of matches. May exceed `match_offsets.length` when the offset
+   * list was capped by the backend — always prefer this over the array length
+   * when displaying counts.
+   */
+  match_count?: number;
+  /**
    * FTS-windowed excerpt around matched terms with the PUA markers in
    * `markdownToPlainText` wrapping each hit. Present for keyword search only;
    * absent for semantic/hybrid results. The backend names this `match_snippet`
@@ -90,6 +96,8 @@ export interface GlobalWikiSearchResult {
   match_snippet?: string;
   /** Byte offsets of every match in the article's content, in document order. */
   match_offsets?: MatchOffset[];
+  /** Total match count — may exceed `match_offsets.length` when capped. */
+  match_count?: number;
 }
 
 export interface GlobalChatSearchResult {

@@ -38,6 +38,9 @@ export type SearchPaletteItem =
       matchIndex: number;
       offset: MatchOffset;
     }
+  /** Tail row shown under an expanded atom when the backend capped its
+   *  offset list — selecting it opens the atom at its first match. */
+  | { kind: 'atom-match-more'; atom: SemanticSearchResult; hiddenCount: number }
   | { kind: 'wiki'; result: GlobalWikiSearchResult; expandable: boolean; expanded: boolean }
   | {
       kind: 'wiki-match';
@@ -45,6 +48,7 @@ export type SearchPaletteItem =
       matchIndex: number;
       offset: MatchOffset;
     }
+  | { kind: 'wiki-match-more'; wiki: GlobalWikiSearchResult; hiddenCount: number }
   | { kind: 'chat'; result: GlobalChatSearchResult }
   | { kind: 'tag'; result: GlobalTagSearchResult };
 
@@ -261,7 +265,8 @@ export function useSearchPalette({ isOpen, onClose, initialQuery = '' }: UseSear
 
     const expandAtomRow = (result: SemanticSearchResult): SearchPaletteItem[] => {
       const offsets = result.match_offsets ?? [];
-      const expandable = offsets.length > 1;
+      const totalMatches = result.match_count ?? offsets.length;
+      const expandable = totalMatches > 1;
       const expanded = expandable && expandedAtomIds.has(result.id);
       const header: SearchPaletteItem = {
         kind: 'atom',
@@ -280,12 +285,17 @@ export function useSearchPalette({ isOpen, onClose, initialQuery = '' }: UseSear
         matchIndex,
         offset,
       }));
+      const hiddenCount = totalMatches - offsets.length;
+      if (hiddenCount > 0) {
+        subRows.push({ kind: 'atom-match-more', atom: result, hiddenCount });
+      }
       return [header, ...subRows];
     };
 
     const expandWikiRow = (result: GlobalWikiSearchResult): SearchPaletteItem[] => {
       const offsets = result.match_offsets ?? [];
-      const expandable = offsets.length > 1;
+      const totalMatches = result.match_count ?? offsets.length;
+      const expandable = totalMatches > 1;
       const expanded = expandable && expandedWikiIds.has(result.id);
       const header: SearchPaletteItem = {
         kind: 'wiki',
@@ -301,6 +311,10 @@ export function useSearchPalette({ isOpen, onClose, initialQuery = '' }: UseSear
         matchIndex,
         offset,
       }));
+      const hiddenCount = totalMatches - offsets.length;
+      if (hiddenCount > 0) {
+        subRows.push({ kind: 'wiki-match-more', wiki: result, hiddenCount });
+      }
       return [header, ...subRows];
     };
 
@@ -361,6 +375,13 @@ export function useSearchPalette({ isOpen, onClose, initialQuery = '' }: UseSear
           useUIStore.getState().openReader(item.atom.id, window);
           break;
         }
+        case 'atom-match-more': {
+          // "+N more matches" tail row — no specific offset, so behave like
+          // the atom header and let the reader reveal the first occurrence.
+          const trimmedQuery = searchQuery.trim();
+          useUIStore.getState().openReader(item.atom.id, trimmedQuery);
+          break;
+        }
         case 'wiki': {
           const trimmedQuery = searchQuery.trim();
           const highlight = trimmedQuery || undefined;
@@ -379,6 +400,14 @@ export function useSearchPalette({ isOpen, onClose, initialQuery = '' }: UseSear
           const end = Math.min(content.length, item.offset.end + MATCH_REVEAL_PAD);
           const rawWindow = content.slice(start, end);
           const highlight = markdownToPlainText(rawWindow) || rawWindow;
+          useUIStore
+            .getState()
+            .openWikiReader(item.wiki.tag_id, item.wiki.tag_name, highlight);
+          break;
+        }
+        case 'wiki-match-more': {
+          const trimmedQuery = searchQuery.trim();
+          const highlight = trimmedQuery || undefined;
           useUIStore
             .getState()
             .openWikiReader(item.wiki.tag_id, item.wiki.tag_name, highlight);
@@ -443,7 +472,7 @@ export function useSearchPalette({ isOpen, onClose, initialQuery = '' }: UseSear
         case 'ArrowLeft': {
           const item = flatItems[selectedIndex];
           if (!item) break;
-          if (item.kind === 'atom-match') {
+          if (item.kind === 'atom-match' || item.kind === 'atom-match-more') {
             e.preventDefault();
             const parentId = item.atom.id;
             const parentIdx = flatItems.findIndex(
@@ -455,7 +484,7 @@ export function useSearchPalette({ isOpen, onClose, initialQuery = '' }: UseSear
               return next;
             });
             if (parentIdx >= 0) setSelectedIndex(parentIdx);
-          } else if (item.kind === 'wiki-match') {
+          } else if (item.kind === 'wiki-match' || item.kind === 'wiki-match-more') {
             e.preventDefault();
             const parentId = item.wiki.id;
             const parentIdx = flatItems.findIndex(

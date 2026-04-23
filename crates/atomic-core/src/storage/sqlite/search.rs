@@ -95,6 +95,7 @@ impl SqliteStorage {
                     matching_chunk_index: chunk_index,
                     match_snippet: None,
                     match_offsets: None,
+                    match_count: None,
                 });
             }
         }
@@ -150,7 +151,9 @@ impl SqliteStorage {
         for (atom_id, bm25_score, snippet, highlighted) in sorted {
             if let Some(atom) = atom_map.get(&atom_id) {
                 let tags = tag_map.get(&atom_id).cloned().unwrap_or_default();
-                let offsets = parse_match_offsets(&highlighted);
+                let mut offsets = parse_match_offsets(&highlighted);
+                let total = offsets.len() as u32;
+                offsets.truncate(MAX_MATCH_OFFSETS_PER_RESULT);
                 results.push(SemanticSearchResult {
                     atom: AtomWithTags {
                         atom: atom.clone(),
@@ -162,6 +165,7 @@ impl SqliteStorage {
                     matching_chunk_index: 0,
                     match_snippet: Some(snippet),
                     match_offsets: Some(offsets),
+                    match_count: Some(total),
                 });
             }
         }
@@ -425,6 +429,14 @@ impl SearchStore for SqliteStorage {
 }
 
 // ==================== Local Helper Functions ====================
+
+/// Maximum number of match offsets included per search result. Capping here
+/// (rather than on the client) keeps the payload bounded and gives every
+/// consumer — palette, future API users, tests — the same truncated view.
+/// When a result has more matches than this, `SemanticSearchResult.match_count`
+/// / `GlobalWikiSearchResult.match_count` carries the true total so the UI can
+/// still honestly say "37 matches".
+pub(crate) const MAX_MATCH_OFFSETS_PER_RESULT: usize = 10;
 
 /// Walk a `highlight()` result (atom content with `\u{E000}`/`\u{E001}` pairs
 /// wrapping each match) and produce byte-offset ranges into the un-marked text.
@@ -761,7 +773,9 @@ fn keyword_search_wiki(
             tracing::warn!(wiki_article_id = %id, tag_id = %tag_id, "Skipping stale wiki FTS row without backing article");
             continue;
         };
-        let offsets = parse_match_offsets(&highlighted);
+        let mut offsets = parse_match_offsets(&highlighted);
+        let total = offsets.len() as u32;
+        offsets.truncate(MAX_MATCH_OFFSETS_PER_RESULT);
         results.push(GlobalWikiSearchResult {
             id,
             tag_id: tag_id.clone(),
@@ -773,6 +787,7 @@ fn keyword_search_wiki(
             score: normalize_bm25_score(score),
             match_snippet: Some(fts_snippet),
             match_offsets: Some(offsets),
+            match_count: Some(total),
         });
     }
 

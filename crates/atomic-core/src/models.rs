@@ -140,11 +140,16 @@ pub struct SemanticSearchResult {
     /// for keyword search only; `None` for semantic and hybrid paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub match_snippet: Option<String>,
-    /// Byte offsets of every match in the atom's content, in document order.
-    /// Populated for keyword search only — consumers use it for match counts
-    /// and cycle-through navigation in the reader.
+    /// Byte offsets of up to `MAX_MATCH_OFFSETS_PER_RESULT` matches in the
+    /// atom's content, in document order. Populated for keyword search only.
+    /// Capped for payload + UI bounds — consult `match_count` for the true
+    /// total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub match_offsets: Option<Vec<MatchOffset>>,
+    /// Total number of matches in the atom's content. May exceed
+    /// `match_offsets.len()` when the offset list was capped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_count: Option<u32>,
 }
 
 /// Grouped keyword search across the app for search palette discovery.
@@ -179,9 +184,14 @@ pub struct GlobalWikiSearchResult {
     /// the distinction from the legacy `content_snippet` explicit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub match_snippet: Option<String>,
-    /// Byte offsets of every match in the article's content, in document order.
+    /// Byte offsets of up to `MAX_MATCH_OFFSETS_PER_RESULT` matches in the
+    /// article content, in document order. Capped — see `match_count`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub match_offsets: Option<Vec<MatchOffset>>,
+    /// Total number of matches in the article. May exceed
+    /// `match_offsets.len()` when the offset list was capped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_count: Option<u32>,
 }
 
 /// Keyword search hit for a chat conversation, collapsed from matching messages.

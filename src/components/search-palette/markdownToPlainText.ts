@@ -30,10 +30,18 @@ const MDAST_BLOCK = new Set([
 
 const MDAST_VALUE = new Set(['text', 'inlineCode', 'code']);
 
+const containsMarker = (s: unknown): s is string =>
+  typeof s === 'string' && s.includes(MATCH_START);
+
 function walkMdast(node: unknown, out: string[]): void {
   if (!node || typeof node !== 'object') return;
-  const n = node as { type: string; value?: string; children?: unknown[] };
-  if (MDAST_DROP.has(n.type)) return;
+  const n = node as {
+    type: string;
+    value?: string;
+    url?: string;
+    alt?: string;
+    children?: unknown[];
+  };
   if (n.type === 'break' || n.type === 'thematicBreak') {
     out.push(' ');
     return;
@@ -42,8 +50,34 @@ function walkMdast(node: unknown, out: string[]): void {
     if (typeof n.value === 'string') out.push(n.value);
     return;
   }
+  // Normally-dropped nodes still surface their text when an FTS marker lands
+  // inside — otherwise a match in an image path or raw HTML attribute
+  // disappears from the snippet and the user sees a sub-row with no bolding.
+  if (MDAST_DROP.has(n.type)) {
+    if (containsMarker(n.alt)) out.push(n.alt);
+    if (containsMarker(n.url)) {
+      if (out.length > 0 && !out[out.length - 1].endsWith(' ')) out.push(' ');
+      out.push(n.url);
+    }
+    if (containsMarker(n.value)) {
+      if (out.length > 0 && !out[out.length - 1].endsWith(' ')) out.push(' ');
+      out.push(n.value);
+    }
+    return;
+  }
   if (Array.isArray(n.children)) {
+    const before = out.length;
     for (const child of n.children) walkMdast(child, out);
+    // For links, fall back to surfacing the URL only if the anchor text
+    // didn't already carry the match — keeps regular in-text matches from
+    // being double-bolded while ensuring URL-only matches still appear.
+    if ((n.type === 'link' || n.type === 'linkReference') && containsMarker(n.url)) {
+      const childrenHadMarker = out.slice(before).some(containsMarker);
+      if (!childrenHadMarker) {
+        out.push(' ');
+        out.push(n.url!);
+      }
+    }
     if (MDAST_BLOCK.has(n.type)) out.push(' ');
   }
 }
@@ -53,15 +87,24 @@ function walkMdast(node: unknown, out: string[]): void {
  * into the middle of `[text](url)` or `[text]` syntax. These get parsed as
  * plain text by the markdown AST (since the opening bracket is missing) and
  * would otherwise leak raw punctuation into the display.
+ *
+ * Marker-aware: if an orphan fragment contains an FTS match marker, we keep
+ * the fragment and just strip the stray brackets/parens — dropping it would
+ * lose the match the user came to see.
  */
 function cleanTruncationArtifacts(s: string): string {
+  const defuseBrackets = (frag: string) => frag.replace(/[[\]()]/g, ' ');
+  const sanitizePrefix = (match: string) => {
+    if (match.includes(MATCH_START)) return defuseBrackets(match);
+    const space = match.indexOf(' ');
+    return space >= 0 ? match.slice(0, space + 1) : '';
+  };
+  const sanitizeSuffix = (match: string) =>
+    match.includes(MATCH_START) ? defuseBrackets(match) : '';
   return s
-    .replace(/^[^[]*?\]\([^)]*\)/, (match) => {
-      const space = match.indexOf(' ');
-      return space >= 0 ? match.slice(0, space + 1) : '';
-    })
-    .replace(/\]\([^)]*$/, '')
-    .replace(/\[[^\]]*$/, '')
+    .replace(/^[^[]*?\]\([^)]*\)/, sanitizePrefix)
+    .replace(/\]\([^)]*$/, sanitizeSuffix)
+    .replace(/\[[^\]]*$/, sanitizeSuffix)
     .replace(/\s+/g, ' ')
     .trim();
 }
