@@ -2,6 +2,13 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.28.0 — 2026-04-24
+
+- Add chat tools for creating, updating, and editing atoms — the chat agent can now create new notes, replace content, or apply targeted edits (replace, insert, append) when you ask it to
+- Render atom references in chat messages as clickable titled links instead of raw IDs
+- Refresh the open atom editor when content changes externally (e.g. after a chat agent edit) without disrupting in-progress typing
+- Improve search palette with compact match rows, right-aligned expand/collapse toggle, and more readable keyboard-shortcut hints
+
 ## v1.27.2 — 2026-04-23
 
 - Add expandable match sub-rows in the search palette — keyword results with multiple hits can be drilled into to see each match in context
