@@ -1,6 +1,8 @@
-import { useState, useCallback, Fragment, ReactNode } from 'react';
+import { useState, useCallback, Fragment, ReactNode, useEffect, useMemo } from 'react';
 import { CheckCircle2, Loader2, Wrench, XCircle } from 'lucide-react';
 import { ChatMessageWithContext, ChatCitation, ChatToolCall } from '../../stores/chat';
+import { useAtomsStore, type AtomSummary, type AtomWithTags } from '../../stores/atoms';
+import { getTransport } from '../../lib/transport';
 import { CitationLink, CitationPopover } from '../wiki';
 import { MarkdownImage } from '../ui/MarkdownImage';
 import ReactMarkdown from 'react-markdown';
@@ -17,13 +19,63 @@ interface ChatMessageProps {
 export function ChatMessage({ message, isStreaming = false, onViewAtom, searchQuery = '', highlightText }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
+  const atoms = useAtomsStore(s => s.atoms);
 
   const [activeCitation, setActiveCitation] = useState<ChatCitation | null>(null);
   const [anchorRect, setAnchorRect] = useState<{ top: number; left: number; bottom: number; width: number } | null>(null);
+  const [fetchedAtomTitles, setFetchedAtomTitles] = useState<Record<string, string>>({});
+
+  const atomTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const atom of atoms) {
+      map.set(atom.id, displayTitleForAtom(atom));
+    }
+    for (const [atomId, title] of Object.entries(fetchedAtomTitles)) {
+      map.set(atomId, title);
+    }
+    return map;
+  }, [atoms, fetchedAtomTitles]);
+
+  const referencedAtomIds = useMemo(() => (
+    isAssistant
+      ? Array.from(message.content.matchAll(/\[\[([0-9a-fA-F-]{36})\]\]/g), (match) => match[1])
+      : []
+  ), [isAssistant, message.content]);
+
+  useEffect(() => {
+    if (!isAssistant || referencedAtomIds.length === 0) return;
+    const missingIds = Array.from(new Set(referencedAtomIds)).filter((atomId) => !atomTitleMap.has(atomId));
+    if (missingIds.length === 0) return;
+
+    let cancelled = false;
+    for (const atomId of missingIds) {
+      getTransport()
+        .invoke<AtomWithTags | null>('get_atom_by_id', { id: atomId })
+        .then((atom) => {
+          if (cancelled || !atom) return;
+          setFetchedAtomTitles((current) => ({
+            ...current,
+            [atomId]: displayTitleForAtom(atom),
+          }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setFetchedAtomTitles((current) => ({
+            ...current,
+            [atomId]: atomId.slice(0, 8),
+          }));
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [atomTitleMap, isAssistant, referencedAtomIds]);
 
   // Create a map of citation index to citation object
-  const citationMap = new Map(
-    (message.citations || []).map((c) => [c.citation_index, c])
+  const citationMap = useMemo(
+    () => new Map((message.citations || []).map((c) => [c.citation_index, c])),
+    [message.citations]
   );
 
   const handleCitationClick = (citation: ChatCitation, element: HTMLElement) => {
@@ -47,7 +99,7 @@ export function ChatMessage({ message, isStreaming = false, onViewAtom, searchQu
   // Process text to replace [N] citations and [[atom-id]] references with
   // interactive components. Strings stay as strings so search highlighting can
   // still operate on ordinary text.
-  const processTextWithCitations = (text: string): (string | JSX.Element)[] => {
+  const processTextWithCitations = useCallback((text: string): (string | JSX.Element)[] => {
     const parts = text.split(/(\[\d+\]|\[\[[0-9a-fA-F-]{36}\]\])/g);
     return parts.map((part, i) => {
       const citationMatch = part.match(/^\[(\d+)\]$/);
@@ -68,6 +120,7 @@ export function ChatMessage({ message, isStreaming = false, onViewAtom, searchQu
       const atomMatch = part.match(/^\[\[([0-9a-fA-F-]{36})\]\]$/);
       if (atomMatch) {
         const atomId = atomMatch[1];
+        const label = atomTitleMap.get(atomId) ?? atomId.slice(0, 8);
         return (
           <button
             key={`atom-link-${i}-${atomId}`}
@@ -76,14 +129,14 @@ export function ChatMessage({ message, isStreaming = false, onViewAtom, searchQu
             className="inline-flex items-center rounded px-1 py-0.5 font-mono text-[0.85em] text-[var(--color-accent-light)] underline decoration-[var(--color-border-hover)] underline-offset-2 hover:decoration-current hover:bg-[var(--color-bg-hover)]"
             title={`Open atom ${atomId}`}
           >
-            {`[[${atomId.slice(0, 8)}]]`}
+            {label}
           </button>
         );
       }
       // Return raw string so highlighting can be applied
       return part;
     });
-  };
+  }, [atomTitleMap, citationMap]);
 
   // Process children recursively to handle citations and search highlighting in all text nodes
   const processChildren = useCallback((children: ReactNode): ReactNode => {
@@ -111,7 +164,7 @@ export function ChatMessage({ message, isStreaming = false, onViewAtom, searchQu
       ));
     }
     return children;
-  }, [searchQuery, highlightText]);
+  }, [processTextWithCitations, searchQuery, highlightText]);
 
   // Custom components for react-markdown with citation processing
   const markdownComponents = {
@@ -273,6 +326,16 @@ export function ChatMessage({ message, isStreaming = false, onViewAtom, searchQu
       )}
     </>
   );
+}
+
+function displayTitleForAtom(atom: Pick<AtomSummary, 'id' | 'title' | 'snippet'>): string {
+  const title = atom.title.trim();
+  if (title) return title;
+
+  const snippet = atom.snippet.trim();
+  if (snippet) return snippet.length > 48 ? `${snippet.slice(0, 45).trimEnd()}...` : snippet;
+
+  return atom.id.slice(0, 8);
 }
 
 function ToolCallList({ calls }: { calls: ChatToolCall[] }) {
