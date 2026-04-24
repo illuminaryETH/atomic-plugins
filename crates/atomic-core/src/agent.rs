@@ -160,7 +160,7 @@ fn get_tools() -> Vec<ToolDefinition> {
         ),
         ToolDefinition::new(
             "update_atom",
-            "Replace an existing atom's markdown content. Only use this when the user explicitly asks you to update, edit, rewrite, append to, or otherwise modify an atom. Never update atoms just because you found useful information. The content argument is a full replacement, so call get_atom first unless the user already provided the complete new content. If the user says to update \"this atom\", call get_current_page_context first to get the atom_id.",
+            "Replace an existing atom's markdown content. Only use this when the user explicitly asks you to fully rewrite an atom or provided the complete replacement content. Prefer edit_atom for targeted edits, appends, and insertions. Never update atoms just because you found useful information. If the user says to update \"this atom\", call get_current_page_context first to get the atom_id.",
             json!({
                 "type": "object",
                 "properties": {
@@ -187,6 +187,52 @@ fn get_tools() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["atom_id", "content"]
+            }),
+        ),
+        ToolDefinition::new(
+            "edit_atom",
+            "Apply targeted edits to an existing atom. Only use this when the user explicitly asks you to modify an atom. Supports replace, insert_after, and append operations. replace and insert_after require exact text that appears exactly once in the current atom; call get_atom first if you need context. append adds text to the end of the atom without needing an anchor.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "atom_id": {
+                        "type": "string",
+                        "description": "The ID of the atom to edit"
+                    },
+                    "edits": {
+                        "type": "array",
+                        "description": "One or more edits applied in order to the atom content. The whole operation fails without saving if any edit is invalid.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "operation": {
+                                    "type": "string",
+                                    "enum": ["replace", "insert_after", "append"],
+                                    "description": "replace swaps exact old_text for new_text; insert_after inserts text after exact anchor_text; append adds text to the end of the atom."
+                                },
+                                "old_text": {
+                                    "type": "string",
+                                    "description": "Exact text to replace. Required for replace and must occur exactly once."
+                                },
+                                "new_text": {
+                                    "type": "string",
+                                    "description": "Replacement text for replace."
+                                },
+                                "anchor_text": {
+                                    "type": "string",
+                                    "description": "Exact text to insert after. Required for insert_after and must occur exactly once."
+                                },
+                                "text": {
+                                    "type": "string",
+                                    "description": "Text to insert for insert_after or append. Include leading newlines/spaces exactly as desired."
+                                }
+                            },
+                            "required": ["operation"]
+                        },
+                        "minItems": 1
+                    }
+                },
+                "required": ["atom_id", "edits"]
             }),
         ),
     ]
@@ -606,6 +652,137 @@ async fn execute_update_atom(
     Ok(Some(atom))
 }
 
+fn exact_match_range(
+    content: &str,
+    needle: &str,
+    edit_index: usize,
+) -> Result<(usize, usize), String> {
+    if needle.is_empty() {
+        return Err(format!("Edit {} has empty anchor text", edit_index + 1));
+    }
+
+    let mut matches = content.match_indices(needle);
+    let Some((start, matched)) = matches.next() else {
+        return Err(format!(
+            "Edit {} anchor text was not found exactly once",
+            edit_index + 1
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(format!(
+            "Edit {} anchor text matched more than once; use a more specific anchor",
+            edit_index + 1
+        ));
+    }
+
+    Ok((start, start + matched.len()))
+}
+
+fn apply_atom_edits(content: &str, edits: &[serde_json::Value]) -> Result<String, String> {
+    if edits.is_empty() {
+        return Err("At least one edit is required".to_string());
+    }
+
+    let mut updated = content.to_string();
+    for (index, edit) in edits.iter().enumerate() {
+        let operation = edit["operation"].as_str().unwrap_or("");
+        match operation {
+            "replace" => {
+                let old_text = edit["old_text"]
+                    .as_str()
+                    .ok_or_else(|| format!("Edit {} is missing old_text", index + 1))?;
+                let new_text = edit["new_text"]
+                    .as_str()
+                    .ok_or_else(|| format!("Edit {} is missing new_text", index + 1))?;
+                let (start, end) = exact_match_range(&updated, old_text, index)?;
+                updated.replace_range(start..end, new_text);
+            }
+            "insert_after" => {
+                let anchor_text = edit["anchor_text"]
+                    .as_str()
+                    .ok_or_else(|| format!("Edit {} is missing anchor_text", index + 1))?;
+                let text = edit["text"]
+                    .as_str()
+                    .ok_or_else(|| format!("Edit {} is missing text", index + 1))?;
+                let (_, end) = exact_match_range(&updated, anchor_text, index)?;
+                updated.insert_str(end, text);
+            }
+            "append" => {
+                let text = edit["text"]
+                    .as_str()
+                    .ok_or_else(|| format!("Edit {} is missing text", index + 1))?;
+                updated.push_str(text);
+            }
+            _ => {
+                return Err(format!(
+                    "Edit {} has unsupported operation '{}'",
+                    index + 1,
+                    operation
+                ));
+            }
+        }
+    }
+
+    Ok(updated)
+}
+
+async fn execute_edit_atom(
+    storage: &StorageBackend,
+    tool_args: &serde_json::Value,
+    external_settings: Option<std::collections::HashMap<String, String>>,
+    canvas_cache: Option<&crate::CanvasCache>,
+) -> Result<Option<AtomWithTags>, String> {
+    let atom_id = tool_args["atom_id"].as_str().unwrap_or("");
+    let Some(existing) = storage
+        .get_atom_impl(atom_id)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+
+    let edits = tool_args["edits"]
+        .as_array()
+        .ok_or_else(|| "edits must be an array".to_string())?;
+    let content = apply_atom_edits(&existing.atom.content, edits)?;
+    if content == existing.atom.content {
+        return Err("Edits did not change the atom content".to_string());
+    }
+    if content.trim().is_empty() {
+        return Err("Cannot update an atom to empty content".to_string());
+    }
+
+    let tag_ids = existing
+        .tags
+        .iter()
+        .map(|tag| tag.id.clone())
+        .collect::<Vec<_>>();
+    let request = crate::UpdateAtomRequest {
+        content: content.clone(),
+        source_url: existing.atom.source_url,
+        published_at: existing.atom.published_at,
+        tag_ids: Some(tag_ids),
+    };
+    let now = Utc::now().to_rfc3339();
+    let atom = storage
+        .update_atom_impl(atom_id, &request, &now)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(cache) = canvas_cache {
+        cache.invalidate();
+    }
+
+    crate::embedding::spawn_embedding_task_single_with_settings(
+        storage.clone(),
+        atom_id.to_string(),
+        content,
+        |_| {},
+        external_settings,
+    );
+
+    Ok(Some(atom))
+}
+
 // ==================== System Prompt ====================
 
 fn get_system_prompt(scope_description: &str) -> String {
@@ -616,7 +793,8 @@ fn get_system_prompt(scope_description: &str) -> String {
 
 Guidelines:
 - Use search_atoms to find relevant information before answering, unless another available tool more directly addresses the user's request
-- Only call create_atom or update_atom when the user explicitly asks you to create or modify an atom
+- Only call create_atom, edit_atom, or update_atom when the user explicitly asks you to create or modify an atom
+- Prefer edit_atom for targeted changes; use update_atom only for intentional full-content replacement
 - When you create a new atom, include [[atom_id]] in the final response so the user can open it
 - If the initial search doesn't find enough, try different search queries
 - When you find relevant information, cite it using [N] notation where N is a sequential number
@@ -1071,6 +1249,40 @@ where
                             Err(e) => (format!("Error: {}", e), 0),
                         }
                     }
+                    "edit_atom" => {
+                        match execute_edit_atom(
+                            &storage,
+                            &tool_args,
+                            external_settings.clone(),
+                            canvas_cache,
+                        )
+                        .await
+                        {
+                            Ok(Some(atom)) => {
+                                on_event(ChatEvent::AtomUpdated {
+                                    conversation_id: ctx.conversation_id.clone(),
+                                    atom: atom.clone(),
+                                });
+                                ctx.citations.push((
+                                    atom.atom.id.clone(),
+                                    None,
+                                    atom.atom.snippet.chars().take(200).collect(),
+                                ));
+                                (
+                                    serde_json::to_string_pretty(&json!({
+                                        "atom_id": atom.atom.id,
+                                        "title": atom.atom.title,
+                                        "snippet": atom.atom.snippet,
+                                        "reference": format!("[[{}]]", atom.atom.id),
+                                    }))
+                                    .unwrap_or_else(|_| atom.atom.id),
+                                    1,
+                                )
+                            }
+                            Ok(None) => ("Atom not found".to_string(), 0),
+                            Err(e) => (format!("Error: {}", e), 0),
+                        }
+                    }
                     "zoom_to_cluster" => {
                         let cluster_label = tool_args["cluster_label"].as_str().unwrap_or("");
                         on_event(ChatEvent::CanvasAction {
@@ -1310,6 +1522,65 @@ where
     });
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_atom_edits;
+    use serde_json::json;
+
+    #[test]
+    fn apply_atom_edits_supports_replace_insert_and_append() {
+        let edits = vec![
+            json!({
+                "operation": "replace",
+                "old_text": "old item",
+                "new_text": "new item",
+            }),
+            json!({
+                "operation": "insert_after",
+                "anchor_text": "## Tasks\n",
+                "text": "\nIntro line\n",
+            }),
+            json!({
+                "operation": "append",
+                "text": "\n\nDone.",
+            }),
+        ];
+
+        let updated = apply_atom_edits("# Note\n\n## Tasks\n- old item", &edits).unwrap();
+
+        assert_eq!(
+            updated,
+            "# Note\n\n## Tasks\n\nIntro line\n- new item\n\nDone."
+        );
+    }
+
+    #[test]
+    fn apply_atom_edits_rejects_missing_anchor() {
+        let edits = vec![json!({
+            "operation": "replace",
+            "old_text": "missing",
+            "new_text": "replacement",
+        })];
+
+        let error = apply_atom_edits("content", &edits).unwrap_err();
+
+        assert!(error.contains("not found"));
+    }
+
+    #[test]
+    fn apply_atom_edits_rejects_ambiguous_anchor() {
+        let edits = vec![json!({
+            "operation": "insert_after",
+            "anchor_text": "same",
+            "text": "!",
+        })];
+
+        let error = apply_atom_edits("same and same", &edits).unwrap_err();
+
+        assert!(error.contains("matched more than once"));
+    }
 }
 
 /// Like `send_chat_message_with_settings` but with optional UI context for
