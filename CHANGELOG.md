@@ -2,6 +2,13 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.30.0 — 2026-04-25
+
+- Unify embedding and tagging into a single pipeline queue with a simplified progress banner showing remaining counts instead of separate progress bars
+- Preserve existing text chunks when switching embedding models, making model changes faster by only re-embedding rather than re-chunking all atoms
+- Fix settings modal layout on mobile with a horizontal scrollable tab bar instead of the sidebar navigation
+- Automatically re-embed all databases when the embedding model or provider changes, not just when the vector dimension changes
+
 ## v1.29.0 — 2026-04-25
 
 - Add atom links: type `[[` in the editor to insert Obsidian-style wiki links to other atoms, with autocomplete suggestions powered by title matching, keyword search, and semantic search fallback
