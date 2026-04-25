@@ -2,7 +2,7 @@
 
 use crate::error::AtomicCoreError;
 use rusqlite::ffi::sqlite3_auto_extension;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -700,60 +700,6 @@ impl Database {
                     ON atom_links(status);
                 "#,
             )?;
-
-            let now = chrono::Utc::now().to_rfc3339();
-            let atoms: Vec<(String, String)> = {
-                let mut stmt = conn.prepare("SELECT id, content FROM atoms")?;
-                let rows = stmt
-                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .collect::<Result<Vec<_>, _>>()?;
-                rows
-            };
-            for (source_atom_id, content) in atoms {
-                for token in crate::atom_links::extract_atom_link_tokens(&content) {
-                    let is_atom_id = crate::atom_links::is_uuid_target(&token.raw_target);
-                    let target_exists = if is_atom_id {
-                        conn.query_row(
-                            "SELECT 1 FROM atoms WHERE id = ?1",
-                            [&token.raw_target],
-                            |_| Ok(()),
-                        )
-                        .optional()?
-                        .is_some()
-                    } else {
-                        false
-                    };
-                    let target_atom_id = target_exists.then(|| token.raw_target.clone());
-                    let target_kind = if is_atom_id { "atom_id" } else { "text" };
-                    let status = if target_exists {
-                        "resolved"
-                    } else if is_atom_id {
-                        "missing"
-                    } else {
-                        "unresolved"
-                    };
-                    let link_id = uuid::Uuid::new_v4().to_string();
-                    conn.execute(
-                        "INSERT INTO atom_links (
-                            id, source_atom_id, target_atom_id, raw_target, label,
-                            target_kind, status, start_offset, end_offset, created_at, updated_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                        (
-                            &link_id,
-                            &source_atom_id,
-                            &target_atom_id,
-                            &token.raw_target,
-                            &token.label,
-                            target_kind,
-                            status,
-                            token.start_offset as i32,
-                            token.end_offset as i32,
-                            &now,
-                            &now,
-                        ),
-                    )?;
-                }
-            }
 
             conn.execute_batch("PRAGMA user_version = 13;")?;
         }
