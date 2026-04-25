@@ -21,6 +21,7 @@ import { Button } from '../ui/Button';
 import { CustomSelect } from '../ui/CustomSelect';
 import { SearchableSelect } from '../ui/SearchableSelect';
 import { ConnectionStatus } from '../ui/ConnectionStatus';
+import { Modal } from '../ui/Modal';
 import { useSettingsStore } from '../../stores/settings';
 import { useAtomsStore } from '../../stores/atoms';
 import { useTagsStore, type TagWithCount } from '../../stores/tags';
@@ -328,6 +329,7 @@ function DatabasesTab() {
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [reembeddingDb, setReembeddingDb] = useState<string | null>(null);
+  const [confirmReembedDb, setConfirmReembedDb] = useState<DatabaseInfo | null>(null);
   const [expandedPipeline, setExpandedPipeline] = useState<string | null>(null);
   const liveRefreshTimer = useRef<ReturnType<typeof setTimeout>>();
 
@@ -437,17 +439,15 @@ function DatabasesTab() {
     }
   };
 
-  const handleReembedAll = async (db: DatabaseInfo) => {
-    const ok = window.confirm(
-      `Re-embed all atoms in "${db.name}"?\n\nThis clears embedding status for this database and queues embed-only work. Existing tags are preserved.`
-    );
-    if (!ok) return;
-
+  const handleConfirmReembedAll = async () => {
+    if (!confirmReembedDb || reembeddingDb) return;
+    const db = confirmReembedDb;
     setReembeddingDb(db.id);
     setPipelineError(null);
     try {
       const count = await reembedAllAtoms(db.id);
       toast.success(`Queued ${count} ${count === 1 ? 'atom' : 'atoms'} for re-embedding`);
+      setConfirmReembedDb(null);
       await loadPipelineStatuses();
     } catch (e) {
       setPipelineError(String(e));
@@ -544,17 +544,6 @@ function DatabasesTab() {
                         Tag
                       </button>
                     )}
-                    {status && status.complete > 0 && (
-                      <button
-                        onClick={() => handleReembedAll(db)}
-                        disabled={reembeddingDb === db.id}
-                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
-                        title="Re-embed all atoms in this database"
-                      >
-                        {reembeddingDb === db.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} /> : <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />}
-                        Re-embed
-                      </button>
-                    )}
                     {status && (
                       <button
                         onClick={() => setExpandedPipeline(isExpanded ? null : db.id)}
@@ -593,8 +582,29 @@ function DatabasesTab() {
               </div>
 
               {isExpanded && status && (
-                <div className="px-3 pb-3">
+                <div className="px-3 pb-3 space-y-3">
                   <PipelineDetailCounts status={status} />
+                  {status.complete > 0 && (
+                    <div className="flex items-center justify-between gap-3 rounded border border-[var(--color-border)] bg-[var(--color-bg-panel)] px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-[var(--color-text-primary)]">Recalculate embeddings</div>
+                        <div className="text-[11px] text-[var(--color-text-secondary)]">
+                          Queues embed-only work for this database while preserving tags and chunk content.
+                        </div>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setConfirmReembedDb(db)}
+                        disabled={reembeddingDb === db.id}
+                        title="Re-embed all atoms in this database"
+                        className="flex-shrink-0 gap-1"
+                      >
+                        {reembeddingDb === db.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} /> : <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />}
+                        Re-embed
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -620,42 +630,79 @@ function DatabasesTab() {
       )}
 
       {/* Delete confirmation dialog */}
-      {confirmDeleteDb && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 safe-area-padding">
-          <div className="bg-[var(--color-bg-panel)] border border-[var(--color-border)] rounded-lg shadow-xl p-6 mx-4 max-w-sm w-full space-y-4">
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Delete database?</h3>
-              <p className="text-xs text-[var(--color-text-secondary)]">
-                This will permanently delete <span className="font-medium text-[var(--color-text-primary)]">"{confirmDeleteDb.name}"</span>
-                {isLoadingStats ? (
-                  <span> and all its data.</span>
-                ) : deleteStats && deleteStats.atom_count >= 0 ? (
-                  <span> and its <span className="font-medium text-[var(--color-text-primary)]">{deleteStats.atom_count} atom{deleteStats.atom_count !== 1 ? 's' : ''}</span>. </span>
-                ) : (
-                  <span> and all its data. </span>
-                )}
-                This action cannot be undone.
-              </p>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setConfirmDeleteDb(null)}
-                disabled={isDeleting}
-                className="px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] rounded transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                disabled={isDeleting || isLoadingStats}
-                className="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors disabled:opacity-50"
-              >
-                {isDeleting ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
+      <Modal
+        isOpen={!!confirmDeleteDb}
+        onClose={() => {
+          if (!isDeleting) setConfirmDeleteDb(null);
+        }}
+        title="Delete database?"
+        showFooter={false}
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            This will permanently delete <span className="font-medium text-[var(--color-text-primary)]">"{confirmDeleteDb?.name}"</span>
+            {isLoadingStats ? (
+              <span> and all its data.</span>
+            ) : deleteStats && deleteStats.atom_count >= 0 ? (
+              <span> and its <span className="font-medium text-[var(--color-text-primary)]">{deleteStats.atom_count} atom{deleteStats.atom_count !== 1 ? 's' : ''}</span>. </span>
+            ) : (
+              <span> and all its data. </span>
+            )}
+            This action cannot be undone.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setConfirmDeleteDb(null)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting || isLoadingStats}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </Button>
           </div>
         </div>
-      )}
+      </Modal>
+
+      <Modal
+        isOpen={!!confirmReembedDb}
+        onClose={() => {
+          if (!reembeddingDb) setConfirmReembedDb(null);
+        }}
+        title="Re-embed database?"
+        showFooter={false}
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            This clears embedding status for <span className="font-medium text-[var(--color-text-primary)]">"{confirmReembedDb?.name}"</span> and queues embed-only work for its atoms.
+            Existing tags and chunk content are preserved.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setConfirmReembedDb(null)}
+              disabled={!!reembeddingDb}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmReembedAll}
+              disabled={!!reembeddingDb}
+            >
+              {reembeddingDb === confirmReembedDb?.id ? 'Queuing...' : 'Re-embed'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }
@@ -1138,6 +1185,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (document.querySelector('[data-modal="true"]')) return;
         onClose();
       }
     };
@@ -2866,24 +2914,18 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
           </div>
         )}
 
-        {/* Re-embedding confirmation dialog */}
-        {pendingEmbeddingChange && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 rounded-lg">
-            <div className="bg-[var(--color-bg-panel)] border border-[var(--color-border)] rounded-lg shadow-xl p-6 mx-8 max-w-sm space-y-4">
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Re-embed all atoms?</h3>
-                <p className="text-xs text-[var(--color-text-secondary)]">
-                  Changing the embedding model to <span className="font-medium text-[var(--color-text-primary)]">{pendingEmbeddingChange.label}</span> will
-                  re-embed all atoms. This may take a while and will use API credits.
-                </p>
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={cancelEmbeddingChange}>Cancel</Button>
-                <Button onClick={confirmEmbeddingChange}>Re-embed</Button>
-              </div>
-            </div>
-          </div>
-        )}
+        <Modal
+          isOpen={!!pendingEmbeddingChange}
+          onClose={cancelEmbeddingChange}
+          title="Re-embed all atoms?"
+          confirmLabel="Re-embed"
+          onConfirm={confirmEmbeddingChange}
+        >
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Changing the embedding model to <span className="font-medium text-[var(--color-text-primary)]">{pendingEmbeddingChange?.label}</span> will
+            re-embed all atoms. This may take a while and will use API credits.
+          </p>
+        </Modal>
       </div>
     </div>,
     document.body

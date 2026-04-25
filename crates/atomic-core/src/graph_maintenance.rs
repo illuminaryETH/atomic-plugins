@@ -193,7 +193,10 @@ async fn run_graph_maintenance(core: &AtomicCore) -> Result<MaintenanceResult, A
             break;
         }
 
-        let batch_edges = match storage.compute_semantic_edges_batch_sync(&batch, 0.5, 15).await {
+        let batch_edges = match storage
+            .compute_semantic_edges_batch_sync(&batch, 0.5, 15)
+            .await
+        {
             Ok(count) => count,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to compute graph maintenance edge batch");
@@ -201,7 +204,9 @@ async fn run_graph_maintenance(core: &AtomicCore) -> Result<MaintenanceResult, A
             }
         };
 
-        storage.set_edges_status_batch_sync(&batch, "complete").await?;
+        storage
+            .set_edges_status_batch_sync(&batch, "complete")
+            .await?;
         core.canvas_cache().invalidate_debounced();
 
         edges_written += batch_edges;

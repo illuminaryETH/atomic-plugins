@@ -954,7 +954,9 @@ pub fn will_dimension_change(conn: &Connection, key: &str, new_value: &str) -> (
     (current_dim != new_dim, new_dim)
 }
 
-/// Recreate vec_chunks table with a new dimension and reset embedding status
+/// Recreate vec_chunks table with a new dimension and reset embedding status.
+/// Chunk rows are preserved so embed-only re-embedding can reuse the existing
+/// markdown-aware chunk boundaries.
 pub fn recreate_vec_chunks_with_dimension(
     conn: &Connection,
     dimension: usize,
@@ -973,17 +975,11 @@ pub fn recreate_vec_chunks_with_dimension(
     // Set tagging_status to 'skipped' - existing tags are preserved
     conn.execute("UPDATE atoms SET tagging_status = 'skipped'", [])?;
 
-    // Clear all existing chunk data
-    conn.execute("DELETE FROM atom_chunks", [])?;
-
-    // Clear FTS5 table
-    conn.execute("DELETE FROM atom_chunks_fts", [])?;
+    // Clear old chunk vectors while preserving chunk ids/content.
+    conn.execute("UPDATE atom_chunks SET embedding = NULL", [])?;
 
     // Clear semantic edges
     conn.execute("DELETE FROM semantic_edges", [])?;
-
-    // Clear canvas positions
-    conn.execute("DELETE FROM atom_positions", [])?;
 
     // Clear tag embeddings and recreate vec_tags with new dimension
     conn.execute("DELETE FROM tag_embeddings", []).ok();

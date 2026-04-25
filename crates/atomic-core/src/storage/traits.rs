@@ -428,7 +428,8 @@ pub trait ChunkStore: Send + Sync {
     /// Returns None if the vector index doesn't exist or dimension can't be determined.
     async fn get_embedding_dimension(&self) -> StorageResult<Option<usize>>;
 
-    /// Drop and recreate the vector index with a new dimension, resetting all embedding state.
+    /// Recreate vector storage with a new dimension, clear old vectors, and
+    /// reset embedding state while preserving chunk ids/content where possible.
     async fn recreate_vector_index(&self, dimension: usize) -> StorageResult<()>;
 
     /// Claim pending/processing atoms for re-embedding after dimension change.

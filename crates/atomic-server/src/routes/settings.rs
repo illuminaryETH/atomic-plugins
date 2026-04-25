@@ -28,70 +28,76 @@ pub async fn set_setting(
     let key = path.into_inner();
     let value = body.into_inner().value;
 
-    // Handle dimension-affecting settings via set_setting_with_reembed (avoids deadlock)
-    let dimension_keys = [
+    // Handle embedding-space settings via set_setting_with_reembed (avoids deadlock)
+    let embedding_space_keys = [
         "provider",
         "embedding_model",
         "ollama_embedding_model",
         "openai_compat_embedding_model",
         "openai_compat_embedding_dimension",
     ];
-    if dimension_keys.contains(&key.as_str()) {
+    if embedding_space_keys.contains(&key.as_str()) {
         let manager = state.manager.clone();
         let active_id = state.manager.active_id().unwrap_or_default();
         let on_event = crate::event_bridge::embedding_event_callback(state.event_tx.clone());
         let result =
             db.0.set_setting_with_reembed(&key, &value, on_event.clone())
                 .await;
-        // If dimension changed, recreate vector indexes on all other databases
-        // AND enqueue their atoms for re-embedding.
+        // Embedding model/provider changes affect every database because the
+        // settings live in the registry. Dimension changes also need each
+        // database's vector index reset before embed-only jobs are queued.
         if let Ok(ref r) = &result {
-            if r.dimension_changed {
-                if let Err(e) = manager
-                    .recreate_other_vector_indexes(r.new_dim, &active_id)
-                    .await
-                {
-                    tracing::error!(
-                        "Failed to recreate vector indexes on other databases: {}",
-                        e
-                    );
-                } else {
-                    // Enqueue re-embedding for every non-active database.
-                    match manager.list_databases().await {
-                        Ok((dbs, _)) => {
-                            for db_info in dbs {
-                                if db_info.id == active_id {
-                                    continue;
-                                }
-                                match manager.get_core(&db_info.id).await {
-                                    Ok(other_core) => {
-                                        match other_core
-                                            .spawn_reembed_pending(on_event.clone())
-                                            .await
-                                        {
-                                            Ok(n) => tracing::info!(
-                                                db_id = %db_info.id,
-                                                db_name = %db_info.name,
-                                                queued = n,
-                                                "Queued re-embedding for non-active database"
-                                            ),
-                                            Err(e) => tracing::error!(
-                                                db_id = %db_info.id,
-                                                "Failed to queue re-embedding: {}",
-                                                e
-                                            ),
-                                        }
+            if r.embedding_space_changed {
+                if r.dimension_changed {
+                    if let Err(e) = manager
+                        .recreate_other_vector_indexes(r.new_dim, &active_id)
+                        .await
+                    {
+                        tracing::error!(
+                            "Failed to recreate vector indexes on other databases: {}",
+                            e
+                        );
+                        return ok_or_error(result);
+                    }
+                }
+
+                match manager.list_databases().await {
+                    Ok((dbs, _)) => {
+                        for db_info in dbs {
+                            if db_info.id == active_id {
+                                continue;
+                            }
+                            match manager.get_core(&db_info.id).await {
+                                Ok(other_core) => {
+                                    let queue_result = if r.dimension_changed {
+                                        other_core.spawn_reembed_pending(on_event.clone()).await
+                                    } else {
+                                        other_core.reembed_all_atoms(on_event.clone()).await
+                                    };
+                                    match queue_result {
+                                        Ok(n) => tracing::info!(
+                                            db_id = %db_info.id,
+                                            db_name = %db_info.name,
+                                            queued = n,
+                                            dimension_changed = r.dimension_changed,
+                                            "Queued re-embedding for non-active database"
+                                        ),
+                                        Err(e) => tracing::error!(
+                                            db_id = %db_info.id,
+                                            "Failed to queue re-embedding: {}",
+                                            e
+                                        ),
                                     }
-                                    Err(e) => tracing::error!(
-                                        db_id = %db_info.id,
-                                        "Failed to load core for re-embed: {}",
-                                        e
-                                    ),
                                 }
+                                Err(e) => tracing::error!(
+                                    db_id = %db_info.id,
+                                    "Failed to load core for re-embed: {}",
+                                    e
+                                ),
                             }
                         }
-                        Err(e) => tracing::error!("Failed to list databases for re-embed: {}", e),
                     }
+                    Err(e) => tracing::error!("Failed to list databases for re-embed: {}", e),
                 }
             }
         }

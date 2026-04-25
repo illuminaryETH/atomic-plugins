@@ -87,6 +87,8 @@ Used when embeddings need to be regenerated without changing tags, such as an em
 
 For atoms with existing chunks, the pipeline reuses those chunk rows and only recalculates their embeddings. Atoms without chunks fall back to whole-atom chunking. Existing tags/tagging status are preserved.
 
+Changing the embedding model queues embed-only work even when the new model has the same vector dimension. Equal dimensions do not mean equal vector spaces. If the dimension changes, storage clears old chunk vectors and recreates the vector index, but keeps chunk ids/content so the queue can still re-embed existing chunks instead of re-chunking every atom. The current chunk size assumes supported embedding models can handle roughly 1000-token chunks; a model-specific chunk budget can be added later if needed.
+
 ### Tag Only
 
 Used when tagging should be retried without touching chunks or embeddings.

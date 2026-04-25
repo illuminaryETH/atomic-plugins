@@ -2537,11 +2537,12 @@ impl AtomicCore {
 
     // ==================== Settings with Re-embed ====================
 
-    /// Set a setting, handling embedding dimension changes.
-    /// Returns (dimension_changed, old_dim, new_dim, total_atom_count, retried_failed_count).
-    /// Does NOT auto-re-embed on dimension change — caller must confirm with user first,
-    /// then call `reembed_all_atoms` explicitly.
-    /// DOES auto-retry failed atoms when provider config changes (URL, key, model).
+    /// Set a setting, handling embedding-space changes.
+    /// Embedding model/provider changes require re-embedding even when the
+    /// vector dimension stays the same: equal dimensions do not imply the same
+    /// vector space. Existing chunk rows are preserved by the embed-only queue.
+    /// Failed atoms are auto-retried for non-space provider config changes
+    /// such as API keys or base URLs.
     pub async fn set_setting_with_reembed<F>(
         &self,
         key: &str,
@@ -2554,18 +2555,20 @@ impl AtomicCore {
         let current_settings = self.get_settings().await?;
         let value_changed = current_settings.get(key).map(|s| s.as_str()) != Some(value);
 
-        let dimension_affecting_keys = [
+        let embedding_space_keys = [
             "provider",
             "embedding_model",
             "ollama_embedding_model",
             "openai_compat_embedding_model",
             "openai_compat_embedding_dimension",
         ];
+        let mut embedding_space_changed = false;
         let mut dimension_changed = false;
         let mut old_dim = 0usize;
         let mut new_dim = 0usize;
 
-        if dimension_affecting_keys.contains(&key) && value_changed {
+        if embedding_space_keys.contains(&key) && value_changed {
+            embedding_space_changed = true;
             let current_config = ProviderConfig::from_settings(&current_settings);
             old_dim = current_config.embedding_dimension();
 
@@ -2592,21 +2595,30 @@ impl AtomicCore {
             self.storage.set_setting_sync(key, value).await?;
         }
 
+        let mut queued_reembedding = 0i32;
         if dimension_changed {
             // Recreate the active database's vector index at the new dimension.
-            // This drops vec_chunks, recreates it, clears atom_chunks/semantic_edges,
-            // and resets every atom's embedding_status to 'pending'.
+            // This clears old vectors, preserves chunk content, clears semantic
+            // edges/tag centroids, and resets every atom's embedding_status to
+            // 'pending'.
             self.storage.recreate_vector_index_sync(new_dim).await?;
             self.canvas_cache.invalidate();
             tracing::info!(
                 new_dim,
                 "Recreated active database vector index for dimension change"
             );
-            // Now spawn re-embedding — atoms are in 'pending' status after the recreate.
-            let queued = self.spawn_reembed_pending(on_event.clone()).await?;
+            // Now spawn re-embedding — atoms are in 'pending' status after the reset.
+            queued_reembedding = self.spawn_reembed_pending(on_event.clone()).await?;
             tracing::info!(
-                queued,
+                queued_reembedding,
                 "Queued atoms for re-embedding after dimension change"
+            );
+        } else if embedding_space_changed {
+            queued_reembedding = self.reembed_all_atoms(on_event.clone()).await?;
+            tracing::info!(
+                queued_reembedding,
+                key,
+                "Queued atoms for re-embedding after embedding-space setting change"
             );
         }
 
@@ -2623,7 +2635,7 @@ impl AtomicCore {
             "openrouter_api_key",
         ];
         let mut retried_failed = 0i32;
-        if retry_keys.contains(&key) && !dimension_changed && value_changed {
+        if retry_keys.contains(&key) && !embedding_space_changed && value_changed {
             retried_failed = self.storage.reset_failed_embeddings_sync().await?;
             if retried_failed > 0 {
                 tracing::info!(
@@ -2636,17 +2648,12 @@ impl AtomicCore {
             }
         }
 
-        let total_atoms = self
-            .storage
-            .count_pending_embeddings_sync()
-            .await
-            .unwrap_or(0);
-
         Ok(SettingChangeResult {
+            embedding_space_changed,
             dimension_changed,
             old_dim,
             new_dim,
-            total_atom_count: total_atoms,
+            total_atom_count: queued_reembedding,
             retried_failed_count: retried_failed,
         })
     }

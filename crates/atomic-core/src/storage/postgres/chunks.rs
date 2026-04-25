@@ -1006,9 +1006,15 @@ impl ChunkStore for PostgresStorage {
 
     async fn recreate_vector_index(&self, dimension: usize) -> StorageResult<()> {
         // Embedding model is a global setting — dimension change affects all databases.
-        // ALTER the column type globally, then reset ALL atoms for re-embedding.
+        // Clear old vectors before ALTER so existing chunk rows can be preserved
+        // even when their previous embedding dimension differs from the new one.
+        sqlx::query("UPDATE atom_chunks SET embedding = NULL")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
         sqlx::query(&format!(
-            "ALTER TABLE atom_chunks ALTER COLUMN embedding TYPE vector({})",
+            "ALTER TABLE atom_chunks ALTER COLUMN embedding TYPE vector({}) USING NULL",
             dimension
         ))
         .execute(&self.pool)
@@ -1017,19 +1023,23 @@ impl ChunkStore for PostgresStorage {
             AtomicCoreError::DatabaseOperation(format!("Failed to alter vector dimension: {}", e))
         })?;
 
-        // Delete all chunks (global — old dimension data is invalid)
-        sqlx::query("DELETE FROM atom_chunks")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
-
-        // Reset all atoms across all databases for re-embedding
+        // Reset all atoms across all databases for embed-only re-embedding.
         sqlx::query("UPDATE atoms SET embedding_status = 'pending'")
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
 
         sqlx::query("UPDATE atoms SET tagging_status = 'skipped'")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        sqlx::query("DELETE FROM semantic_edges")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;
+
+        sqlx::query("DELETE FROM tag_embeddings")
             .execute(&self.pool)
             .await
             .map_err(|e| AtomicCoreError::DatabaseOperation(e.to_string()))?;

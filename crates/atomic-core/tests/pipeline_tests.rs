@@ -356,6 +356,55 @@ async fn reembed_all_is_embedding_only_sqlite() {
     );
 }
 
+#[tokio::test]
+async fn embedding_model_change_reembeds_existing_chunks_sqlite() {
+    let mock = MockAiServer::start().await;
+    let handle = setup_core(Backend::Sqlite, &mock.base_url())
+        .await
+        .expect("test harness setup");
+    let core = &handle.core;
+    let atom_id = create_and_await(core, "quantum mechanics particles waves").await;
+    let chunk_ids_before = sqlite_chunk_ids(core, &atom_id);
+
+    mock.reset_counts();
+    let (cb, mut rx) = event_collector();
+    let result = core
+        .set_setting_with_reembed("openai_compat_embedding_model", "mock-embed-v2", cb)
+        .await
+        .expect("change embedding model");
+    assert!(result.embedding_space_changed);
+    assert!(!result.dimension_changed);
+    assert_eq!(result.total_atom_count, 1);
+    let events = await_queue_completed(&mut rx).await;
+
+    assert!(
+        mock.embedding_request_count() > 0,
+        "embedding model changes should re-embed existing chunks"
+    );
+    assert_eq!(
+        mock.chat_request_count(),
+        0,
+        "embedding model changes should not re-run auto-tagging"
+    );
+    assert!(
+        events.iter().any(|ev| matches!(
+            ev,
+            EmbeddingEvent::PipelineQueueCompleted {
+                total_jobs: 1,
+                failed_jobs: 0,
+                ..
+            }
+        )),
+        "embedding model change should complete one embed-only queue job: {:?}",
+        events
+    );
+    assert_eq!(
+        sqlite_chunk_ids(core, &atom_id),
+        chunk_ids_before,
+        "embedding model changes should preserve existing chunk rows"
+    );
+}
+
 fn sqlite_chunk_ids(core: &AtomicCore, atom_id: &str) -> Vec<String> {
     let conn = rusqlite::Connection::open(core.db_path()).expect("open sqlite db");
     let mut stmt = conn

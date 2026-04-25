@@ -799,6 +799,7 @@ pub struct SourceInfo {
 /// Result of changing a provider-related setting
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingChangeResult {
+    pub embedding_space_changed: bool,
     pub dimension_changed: bool,
     pub old_dim: usize,
     pub new_dim: usize,

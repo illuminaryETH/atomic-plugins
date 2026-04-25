@@ -570,7 +570,10 @@ async fn process_embedding_only_inner(
             .map_err(|e| e.to_string())?;
         if !skip_edges {
             let atom_ids = [atom_id.to_string()];
-            if let Err(e) = storage.set_edges_status_batch_sync(&atom_ids, "pending").await {
+            if let Err(e) = storage
+                .set_edges_status_batch_sync(&atom_ids, "pending")
+                .await
+            {
                 tracing::warn!(atom_id, error = %e, "Failed to mark graph maintenance pending");
             } else if let Err(e) = crate::graph_maintenance::mark_dirty(storage).await {
                 tracing::warn!(atom_id, error = %e, "Failed to mark graph maintenance dirty");
@@ -621,7 +624,10 @@ async fn process_embedding_only_inner(
 
     if !skip_edges {
         let atom_ids = [atom_id.to_string()];
-        if let Err(e) = storage.set_edges_status_batch_sync(&atom_ids, "pending").await {
+        if let Err(e) = storage
+            .set_edges_status_batch_sync(&atom_ids, "pending")
+            .await
+        {
             tracing::warn!(atom_id, error = %e, "Failed to mark graph maintenance pending");
         } else if let Err(e) = crate::graph_maintenance::mark_dirty(storage).await {
             tracing::warn!(atom_id, error = %e, "Failed to mark graph maintenance dirty");
@@ -1734,8 +1740,10 @@ where
 
         let (embedded_chunks, failed_atoms) =
             embed_chunks_batched(&provider_config, group_chunks).await;
-        let failed_atom_set: HashSet<String> =
-            failed_atoms.iter().map(|(atom_id, _)| atom_id.clone()).collect();
+        let failed_atom_set: HashSet<String> = failed_atoms
+            .iter()
+            .map(|(atom_id, _)| atom_id.clone())
+            .collect();
 
         let mut updates = Vec::new();
         let mut embedded_counts: HashMap<String, usize> = HashMap::new();
@@ -1758,8 +1766,7 @@ where
         let succeeded: Vec<String> = original_counts
             .into_iter()
             .filter_map(|(atom_id, expected)| {
-                (embedded_counts.get(&atom_id).copied().unwrap_or(0) == expected)
-                    .then_some(atom_id)
+                (embedded_counts.get(&atom_id).copied().unwrap_or(0) == expected).then_some(atom_id)
             })
             .collect();
 
@@ -1852,75 +1859,76 @@ async fn process_pipeline_jobs_batch<F>(
 
     let mut tagging_ids = tag_only_ids;
 
-    let process_embed_ids = |embed_ids: Vec<String>,
-                             preserve_existing_chunks: bool,
-                             tag_after_embed_ids: Arc<HashSet<String>>| {
-        let storage = storage.clone();
-        let on_event = on_event.clone();
-        let external_settings = external_settings.clone();
-        let canvas_cache = canvas_cache.clone();
-        let progress = progress.clone();
-        async move {
-            if embed_ids.is_empty() {
-                return Vec::new();
-            }
-
-            if let Err(e) = storage
-                .set_embedding_status_batch_sync(&embed_ids, "processing", None)
-                .await
-            {
-                tracing::warn!(
-                    error = %e,
-                    count = embed_ids.len(),
-                    "Failed to mark queued embedding jobs as processing"
-                );
-            }
-
-            let progress_on_event = {
-                let on_event = on_event.clone();
-                let progress = progress.clone();
-                move |event: EmbeddingEvent| {
-                    match &event {
-                        EmbeddingEvent::EmbeddingComplete { .. } => {
-                            progress.record_embedding_done(embedding_total, &on_event);
-                        }
-                        EmbeddingEvent::EmbeddingFailed { .. } => {
-                            progress.record_failed_job();
-                            progress.record_embedding_done(embedding_total, &on_event);
-                        }
-                        _ => {}
-                    }
-                    on_event(event);
+    let process_embed_ids =
+        |embed_ids: Vec<String>,
+         preserve_existing_chunks: bool,
+         tag_after_embed_ids: Arc<HashSet<String>>| {
+            let storage = storage.clone();
+            let on_event = on_event.clone();
+            let external_settings = external_settings.clone();
+            let canvas_cache = canvas_cache.clone();
+            let progress = progress.clone();
+            async move {
+                if embed_ids.is_empty() {
+                    return Vec::new();
                 }
-            };
 
-            let completed_embed_ids = if preserve_existing_chunks {
-                process_existing_chunk_reembedding_batch_inner(
-                    storage.clone(),
-                    embed_ids,
-                    progress_on_event,
-                    external_settings.clone(),
-                    canvas_cache.clone(),
-                )
-                .await
-            } else {
-                process_embedding_batch_inner(
-                    storage.clone(),
-                    AtomInput::IdsOnly(embed_ids),
-                    TaggingPolicy::None,
-                    progress_on_event,
-                    external_settings.clone(),
-                    canvas_cache.clone(),
-                )
-                .await
-            };
+                if let Err(e) = storage
+                    .set_embedding_status_batch_sync(&embed_ids, "processing", None)
+                    .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        count = embed_ids.len(),
+                        "Failed to mark queued embedding jobs as processing"
+                    );
+                }
 
-            completed_embed_ids
-                .into_iter()
-                .filter(|atom_id| tag_after_embed_ids.contains(atom_id))
-                .collect::<Vec<_>>()
-        }
-    };
+                let progress_on_event = {
+                    let on_event = on_event.clone();
+                    let progress = progress.clone();
+                    move |event: EmbeddingEvent| {
+                        match &event {
+                            EmbeddingEvent::EmbeddingComplete { .. } => {
+                                progress.record_embedding_done(embedding_total, &on_event);
+                            }
+                            EmbeddingEvent::EmbeddingFailed { .. } => {
+                                progress.record_failed_job();
+                                progress.record_embedding_done(embedding_total, &on_event);
+                            }
+                            _ => {}
+                        }
+                        on_event(event);
+                    }
+                };
+
+                let completed_embed_ids = if preserve_existing_chunks {
+                    process_existing_chunk_reembedding_batch_inner(
+                        storage.clone(),
+                        embed_ids,
+                        progress_on_event,
+                        external_settings.clone(),
+                        canvas_cache.clone(),
+                    )
+                    .await
+                } else {
+                    process_embedding_batch_inner(
+                        storage.clone(),
+                        AtomInput::IdsOnly(embed_ids),
+                        TaggingPolicy::None,
+                        progress_on_event,
+                        external_settings.clone(),
+                        canvas_cache.clone(),
+                    )
+                    .await
+                };
+
+                completed_embed_ids
+                    .into_iter()
+                    .filter(|atom_id| tag_after_embed_ids.contains(atom_id))
+                    .collect::<Vec<_>>()
+            }
+        };
 
     let no_tag_after_embed = Arc::new(HashSet::new());
     tagging_ids.extend(

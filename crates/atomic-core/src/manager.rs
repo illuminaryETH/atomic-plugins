@@ -478,8 +478,9 @@ impl DatabaseManager {
     }
 
     /// Recreate vector indexes on all known databases *except* `skip_id` with the
-    /// given dimension. `skip_id` is typically the active database whose index was
-    /// already recreated (and whose async re-embedding job is in flight).
+    /// given dimension. Existing chunk rows are preserved so embed-only jobs can
+    /// reuse current chunk boundaries. `skip_id` is typically the active database
+    /// whose index was already recreated.
     pub async fn recreate_other_vector_indexes(
         &self,
         new_dim: usize,
