@@ -5,3 +5,6 @@ export function readDir(): never {
 export function readTextFile(): never {
   throw new Error('@tauri-apps/plugin-fs is not available in web mode');
 }
+export function writeFile(): never {
+  throw new Error('@tauri-apps/plugin-fs is not available in web mode');
+}

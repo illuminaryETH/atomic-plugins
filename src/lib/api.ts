@@ -1,6 +1,6 @@
 import { getTransport } from './transport';
 import { HttpTransport } from './transport/http';
-import { isTauri, openExternalUrl } from './platform';
+import { isTauri } from './platform';
 
 // Type-safe wrapper for checking sqlite-vec
 export async function checkSqliteVec(): Promise<string> {
@@ -157,7 +157,7 @@ export async function downloadExportJob(job: ExportJob): Promise<void> {
 
   const url = `${baseUrl}${job.download_path}`;
   if (isTauri()) {
-    await openExternalUrl(url);
+    await saveExportJobWithTauri(url, job);
     return;
   }
 
@@ -167,6 +167,44 @@ export async function downloadExportJob(job: ExportJob): Promise<void> {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+async function saveExportJobWithTauri(url: string, job: ExportJob): Promise<void> {
+  const [{ save }, { writeFile }] = await Promise.all([
+    import('@tauri-apps/plugin-dialog'),
+    import('@tauri-apps/plugin-fs'),
+  ]);
+
+  const filePath = await save({
+    title: 'Save Markdown Export',
+    defaultPath: defaultExportFilename(job),
+    filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+  });
+
+  if (!filePath) return;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const message = await response.text().catch(() => response.statusText);
+    throw new Error(message || `Download failed with status ${response.status}`);
+  }
+
+  if (response.body) {
+    await writeFile(filePath, response.body);
+    return;
+  }
+
+  await writeFile(filePath, new Uint8Array(await response.arrayBuffer()));
+}
+
+function defaultExportFilename(job: ExportJob): string {
+  const dbName = job.db_name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'database';
+  return `atomic-${dbName}-markdown.zip`;
 }
 
 // Reset atoms stuck in 'processing' state (call on app startup)
