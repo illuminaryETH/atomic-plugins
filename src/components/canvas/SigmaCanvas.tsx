@@ -30,19 +30,46 @@ function parseRgbColor(s: string): [number, number, number] | null {
 export type SigmaCanvasMode = 'main' | 'preview';
 
 interface SigmaCanvasProps {
-  /** 'main' runs the full interactive canvas; 'preview' renders a static thumbnail
-   *  with no chrome, no mount animation, no pan/zoom, and no chat controller. */
+  /** 'main' runs the full interactive canvas; 'preview' renders a thumbnail
+   *  with no chrome and no chat controller. Static by default — pass
+   *  filterAtomIds to make it interactive (pan/zoom + clickable nodes). */
   mode?: SigmaCanvasMode;
-  /** Click handler for preview mode — fires on any click inside the container. */
+  /** Click handler for static preview mode — fires on any click inside the
+   *  container. Ignored when filterAtomIds is set (the canvas is interactive
+   *  and clicks are handled per-node via onPreviewNodeClick). */
   onPreviewClick?: () => void;
+  /** Subset the rendered graph to these atoms + their 1-hop neighbors from
+   *  the existing edge set. When provided in preview mode, the canvas
+   *  becomes interactive (pan/zoom + clickable nodes). */
+  filterAtomIds?: string[];
+  /** Click handler for nodes in interactive preview mode. */
+  onPreviewNodeClick?: (atomId: string) => void;
 }
 
-export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps = {}) {
+export function SigmaCanvas({
+  mode = 'main',
+  onPreviewClick,
+  filterAtomIds,
+  onPreviewNodeClick,
+}: SigmaCanvasProps = {}) {
   const isPreview = mode === 'preview';
+  const isInteractivePreview = isPreview && filterAtomIds !== undefined;
+  // Stable key for filterAtomIds — array identity changes shouldn't rebuild.
+  const filterKey = filterAtomIds ? [...filterAtomIds].sort().join(',') : null;
+  // Refs let event handlers see the latest callback without re-running the
+  // graph-build effect (which would tear down and rebuild Sigma).
+  const onPreviewNodeClickRef = useRef(onPreviewNodeClick);
+  onPreviewNodeClickRef.current = onPreviewNodeClick;
   const openReader = useUIStore(s => s.openReader);
   const selectedTagId = useUIStore(s => s.selectedTagId);
   const activeDbId = useDatabasesStore(s => s.activeId);
   const containerRef = useRef<HTMLDivElement>(null);
+  // The hover pill renders into this div, which lives outside the
+  // overflow-hidden Sigma container. That lets long titles spill past the
+  // canvas edges instead of getting clipped (the canvas's drawing surface
+  // is exactly the panel size — flipping sides only helps when the label
+  // is narrower than the longer-side gap).
+  const hoverPillRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const graphRef = useRef<Graph | null>(null);
   const [data, setData] = useState<GlobalCanvasData | null>(null);
@@ -122,6 +149,25 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
     const container = containerRef.current;
     if (!container || !data || data.atoms.length === 0) return;
 
+    // For an interactive preview, narrow the graph to the seed atoms plus
+    // their 1-hop neighbors from the existing edge set. We reuse the global
+    // PCA positions so the subset lands in the same region of space the user
+    // would see if they zoomed there in the main canvas — the camera then
+    // fits-to-bbox over just those nodes.
+    let atoms = data.atoms;
+    let edges = data.edges;
+    if (filterAtomIds && filterAtomIds.length > 0) {
+      const seeds = new Set(filterAtomIds);
+      const included = new Set(seeds);
+      for (const edge of data.edges) {
+        if (seeds.has(edge.source)) included.add(edge.target);
+        else if (seeds.has(edge.target)) included.add(edge.source);
+      }
+      atoms = data.atoms.filter(a => included.has(a.atom_id));
+      edges = data.edges.filter(e => included.has(e.source) && included.has(e.target));
+    }
+    if (atoms.length === 0) return;
+
     if (sigmaRef.current) {
       sigmaRef.current.kill();
       sigmaRef.current = null;
@@ -131,9 +177,9 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
     graphRef.current = graph;
     const scale = 500;
 
-    // Compute per-atom edge count
+    // Compute per-atom edge count (over the rendered subset, if filtered)
     const edgeCounts = new Map<string, number>();
-    for (const edge of data.edges) {
+    for (const edge of edges) {
       edgeCounts.set(edge.source, (edgeCounts.get(edge.source) || 0) + 1);
       edgeCounts.set(edge.target, (edgeCounts.get(edge.target) || 0) + 1);
     }
@@ -150,7 +196,7 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
 
     // Add atom nodes at center — will animate to PCA positions
     const targetPositions: Record<string, { x: number; y: number }> = {};
-    for (const atom of data.atoms) {
+    for (const atom of atoms) {
       const connectivity = (edgeCounts.get(atom.atom_id) || 0) / maxEdges;
       const clusterIdx = atomCluster.get(atom.atom_id);
       targetPositions[atom.atom_id] = { x: atom.x * scale, y: atom.y * scale };
@@ -169,14 +215,14 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
 
     // Add edges
     let minW = 1, maxW = 0;
-    for (const edge of data.edges) {
+    for (const edge of edges) {
       if (edge.weight < minW) minW = edge.weight;
       if (edge.weight > maxW) maxW = edge.weight;
     }
     const wRange = Math.max(maxW - minW, 0.001);
 
     const neighbors = new Map<string, Set<string>>();
-    for (const edge of data.edges) {
+    for (const edge of edges) {
       if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue;
       if (graph.hasEdge(edge.source, edge.target) || graph.hasEdge(edge.target, edge.source)) continue;
       const w = (edge.weight - minW) / wRange;
@@ -344,12 +390,16 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
       }
 
       // === Cluster labels (highest priority — placed first) ===
+      // Skip in interactive preview: clusters are computed over the full graph,
+      // so showing them on a filtered subset would mislabel sparse regions.
       const clusterFontSize = 13;
       ctx.font = `600 ${clusterFontSize}px system-ui, -apple-system, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      const sortedClusters = [...data!.clusters].sort((a, b) => b.atom_count - a.atom_count);
+      const sortedClusters = isInteractivePreview
+        ? []
+        : [...data!.clusters].sort((a, b) => b.atom_count - a.atom_count);
       const maxClusterLabels = Math.max(4, Math.floor((width * height) / 40000));
       const clusterPad = 24;
       let clusterCount = 0;
@@ -398,9 +448,12 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
       }
 
       // === Atom labels (collision-checked against everything already placed) ===
+      // Interactive preview (briefing mini-canvas) keeps only a couple of
+      // labels at rest — top-connected nodes win, the rest stay quiet until
+      // the user hovers them. Pin state is unused here because preview mode
+      // never pins.
       const atomFontSize = 12;
       ctx.font = `${atomFontSize}px system-ui, -apple-system, sans-serif`;
-      ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
 
       const tagFilter = selectedTagRef.current;
@@ -409,7 +462,8 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
       const pinnedId = pinnedNodeRef.current;
       const pinnedNeighbors = pinnedId ? neighborsRef.current.get(pinnedId) : null;
       const minRenderedSize = 4;
-      const atomLabelPad = 20;
+      const atomLabelPad = isInteractivePreview ? 40 : 20;
+      const maxAtomLabels = isInteractivePreview ? 2 : Infinity;
 
       type Cand = { vx: number; vy: number; rsize: number; label: string };
       const candidates: Cand[] = [];
@@ -431,15 +485,36 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
       // Largest (most-connected) nodes win label slots in dense regions
       candidates.sort((a, b) => b.rsize - a.rsize);
 
+      // Labels render onto the bounded label canvas, so a label whose right
+      // edge would land past `width` gets visually cut off. Flip to the left
+      // side of the node when there's more room there — common on the small
+      // briefing mini-canvas where nodes near the right edge would otherwise
+      // lose their titles.
       ctx.fillStyle = t.nodeLabelColor;
+      const edgePad = 2;
+      let drawnAtomLabels = 0;
       for (const c of candidates) {
+        if (drawnAtomLabels >= maxAtomLabels) break;
         const tw = ctx.measureText(c.label).width;
-        const lx = c.vx + c.rsize + 4;
         const ly = c.vy;
-        const rect = { x: lx, y: ly - atomFontSize / 2, w: tw, h: atomFontSize };
+        const rightX = c.vx + c.rsize + 4;
+        const leftX = c.vx - c.rsize - 4;
+        const rightFits = rightX + tw <= width - edgePad;
+        const leftFits = leftX - tw >= edgePad;
+        const onLeft = !rightFits && leftFits;
+        const rect = onLeft
+          ? { x: leftX - tw, y: ly - atomFontSize / 2, w: tw, h: atomFontSize }
+          : { x: rightX, y: ly - atomFontSize / 2, w: tw, h: atomFontSize };
         if (collides(rect, atomLabelPad)) continue;
         placed.push(rect);
-        ctx.fillText(c.label, lx, ly);
+        if (onLeft) {
+          ctx.textAlign = 'right';
+          ctx.fillText(c.label, leftX, ly);
+        } else {
+          ctx.textAlign = 'left';
+          ctx.fillText(c.label, rightX, ly);
+        }
+        drawnAtomLabels++;
       }
 
       // === Pinned-node ring (persists while a popover is open) ===
@@ -474,10 +549,12 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
         });
       }
 
-      // === Hover pill + ring (drawn last so it paints above everything) ===
+      // === Hover ring (drawn on canvas; the pill itself is a DOM element
+      // so it can spill past the panel edges instead of getting clipped). ===
       // Suppress the pill/ring for the pinned node — its outline already marks it.
       const hoveredId = hoveredNodeRef.current;
       const hAnim = hoverAnimRef.current;
+      const pill = hoverPillRef.current;
       if (hoveredId && hoveredId !== pinnedId && hAnim > 0.01 && graph!.hasNode(hoveredId)) {
         const hAttrs = graph!.getNodeAttributes(hoveredId);
         const hPos = sigma!.graphToViewport({ x: hAttrs.x as number, y: hAttrs.y as number });
@@ -485,39 +562,37 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
         const hLabel = ((hAttrs as any).fullLabel as string) || (hAttrs.label as string) || '';
 
         ctx.globalAlpha = hAnim;
-
-        // Ring on the node
         ctx.beginPath();
         ctx.arc(hPos.x, hPos.y, hSize + 2, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
         ctx.lineWidth = 1.5;
         ctx.stroke();
-
-        if (hLabel) {
-          const pillFont = 13;
-          ctx.font = `${pillFont}px system-ui, -apple-system, sans-serif`;
-          const tw = ctx.measureText(hLabel).width;
-          const pad = 6;
-          const pillW = tw + pad * 2;
-          const pillH = pillFont + pad * 2;
-          const px = hPos.x + hSize + 4;
-          const py = hPos.y - pillH / 2;
-
-          ctx.fillStyle = 'rgba(20, 20, 20, 0.92)';
-          ctx.beginPath();
-          ctx.roundRect(px, py, pillW, pillH, 4);
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-          ctx.lineWidth = 0.5;
-          ctx.stroke();
-
-          ctx.fillStyle = '#e8e8e8';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(hLabel, px + pad, hPos.y);
-        }
-
         ctx.globalAlpha = 1;
+
+        if (pill) {
+          if (pill.textContent !== hLabel) pill.textContent = hLabel;
+          // Measure the rendered DOM width so we can decide which side has
+          // more room. The pill uses the full untruncated title, so it can
+          // be wider than half the panel; we still pick whichever side has
+          // more room, but the pill freely spills outside if needed.
+          pill.style.visibility = 'hidden';
+          pill.style.display = 'block';
+          pill.style.left = '0px';
+          pill.style.top = '0px';
+          const pillW = pill.offsetWidth;
+          const pillH = pill.offsetHeight;
+          const rightRoom = width - (hPos.x + hSize + 4);
+          const leftRoom = hPos.x - hSize - 4;
+          const onLeft = leftRoom > rightRoom && pillW > rightRoom;
+          const px = onLeft ? hPos.x - hSize - 4 - pillW : hPos.x + hSize + 4;
+          const py = hPos.y - pillH / 2;
+          pill.style.left = `${px}px`;
+          pill.style.top = `${py}px`;
+          pill.style.opacity = String(hAnim);
+          pill.style.visibility = 'visible';
+        }
+      } else if (pill && pill.style.display !== 'none') {
+        pill.style.display = 'none';
       }
     }
 
@@ -538,12 +613,13 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
     // Animate nodes outward from center + fade edges in.
     // Preview mode skips the animation and snaps to final state so the thumbnail
     // shows the real layout immediately on mount. The main view also skips the
-    // animation when a pendingCamera is set — i.e. the user came from clicking
-    // the dashboard preview, and we want to land on the same framing they were
-    // already looking at without the layout-builds-up flourish.
+    // animation when a pendingCamera or pendingFocusAtomId is set — i.e. the
+    // user came from clicking the dashboard preview, and we want to land on the
+    // chosen framing/atom without the layout-builds-up flourish.
     let cancelledAnim = false;
     const pendingCamera = !isPreview ? useCanvasStore.getState().pendingCamera : null;
-    if (isPreview || pendingCamera) {
+    const pendingFocus = !isPreview ? useCanvasStore.getState().pendingFocusAtomId : null;
+    if (isPreview || pendingCamera || pendingFocus) {
       for (const [id, target] of Object.entries(targetPositions)) {
         if (!graph.hasNode(id)) continue;
         graph.setNodeAttribute(id, 'x', target.x);
@@ -650,7 +726,11 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
         const gx = graph.getNodeAttribute(atomId, 'x') as number;
         const gy = graph.getNodeAttribute(atomId, 'y') as number;
         const cam = graphToCamera(gx, gy);
-        sigma.getCamera().animate({ x: cam.x, y: cam.y, ratio: 0.15 }, { duration: 600 });
+        // ratio 0.15 was visually too tight when arriving from the briefing
+        // mini-canvas — the atom filled the screen with no surrounding
+        // context. 0.35 keeps the focused atom prominent while showing the
+        // neighborhood it sits in.
+        sigma.getCamera().animate({ x: cam.x, y: cam.y, ratio: 0.35 }, { duration: 600 });
         // Main view shows the popover after the camera settles; preview stays quiet.
         if (!isPreview) setTimeout(() => { pinNode(atomId); showAtomPreview(atomId); }, 650);
       },
@@ -661,9 +741,11 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
       },
     };
 
-    if (isPreview) {
-      useCanvasStore.getState().registerPreviewController(controller);
-    } else {
+    // Hover + click handlers run in main mode AND in interactive preview.
+    // In interactive preview, clicks bubble up to the parent (which opens the
+    // main canvas focused on the chosen atom) instead of opening a popover.
+    const isInteractive = !isPreview || isInteractivePreview;
+    if (isInteractive) {
       // Hover animation: exponential ease toward target (0 or 1).
       // Loop stops itself when target is reached, so idle cost is zero.
       let hoverRaf: number | null = null;
@@ -686,7 +768,11 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
       };
       startHoverAnimRef.current = startHoverAnim;
       sigma.on('clickNode', ({ node }) => {
-        // Pin the clicked node so emphasis persists while the popover is open.
+        if (isInteractivePreview) {
+          onPreviewNodeClickRef.current?.(node);
+          return;
+        }
+        // Main view: pin the clicked node so emphasis persists while the popover is open.
         pinNode(node);
         showAtomPreview(node);
       });
@@ -699,9 +785,27 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
         hoverTargetRef.current = 0;
         startHoverAnim();
       });
+    }
+
+    if (isPreview) {
+      useCanvasStore.getState().registerPreviewController(controller);
+    } else {
       const { registerController, setCanvasData } = useCanvasStore.getState();
       setCanvasData(data);
       registerController(controller);
+
+      // If a node was clicked in the briefing mini-canvas, the main view
+      // mounts here. Land directly on that atom (camera + popover) so the
+      // user sees it selected without any post-mount panning.
+      const pendingFocusId = useCanvasStore.getState().pendingFocusAtomId;
+      if (pendingFocusId && graph.hasNode(pendingFocusId)) {
+        useCanvasStore.getState().setPendingFocusAtomId(null);
+        controller.focusAtom(pendingFocusId);
+      } else if (pendingFocusId) {
+        // The atom isn't in the graph (e.g. no embedding yet) — drop the
+        // request so a stale focus doesn't fire later.
+        useCanvasStore.getState().setPendingFocusAtomId(null);
+      }
     }
 
     return () => {
@@ -717,7 +821,7 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
       sigmaRef.current = null;
       graphRef.current = null;
     };
-  }, [data, isPreview]); // intentionally exclude theme — handled below
+  }, [data, isPreview, filterKey]); // intentionally exclude theme — handled below
 
   // Update colors when theme changes (without recreating graph)
   useEffect(() => {
@@ -808,7 +912,7 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
   }, [edgeThreshold]);
 
   return (
-    <div className="flex flex-col h-full w-full">
+    <div className="flex flex-col h-full w-full relative">
       <div
         className="flex-1 relative overflow-hidden"
         style={{ backgroundColor: isPreview ? 'var(--color-bg-main)' : theme.background }}
@@ -854,12 +958,13 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
 
         <div
           ref={containerRef}
-          className={`w-full h-full ${isPreview ? 'pointer-events-none' : ''}`}
+          className={`w-full h-full ${isPreview && !isInteractivePreview ? 'pointer-events-none' : ''}`}
           style={isPreview ? undefined : { minHeight: 200 }}
         />
 
-        {/* Click-through overlay in preview mode — whole widget navigates to the main canvas */}
-        {isPreview && (
+        {/* Click-through overlay only for the static thumbnail preview.
+            Interactive preview handles its own clicks via clickNode. */}
+        {isPreview && !isInteractivePreview && (
           <button
             type="button"
             onClick={onPreviewClick}
@@ -931,6 +1036,19 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
         )}
 
       </div>
+
+      {/* Hover pill — lives outside the overflow-hidden clipping div so a
+          long title can extend past the panel edges instead of getting cut
+          off by the canvas's drawing surface. drawLabels imperatively sets
+          its position, content, and opacity each frame. */}
+      <div
+        ref={hoverPillRef}
+        className="absolute pointer-events-none whitespace-nowrap z-30
+                   px-1.5 py-1 rounded text-[13px] leading-none
+                   bg-[rgba(20,20,20,0.92)] text-[#e8e8e8]
+                   border border-white/10"
+        style={{ display: 'none' }}
+      />
     </div>
   );
 }

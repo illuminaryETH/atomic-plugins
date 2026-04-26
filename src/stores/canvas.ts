@@ -37,6 +37,12 @@ interface CanvasStore {
   // they were already looking at. Consumed (cleared) on apply.
   pendingCamera: CanvasCameraState | null;
   setPendingCamera: (state: CanvasCameraState | null) => void;
+
+  // Atom to focus + pin on the next-mounted main canvas. Set when the user
+  // clicks a node in the briefing mini-canvas so the main view opens with
+  // that atom selected. Consumed (cleared) on apply.
+  pendingFocusAtomId: string | null;
+  setPendingFocusAtomId: (id: string | null) => void;
 }
 
 export const useCanvasStore = create<CanvasStore>()((set) => ({
@@ -44,6 +50,7 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
   previewController: null,
   canvasData: null,
   pendingCamera: null,
+  pendingFocusAtomId: null,
 
   registerController: (ctrl) => set({ controller: ctrl }),
   unregisterController: () => set({ controller: null }),
@@ -54,4 +61,5 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
   setCanvasData: (data) => set({ canvasData: data }),
 
   setPendingCamera: (state) => set({ pendingCamera: state }),
+  setPendingFocusAtomId: (id) => set({ pendingFocusAtomId: id }),
 }));
