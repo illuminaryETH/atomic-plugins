@@ -171,6 +171,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # .cargo/config.toml pins the mold linker for x86_64-linux, so it must
+      # be available on the runner or Cargo link steps fail with "cannot find 'ld'".
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
