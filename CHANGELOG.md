@@ -2,6 +2,12 @@
 
 All notable changes to Atomic are documented here.
 
+## v1.32.4 — 2026-04-26
+
+- Redesign briefing mini-canvas into an interactive subset view showing only the briefing's referenced atoms and their neighbors, with pan/zoom and clickable nodes that open the main canvas focused on the selected atom
+- Improve hover pill rendering so long atom titles can extend past canvas edges instead of being clipped
+- Improve atom label placement by automatically flipping labels to the side with more room near canvas edges
+
 ## v1.32.3 — 2026-04-26
 
 - Rebuild the neighborhood graph view with Sigma — concentric layout sorted by similarity, always-visible title and tag labels, color-coded edges by relationship type (tag-only, semantic, or both), and hover dimming of non-neighbors
