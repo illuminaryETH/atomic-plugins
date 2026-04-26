@@ -234,11 +234,13 @@ export function useInlineEditor({
       debounceRef.current = null;
     }
 
-    // If atom was created empty and still has no content, delete it and dismiss
+    // If atom was created empty and still has no content, delete it.
+    // removeAtomFromTabs both closes the now-orphaned tab AND navigates to
+    // the atoms list — so we don't need a separate dismiss call.
     if (wasCreatedEmpty.current && !editContent.trim()) {
       deleteAtom(atom.id).catch(console.error);
       fetchTags().catch(console.error);
-      useUIStore.getState().overlayDismiss();
+      useUIStore.getState().removeAtomFromTabs(atom.id);
       return;
     }
 
@@ -303,8 +305,11 @@ export function useInlineEditor({
           sourceUrl !== lastSavedRef.current.sourceUrl ||
           tagIds !== lastSavedRef.current.tagIds;
         if (wasCreatedEmpty.current && !content.trim()) {
-          // Never had content — clean up the empty atom
+          // Never had content — clean up the empty atom and any tab still
+          // referencing it (the user may have navigated to a base view via
+          // main nav, leaving an orphan pill pointing at the deleted atom).
           useAtomsStore.getState().deleteAtom(atom.id).catch(console.error);
+          useUIStore.getState().removeAtomFromTabs(atom.id);
         } else if (hasDraftChanges) {
           savingPromiseRef.current
             .catch(() => {})

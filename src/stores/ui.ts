@@ -633,7 +633,16 @@ export const useUIStore = create<UIStore>()(
 
       overlayBack: () => get().tabBack(),
       overlayForward: () => get().tabForward(),
-      overlayDismiss: () => get().deactivateTabs(),
+      // Legacy "dismiss the open overlay" — used by Escape in the reader,
+      // tag clicks, etc. In the tabs world this means: leave the active
+      // tab (it stays in the strip) and navigate the URL to the current
+      // base view. Without the navigate, the URL gets out of sync with
+      // the rendered chrome and a reload re-opens the dismissed tab.
+      overlayDismiss: () => {
+        const state = get();
+        state.deactivateTabs();
+        navigateTo(viewPath(state.viewMode, state.selectedTagId));
+      },
 
       // -- Chat sidebar --------------------------------------------------
 
