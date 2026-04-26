@@ -297,7 +297,7 @@ code, pre, kbd, samp {
   --error-bg: rgba(239, 68, 68, 0.1);
   --error-border: rgba(239, 68, 68, 0.3);
   --error-text: #ef4444;
-  z-index: 50 !important;
+  z-index: 1000 !important;
   font-family: inherit !important;
 }
 
