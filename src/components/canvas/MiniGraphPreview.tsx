@@ -11,7 +11,7 @@ interface SimulationNode extends d3.SimulationNodeDatum {
 
 interface MiniGraphPreviewProps {
   atomId: string;
-  onExpand?: () => void;
+  onExpand?: (opts?: { newTab?: boolean }) => void;
 }
 
 export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
@@ -107,11 +107,12 @@ export function MiniGraphPreview({ atomId, onExpand }: MiniGraphPreviewProps) {
     };
   }, [graph]);
 
-  const handleExpand = useCallback(() => {
+  const handleExpand = useCallback((e: React.MouseEvent) => {
+    const newTab = e.metaKey || e.ctrlKey;
     if (onExpand) {
-      onExpand();
+      onExpand({ newTab });
     } else {
-      openLocalGraph(atomId);
+      openLocalGraph(atomId, undefined, { newTab });
     }
   }, [atomId, onExpand, openLocalGraph]);
 

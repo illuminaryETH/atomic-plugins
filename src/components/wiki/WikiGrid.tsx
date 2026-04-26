@@ -13,8 +13,8 @@ const ROW_HEIGHT = 140;
 interface WikiGridProps {
   articles: WikiArticleSummary[];
   suggestedArticles: SuggestedArticle[];
-  onArticleClick: (tagId: string, tagName: string) => void;
-  onSuggestionClick: (tagId: string, tagName: string) => void;
+  onArticleClick: (tagId: string, tagName: string, opts?: { newTab?: boolean }) => void;
+  onSuggestionClick: (tagId: string, tagName: string, opts?: { newTab?: boolean }) => void;
   isLoading?: boolean;
 }
 
@@ -122,7 +122,7 @@ export const WikiGrid = memo(function WikiGrid({
                       key={item.article.id}
                       type="article"
                       article={item.article}
-                      onClick={() => onArticleClick(item.article.tag_id, item.article.tag_name)}
+                      onClick={(opts) => onArticleClick(item.article.tag_id, item.article.tag_name, opts)}
                     />
                   );
                 } else {
@@ -131,7 +131,7 @@ export const WikiGrid = memo(function WikiGrid({
                       key={`suggestion-${item.suggestion.tag_id}`}
                       type="suggestion"
                       suggestion={item.suggestion}
-                      onClick={() => onSuggestionClick(item.suggestion.tag_id, item.suggestion.tag_name)}
+                      onClick={(opts) => onSuggestionClick(item.suggestion.tag_id, item.suggestion.tag_name, opts)}
                     />
                   );
                 }

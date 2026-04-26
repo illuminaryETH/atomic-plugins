@@ -17,8 +17,8 @@ const perfLog = (label: string, startTime?: number) => {
 
 interface RelatedAtomsProps {
   atomId: string;
-  onAtomClick: (atomId: string) => void;
-  onViewGraph?: () => void;
+  onAtomClick: (atomId: string, opts?: { newTab?: boolean }) => void;
+  onViewGraph?: (opts?: { newTab?: boolean }) => void;
 }
 
 export function RelatedAtoms({ atomId, onAtomClick, onViewGraph }: RelatedAtomsProps) {
@@ -87,7 +87,13 @@ export function RelatedAtoms({ atomId, onAtomClick, onViewGraph }: RelatedAtomsP
               {relatedAtoms.map((result) => (
                 <button
                   key={result.id}
-                  onClick={() => onAtomClick(result.id)}
+                  onClick={(e) => onAtomClick(result.id, { newTab: e.metaKey || e.ctrlKey })}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      onAtomClick(result.id, { newTab: true });
+                    }
+                  }}
                   className="w-full text-left p-3 bg-[var(--color-bg-panel)] rounded-md hover:bg-[var(--color-bg-card)] transition-colors"
                 >
                   <p className="text-sm text-[var(--color-text-primary)] line-clamp-2">

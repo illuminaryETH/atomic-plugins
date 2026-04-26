@@ -14,7 +14,7 @@ interface AtomPreviewPopoverProps {
   atomId: string;
   anchorRect: { top: number; left: number; bottom: number; width: number };
   onClose: () => void;
-  onViewAtom: (atomId: string) => void;
+  onViewAtom: (atomId: string, opts?: { newTab?: boolean }) => void;
 }
 
 const POPOVER_WIDTH = 480;
@@ -132,8 +132,8 @@ export function AtomPreviewPopover({ atomId, anchorRect, onClose, onViewAtom }: 
     window.addEventListener('mouseup', onUp);
   }, [position.top, position.left]);
 
-  const handleViewAtom = () => {
-    onViewAtom(atomId);
+  const handleViewAtom = (e: React.MouseEvent) => {
+    onViewAtom(atomId, { newTab: e.metaKey || e.ctrlKey });
     onClose();
   };
 

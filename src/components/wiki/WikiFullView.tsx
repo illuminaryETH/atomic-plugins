@@ -27,13 +27,13 @@ export function WikiFullView() {
     return () => { reset(); };
   }, [reset]);
 
-  const handleArticleClick = (tagId: string, tagName: string) => {
-    openWikiReader(tagId, tagName);
+  const handleArticleClick = (tagId: string, tagName: string, opts?: { newTab?: boolean }) => {
+    openWikiReader(tagId, tagName, undefined, opts);
   };
 
-  const handleSuggestionClick = (tagId: string, tagName: string) => {
+  const handleSuggestionClick = (tagId: string, tagName: string, opts?: { newTab?: boolean }) => {
     // Open wiki reader — it will show the empty state and allow generation
-    openWikiReader(tagId, tagName);
+    openWikiReader(tagId, tagName, undefined, opts);
   };
 
   return (

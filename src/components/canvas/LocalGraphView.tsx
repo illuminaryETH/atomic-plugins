@@ -124,7 +124,12 @@ export function LocalGraphView() {
     return firstLine.length > 50 ? firstLine.substring(0, 50) + '...' : firstLine;
   }, [graph]);
 
-  const handleNodeClick = useCallback((atomId: string) => {
+  const handleNodeClick = useCallback((atomId: string, e: React.MouseEvent) => {
+    const newTab = e.metaKey || e.ctrlKey;
+    if (newTab) {
+      overlayNavigate({ type: 'reader', atomId }, { newTab: true });
+      return;
+    }
     if (atomId === localGraph.centerAtomId) {
       // Clicking center atom opens it in reader
       overlayNavigate({ type: 'reader', atomId });
@@ -134,9 +139,9 @@ export function LocalGraphView() {
     }
   }, [localGraph.centerAtomId, navigateLocalGraph, overlayNavigate]);
 
-  const handleNodeDoubleClick = useCallback((atomId: string) => {
-    // Double-click always opens in reader
-    overlayNavigate({ type: 'reader', atomId });
+  const handleNodeDoubleClick = useCallback((atomId: string, e: React.MouseEvent) => {
+    // Double-click always opens in reader (cmd+double-click → new tab).
+    overlayNavigate({ type: 'reader', atomId }, { newTab: e.metaKey || e.ctrlKey });
   }, [overlayNavigate]);
 
   if (!localGraph.isOpen) return null;
@@ -296,8 +301,8 @@ export function LocalGraphView() {
                         transform: 'translate(-50%, -50%)',
                         width: 170,
                       }}
-                      onClick={() => handleNodeClick(node.id)}
-                      onDoubleClick={() => handleNodeDoubleClick(node.id)}
+                      onClick={(e) => handleNodeClick(node.id, e)}
+                      onDoubleClick={(e) => handleNodeDoubleClick(node.id, e)}
                     >
                       <div
                         className={`

@@ -7,7 +7,7 @@ import { AtomCardSkeleton } from './AtomCardSkeleton';
 
 interface AtomListProps {
   atoms: DisplayAtom[];
-  onAtomClick: (atomId: string) => void;
+  onAtomClick: (atomId: string, opts?: { newTab?: boolean }) => void;
   getMatchingChunkContent?: (atomId: string) => string | undefined;
   onRetryEmbedding?: (atomId: string) => void;
   onRetryTagging?: (atomId: string) => void;

@@ -25,7 +25,7 @@ function getDisplayDate(atom: DisplayAtom): string {
 
 interface AtomCardProps {
   atom: DisplayAtom;
-  onAtomClick: (atomId: string) => void;
+  onAtomClick: (atomId: string, opts?: { newTab?: boolean }) => void;
   viewMode: 'grid' | 'list';
   matchingChunkContent?: string;  // For search results
   onRetryEmbedding?: (atomId: string) => void;  // For retry action
@@ -113,7 +113,18 @@ export const AtomCard = memo(function AtomCard({
   onRetryEmbedding,
   onRetryTagging,
 }: AtomCardProps) {
-  const handleClick = () => onAtomClick(atom.id);
+  const handleClick = (e: React.MouseEvent) => {
+    onAtomClick(atom.id, { newTab: e.metaKey || e.ctrlKey });
+  };
+  // Middle-click (button === 1) also opens in a new tab — matches browser
+  // tab affordance. Listened on auxclick to capture all middle-click button
+  // up events without preventing focus behavior elsewhere.
+  const handleAuxClick = (e: React.MouseEvent) => {
+    if (e.button === 1) {
+      e.preventDefault();
+      onAtomClick(atom.id, { newTab: true });
+    }
+  };
   const handleRetry = onRetryEmbedding ? () => onRetryEmbedding(atom.id) : undefined;
   const handleRetryTagging = onRetryTagging ? () => onRetryTagging(atom.id) : undefined;
 
@@ -130,6 +141,7 @@ export const AtomCard = memo(function AtomCard({
     return (
       <div
         onClick={handleClick}
+        onAuxClick={handleAuxClick}
         className="relative flex items-center gap-3 px-3 py-2.5 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-hover)] transition-all duration-150"
       >
         <ProcessingStatusIndicator
@@ -189,6 +201,7 @@ export const AtomCard = memo(function AtomCard({
   return (
     <div
       onClick={handleClick}
+      onAuxClick={handleAuxClick}
       className="relative flex flex-col p-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-hover)] transition-all duration-150 h-full min-w-0 overflow-hidden break-words"
     >
       <ProcessingStatusIndicator

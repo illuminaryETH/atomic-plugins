@@ -223,7 +223,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         });
         useUIStore.getState().setChatSidebarConversationId(id);
       } else {
-        set({ error: 'Conversation not found', isLoading: false });
+        // Conversation went missing (deleted, different DB, stale persisted
+        // id from a prior session) — fall back to the list rather than
+        // leaving the user staring at an error with no recovery path.
+        set({ isLoading: false, error: null });
+        get().showList();
       }
     } catch (e) {
       set({ error: String(e), isLoading: false });

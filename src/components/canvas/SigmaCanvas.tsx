@@ -886,9 +886,9 @@ export function SigmaCanvas({ mode = 'main', onPreviewClick }: SigmaCanvasProps 
             atomId={previewAtomId}
             anchorRect={previewAnchorRect}
             onClose={closePreview}
-            onViewAtom={(atomId) => {
+            onViewAtom={(atomId, opts) => {
               closePreview();
-              openReader(atomId);
+              openReader(atomId, undefined, opts);
             }}
           />
         )}

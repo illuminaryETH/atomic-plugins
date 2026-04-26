@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useUIStore, type OverlayNav, type OverlayNavEntry } from '../stores/ui';
+import { useUIStore, type Tab, type TabEntry } from '../stores/ui';
 import { parseLocation, type ParsedRoute } from './routes';
 import { setNavigateFn, type NavigateState } from './navigate-ref';
 
@@ -10,77 +10,149 @@ import { setNavigateFn, type NavigateState } from './navigate-ref';
 ///   1. Expose the live `navigate` function to non-React code via
 ///      `setNavigateFn` so store actions can write URLs.
 ///   2. Reconcile the store to the URL on every location change. URL is the
-///      source of truth for routed state (viewMode, selectedTagId,
-///      readerState, wikiReaderState, localGraph). The store is the source
-///      of truth for UI-only state (editing, saveStatus, panel widths, etc.)
+///      source of truth for what the user is *currently looking at*; the
+///      tabs array is the source of truth for what tabs exist and where in
+///      their stacks the user has been. Bridge keeps the two consistent:
+///      activate/create tabs to match URL, navigate to the current tab's
+///      entry on tab switches.
 ///
-/// The stack reconciliation uses a `seq` embedded in `history.state` to
-/// distinguish forward navigation from back navigation (popstate). Without
-/// it, every browser-back would look like "URL doesn't match top of stack"
-/// and Bridge would *append* instead of decrementing the index — the stack
-/// would grow without bound across back/forward cycles.
+/// The seq counter in `history.state` is still used to disambiguate forward
+/// vs back popstate. Without it, browser-back to a tab whose stackIndex was
+/// already past zero would look indistinguishable from a fresh push.
 
-/// Does this stack entry correspond to the parsed URL?
-function matchesEntry(entry: OverlayNavEntry, parsed: ParsedRoute): boolean {
-  if (parsed.kind === 'reader') {
-    return entry.type === 'reader' && entry.atomId === parsed.atomId;
-  }
-  if (parsed.kind === 'graph') {
-    return entry.type === 'graph' && entry.atomId === parsed.atomId;
-  }
-  if (parsed.kind === 'wiki-reader') {
-    return entry.type === 'wiki' && entry.tagId === parsed.tagId;
-  }
+function entriesEquivalent(a: TabEntry, parsed: ParsedRoute): boolean {
+  if (parsed.kind === 'reader') return a.type === 'atom' && a.atomId === parsed.atomId;
+  if (parsed.kind === 'graph') return a.type === 'graph' && a.atomId === parsed.atomId;
+  if (parsed.kind === 'wiki-reader') return a.type === 'wiki' && a.tagId === parsed.tagId;
   return false;
 }
 
-/// Decide how to transform `overlayNav` given the URL we just arrived at
-/// and the direction we moved in. Returns the *same* reference when nothing
-/// needs to change, so callers can short-circuit a setState.
-function reconcileOverlayNav(
-  prev: OverlayNav,
-  parsed: ParsedRoute,
-  newEntry: OverlayNavEntry,
-  direction: 'forward' | 'back' | 'unknown',
-): OverlayNav {
-  const current = prev.stack[prev.index];
-  if (current && matchesEntry(current, parsed)) return prev; // idempotent
-
-  if (direction === 'back') {
-    // Search the whole stack: on popstate the user may jump back multiple
-    // entries in one step (not just index-1). Find the matching one and
-    // snap the index to it without disturbing forward entries.
-    const idx = prev.stack.findIndex((e) => matchesEntry(e, parsed));
-    if (idx >= 0) return { stack: prev.stack, index: idx };
+function entryFromRoute(parsed: ParsedRoute, fallbackEntry?: TabEntry): TabEntry | null {
+  if (parsed.kind === 'reader') {
+    const editing = fallbackEntry?.type === 'atom' && fallbackEntry.atomId === parsed.atomId
+      ? fallbackEntry.editing
+      : false;
+    const highlightText = fallbackEntry?.type === 'atom' && fallbackEntry.atomId === parsed.atomId
+      ? fallbackEntry.highlightText
+      : null;
+    return { type: 'atom', atomId: parsed.atomId, tagId: parsed.tagId, highlightText, editing };
   }
-
-  if (direction === 'forward') {
-    const next = prev.stack[prev.index + 1];
-    if (next && matchesEntry(next, parsed)) {
-      return { stack: prev.stack, index: prev.index + 1 };
-    }
+  if (parsed.kind === 'graph') {
+    return { type: 'graph', atomId: parsed.atomId, tagId: parsed.tagId };
   }
+  if (parsed.kind === 'wiki-reader') {
+    const highlightText = fallbackEntry?.type === 'wiki' && fallbackEntry.tagId === parsed.tagId
+      ? fallbackEntry.highlightText
+      : null;
+    return {
+      type: 'wiki',
+      tagId: parsed.tagId,
+      tagName: parsed.tagName ?? '',
+      highlightText,
+    };
+  }
+  return null;
+}
 
-  // Fresh navigation (forward push, cold-load, or directly-typed URL) —
-  // truncate anything ahead of the current index and append.
+function projectActiveEntry(entry: TabEntry | null) {
+  if (!entry) {
+    return {
+      readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' as const },
+      wikiReaderState: { tagId: null, tagName: null, highlightText: null },
+      localGraphPatch: { isOpen: false, centerAtomId: null, navigationHistory: [] as string[] },
+    };
+  }
+  if (entry.type === 'atom') {
+    return {
+      readerState: {
+        atomId: entry.atomId,
+        highlightText: entry.highlightText,
+        editing: entry.editing,
+        saveStatus: 'idle' as const,
+      },
+      wikiReaderState: { tagId: null, tagName: null, highlightText: null },
+      localGraphPatch: { isOpen: false },
+    };
+  }
+  if (entry.type === 'wiki') {
+    return {
+      readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' as const },
+      wikiReaderState: { tagId: entry.tagId, tagName: entry.tagName, highlightText: entry.highlightText },
+      localGraphPatch: { isOpen: false },
+    };
+  }
   return {
-    stack: [...prev.stack.slice(0, prev.index + 1), newEntry],
-    index: prev.index + 1,
+    readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' as const },
+    wikiReaderState: { tagId: null, tagName: null, highlightText: null },
+    localGraphPatch: {
+      isOpen: true,
+      centerAtomId: entry.atomId,
+      navigationHistory: [entry.atomId],
+    },
   };
 }
 
-/// Build the overlay-stack entry for a URL. Shape has to match what actions
-/// push so `matchesEntry` correctly identifies "already there" cases.
-function entryForRoute(parsed: ParsedRoute): OverlayNavEntry | null {
-  if (parsed.kind === 'reader') {
-    return { type: 'reader', atomId: parsed.atomId };
+/// For a parsed overlay-kind URL, decide which tab should be active and
+/// what its stack should look like. Strategy:
+///   1. Active tab's current entry already matches → no-op.
+///   2. Active tab has the entry at a different stackIndex (we walked the
+///      browser history) → snap stackIndex to it.
+///   3. Some other tab has the entry as its current → activate it.
+///   4. Otherwise → push onto the active tab if there is one (treating it
+///      as in-tab navigation), else create a new tab.
+function reconcileTabsForOverlay(
+  tabs: Tab[],
+  activeTabId: string | null,
+  parsed: ParsedRoute,
+  direction: 'forward' | 'back' | 'unknown',
+): { tabs: Tab[]; activeTabId: string; entry: TabEntry; nextOrdinal?: number; createdTab: boolean } | null {
+  const newEntry = entryFromRoute(parsed);
+  if (!newEntry) return null;
+
+  const activeTab = activeTabId ? tabs.find((t) => t.id === activeTabId) ?? null : null;
+  const activeCurrent = activeTab?.stack[activeTab.stackIndex];
+
+  // Already showing this entry as current. Preserve highlightText/editing
+  // bits from the existing entry rather than the route-fresh defaults.
+  if (activeTab && activeCurrent && entriesEquivalent(activeCurrent, parsed)) {
+    return { tabs, activeTabId: activeTab.id, entry: activeCurrent, createdTab: false };
   }
-  if (parsed.kind === 'graph') {
-    return { type: 'graph', atomId: parsed.atomId };
+
+  // Walking the active tab's stack via browser history.
+  if (activeTab && (direction === 'back' || direction === 'forward')) {
+    const idx = activeTab.stack.findIndex((e) => entriesEquivalent(e, parsed));
+    if (idx >= 0) {
+      const updated = { ...activeTab, stackIndex: idx };
+      const nextTabs = tabs.map((t) => (t.id === activeTab.id ? updated : t));
+      return { tabs: nextTabs, activeTabId: activeTab.id, entry: updated.stack[idx], createdTab: false };
+    }
   }
-  if (parsed.kind === 'wiki-reader') {
-    return { type: 'wiki', tagId: parsed.tagId, tagName: parsed.tagName ?? '' };
+
+  // Some other tab has this entry as its current — switch to it.
+  const matching = tabs.find((t) => {
+    const cur = t.stack[t.stackIndex];
+    return cur && entriesEquivalent(cur, parsed);
+  });
+  if (matching) {
+    return {
+      tabs,
+      activeTabId: matching.id,
+      entry: matching.stack[matching.stackIndex],
+      createdTab: false,
+    };
   }
+
+  // Active tab present, fresh URL → push onto it.
+  if (activeTab) {
+    const truncated = activeTab.stack.slice(0, activeTab.stackIndex + 1);
+    const entry = entryFromRoute(parsed, activeCurrent) ?? newEntry;
+    const nextStack = [...truncated, entry];
+    const updated = { ...activeTab, stack: nextStack, stackIndex: nextStack.length - 1 };
+    const nextTabs = tabs.map((t) => (t.id === activeTab.id ? updated : t));
+    return { tabs: nextTabs, activeTabId: activeTab.id, entry, createdTab: false };
+  }
+
+  // No active tab (cold deep-link, or coming from a base view) — create one.
   return null;
 }
 
@@ -90,18 +162,11 @@ export function RouterBridge() {
   const prevSeqRef = useRef<number | null>(null);
   const didInjectSeqRef = useRef(false);
 
-  // Publish the live navigate fn to the module-scope ref so store actions
-  // can use it.
   useEffect(() => {
     setNavigateFn(navigate);
   }, [navigate]);
 
   useEffect(() => {
-    // Read the seq our own `navigateTo` writes into history.state, or inject
-    // seq=0 into the cold-load entry so later back-navigations here have a
-    // known seq to compare against. Without this injection, a cold-loaded
-    // URL has no seq; after one forward navigation, browser-back to the
-    // cold URL would look like "seq became null" → direction undetectable.
     const incomingState = (location.state ?? null) as NavigateState | null;
     let seq = incomingState?.seq ?? null;
     if (seq === null && !didInjectSeqRef.current) {
@@ -119,96 +184,69 @@ export function RouterBridge() {
         ? 'forward'
         : seq < prevSeq
         ? 'back'
-        : 'unknown'; // same seq = replace navigation; don't mutate stack
+        : 'unknown';
     prevSeqRef.current = seq;
 
     const parsed = parseLocation(location.pathname, location.search);
     const store = useUIStore.getState();
 
     if (parsed.kind === 'view') {
-      const needsClear =
+      // Base view: deactivate any tab. Tabs themselves persist.
+      const projected = projectActiveEntry(null);
+      const needsUpdate =
+        store.activeTabId !== null ||
+        store.viewMode !== parsed.viewMode ||
+        store.selectedTagId !== parsed.tagId ||
         store.readerState.atomId !== null ||
         store.wikiReaderState.tagId !== null ||
-        store.overlayNav.stack.length > 0;
-
-      if (needsClear || store.viewMode !== parsed.viewMode || store.selectedTagId !== parsed.tagId) {
-        useUIStore.setState({
-          viewMode: parsed.viewMode,
-          selectedTagId: parsed.tagId,
-          readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' },
-          wikiReaderState: { tagId: null, tagName: null, highlightText: null },
-          overlayNav: { stack: [], index: -1 },
-          localGraph: { ...store.localGraph, isOpen: false },
-          ...(store.leftPanelOpenBeforeReader
-            ? { leftPanelOpen: true, leftPanelOpenBeforeReader: false, leftPanelTransitionMode: 'manual' as const }
-            : {}),
-        });
-      }
+        store.localGraph.isOpen;
+      if (!needsUpdate) return;
+      useUIStore.setState((s) => ({
+        viewMode: parsed.viewMode,
+        selectedTagId: parsed.tagId,
+        activeTabId: null,
+        ...projected,
+        localGraph: { ...s.localGraph, ...projected.localGraphPatch },
+      }));
       return;
     }
 
-    // Overlay-kind (reader / graph / wiki-reader) share the same stack
-    // reconciliation + left-panel auto-collapse.
-    const newEntry = entryForRoute(parsed);
-    if (!newEntry) return;
-    const nextNav = reconcileOverlayNav(store.overlayNav, parsed, newEntry, direction);
-    const becameFirstOverlay = store.overlayNav.index === -1 && nextNav.index !== -1;
+    // Overlay-kind URL: figure out the right tab.
+    const reconciled = reconcileTabsForOverlay(store.tabs, store.activeTabId, parsed, direction);
 
-    if (parsed.kind === 'reader') {
-      const sameAtom = store.readerState.atomId === parsed.atomId;
-      useUIStore.setState({
-        selectedTagId: parsed.tagId,
-        readerState: {
-          atomId: parsed.atomId,
-          highlightText: sameAtom ? store.readerState.highlightText : null,
-          editing: sameAtom ? store.readerState.editing : false,
-          saveStatus: sameAtom ? store.readerState.saveStatus : 'idle',
-        },
-        wikiReaderState: { tagId: null, tagName: null, highlightText: null },
-        // MainView gives `localGraph.isOpen` priority over reader in its
-        // dispatch — close it here or chevron-back from graph leaves the
-        // graph visible behind the "new" reader URL.
-        localGraph: { ...store.localGraph, isOpen: false },
-        overlayNav: nextNav,
-        ...(becameFirstOverlay && store.leftPanelOpen
-          ? { leftPanelOpen: false, leftPanelOpenBeforeReader: true, leftPanelTransitionMode: 'overlay' as const }
-          : {}),
-      });
-    } else if (parsed.kind === 'graph') {
-      useUIStore.setState({
-        selectedTagId: parsed.tagId,
-        readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' },
-        wikiReaderState: { tagId: null, tagName: null, highlightText: null },
-        localGraph: {
-          isOpen: true,
-          centerAtomId: parsed.atomId,
-          depth: store.localGraph.depth,
-          navigationHistory: [parsed.atomId],
-        },
-        overlayNav: nextNav,
-        ...(becameFirstOverlay && store.leftPanelOpen
-          ? { leftPanelOpen: false, leftPanelOpenBeforeReader: true, leftPanelTransitionMode: 'overlay' as const }
-          : {}),
-      });
-    } else if (parsed.kind === 'wiki-reader') {
-      // If the URL points to the same tag we're already on, preserve the
-      // incoming highlight so the reader can still scroll to a match.
-      // Navigating to a different wiki clears it.
-      const sameWiki = store.wikiReaderState.tagId === parsed.tagId;
-      useUIStore.setState({
-        wikiReaderState: {
-          tagId: parsed.tagId,
-          tagName: parsed.tagName ?? store.wikiReaderState.tagName,
-          highlightText: sameWiki ? store.wikiReaderState.highlightText : null,
-        },
-        readerState: { atomId: null, highlightText: null, editing: false, saveStatus: 'idle' },
-        localGraph: { ...store.localGraph, isOpen: false },
-        overlayNav: nextNav,
-        ...(becameFirstOverlay && store.leftPanelOpen
-          ? { leftPanelOpen: false, leftPanelOpenBeforeReader: true, leftPanelTransitionMode: 'overlay' as const }
-          : {}),
-      });
+    if (reconciled) {
+      const projected = projectActiveEntry(reconciled.entry);
+      useUIStore.setState((s) => ({
+        tabs: reconciled.tabs,
+        activeTabId: reconciled.activeTabId,
+        selectedTagId: parsed.kind === 'wiki-reader' ? s.selectedTagId : (parsed.tagId ?? s.selectedTagId),
+        ...projected,
+        localGraph: { ...s.localGraph, ...projected.localGraphPatch },
+      }));
+      return;
     }
+
+    // No active tab and no match → create a fresh tab for this URL.
+    const newEntry = entryFromRoute(parsed);
+    if (!newEntry) return;
+    const tabId = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const newTab: Tab = {
+      id: tabId,
+      stack: [newEntry],
+      stackIndex: 0,
+      ordinal: store.nextTabOrdinal,
+    };
+    const projected = projectActiveEntry(newEntry);
+    useUIStore.setState((s) => ({
+      tabs: [...s.tabs, newTab],
+      activeTabId: tabId,
+      nextTabOrdinal: s.nextTabOrdinal + 1,
+      selectedTagId: parsed.kind === 'wiki-reader' ? s.selectedTagId : (parsed.tagId ?? s.selectedTagId),
+      ...projected,
+      localGraph: { ...s.localGraph, ...projected.localGraphPatch },
+    }));
   }, [location.pathname, location.search, location.state]);
 
   return null;

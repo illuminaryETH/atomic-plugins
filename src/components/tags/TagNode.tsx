@@ -37,7 +37,7 @@ export const TagNode = memo(function TagNode({ tag, level, selectedTagId, onSele
 
   const handleWikiClick = (e: MouseEvent) => {
     e.stopPropagation();
-    openWikiReader(tag.id, tag.name);
+    openWikiReader(tag.id, tag.name, undefined, { newTab: e.metaKey || e.ctrlKey });
   };
 
   const handleChatClick = (e: MouseEvent) => {

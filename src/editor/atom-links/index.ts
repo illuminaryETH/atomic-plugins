@@ -20,8 +20,37 @@ export interface AtomLinkExtensionConfig {
   currentAtomId?: string;
   suggestAtoms: (query: string) => Promise<AtomLinkSuggestion[]>;
   resolveAtom?: (id: string) => Promise<ResolvedAtomLinkTarget | null>;
-  openAtom?: (id: string) => void;
+  openAtom?: (id: string, opts?: { newTab?: boolean }) => void;
   maxSuggestions?: number;
+}
+
+/// The CodeMirror wikiLinks extension's `onOpen` callback only receives the
+/// link target (the atom id) — not the click event. To support cmd/ctrl+click
+/// → "open in new tab", we capture a mousedown listener at document level
+/// and stash whether the modifier was held. `onOpen` synchronously fires from
+/// the same click event, so the flag stays fresh.
+let lastModifierWasHeld = false;
+let lastModifierAt = 0;
+
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'mousedown',
+    (e) => {
+      lastModifierWasHeld = e.metaKey || e.ctrlKey;
+      lastModifierAt = Date.now();
+    },
+    { capture: true },
+  );
+}
+
+/// Read & clear the modifier flag from the most recent mousedown. Stale
+/// after ~500ms so a long-held modifier from a forgotten gesture doesn't
+/// poison later clicks.
+export function consumeAtomLinkClickModifier(): boolean {
+  if (Date.now() - lastModifierAt > 500) return false;
+  const v = lastModifierWasHeld;
+  lastModifierWasHeld = false;
+  return v;
 }
 
 export function atomLinkExtension(config: AtomLinkExtensionConfig): Extension[] {
@@ -48,7 +77,12 @@ export function atomLinkExtension(config: AtomLinkExtensionConfig): Extension[] 
             return { target, label: displayTitle(atom.title), status: 'resolved' };
           }
         : undefined,
-      onOpen: config.openAtom,
+      onOpen: config.openAtom
+        ? (target: string) => {
+            const newTab = consumeAtomLinkClickModifier();
+            config.openAtom!(target, { newTab });
+          }
+        : undefined,
       openOnClick: true,
       serializeSuggestion,
       shouldResolve: isUuidTarget,

@@ -6,13 +6,13 @@ import { formatRelativeDate, formatShortRelativeDate } from '../../lib/date';
 interface WikiArticleCardProps {
   type: 'article';
   article: WikiArticleSummary;
-  onClick: () => void;
+  onClick: (opts?: { newTab?: boolean }) => void;
 }
 
 interface WikiSuggestionCardProps {
   type: 'suggestion';
   suggestion: SuggestedArticle;
-  onClick: () => void;
+  onClick: (opts?: { newTab?: boolean }) => void;
 }
 
 type WikiCardProps = WikiArticleCardProps | WikiSuggestionCardProps;
@@ -22,7 +22,13 @@ export const WikiCard = memo(function WikiCard(props: WikiCardProps) {
     const { suggestion, onClick } = props;
     return (
       <div
-        onClick={onClick}
+        onClick={(e) => onClick({ newTab: e.metaKey || e.ctrlKey })}
+        onAuxClick={(e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            onClick({ newTab: true });
+          }
+        }}
         className="relative flex flex-col p-4 border border-dashed border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-accent)]/50 hover:bg-[var(--color-bg-card)]/50 transition-all duration-150 h-full min-w-0 overflow-hidden group"
       >
         <div className="flex-1 min-h-0">
@@ -52,7 +58,13 @@ export const WikiCard = memo(function WikiCard(props: WikiCardProps) {
 
   return (
     <div
-      onClick={onClick}
+      onClick={(e) => onClick({ newTab: e.metaKey || e.ctrlKey })}
+      onAuxClick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          onClick({ newTab: true });
+        }
+      }}
       className="relative flex flex-col p-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-hover)] transition-all duration-150 h-full min-w-0 overflow-hidden break-words"
     >
       <div className="flex-1 min-h-0">
