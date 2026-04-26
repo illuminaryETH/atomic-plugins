@@ -57,17 +57,17 @@ pub const EMBEDDING_MODELS: &[OpenRouterEmbeddingModel] = &[
         dimension: 3072,
         context_length: 20000,
     },
+    OpenRouterEmbeddingModel {
+        id: "google/gemini-embedding-2-preview",
+        name: "Google: Gemini Embedding 2 Preview",
+        dimension: 3072,
+        context_length: 8192,
+    },
     // Mistral
     OpenRouterEmbeddingModel {
         id: "mistralai/mistral-embed-2312",
         name: "Mistral: Mistral Embed 2312",
         dimension: 1024,
-        context_length: 8192,
-    },
-    OpenRouterEmbeddingModel {
-        id: "mistralai/codestral-embed-2505",
-        name: "Mistral: Codestral Embed 2505 (code)",
-        dimension: 1536,
         context_length: 8192,
     },
     // Qwen
@@ -120,6 +120,20 @@ pub const EMBEDDING_MODELS: &[OpenRouterEmbeddingModel] = &[
         name: "Intfloat: E5 Base v2",
         dimension: 768,
         context_length: 512,
+    },
+    // Perplexity
+    OpenRouterEmbeddingModel {
+        id: "perplexity/pplx-embed-v1-4b",
+        name: "Perplexity: Embed V1 4B",
+        dimension: 2560,
+        context_length: 32000,
+    },
+    // NVIDIA
+    OpenRouterEmbeddingModel {
+        id: "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+        name: "NVIDIA: Llama Nemotron Embed VL 1B V2 (free)",
+        dimension: 2048,
+        context_length: 131072,
     },
     // Thenlper GTE
     OpenRouterEmbeddingModel {
