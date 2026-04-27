@@ -583,6 +583,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "atomic-core",
+ "chrono",
+ "clap",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wiremock",
+]
+
+[[package]]
 name = "atomic-cloud"
 version = "0.1.0"
 dependencies = [

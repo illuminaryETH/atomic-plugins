@@ -1,0 +1,38 @@
+[
+  {
+    "question_id": "mini_memory_001",
+    "question_type": "single-session-user",
+    "question": "What dessert does the user want to bake this weekend?",
+    "answer": "lemon tart",
+    "question_date": "2026-01-04",
+    "haystack_session_ids": ["session_a", "session_b"],
+    "haystack_dates": ["2026-01-01", "2026-01-03"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "I need to buy flour and lemons because I want to bake a lemon tart this weekend.", "has_answer": true},
+        {"role": "assistant", "content": "I will remember that you are planning to bake a lemon tart."}
+      ],
+      [
+        {"role": "user", "content": "Please remind me to water the basil tomorrow."},
+        {"role": "assistant", "content": "Sure, I can remind you about the basil."}
+      ]
+    ],
+    "answer_session_ids": ["session_a"]
+  },
+  {
+    "question_id": "mini_memory_002_abs",
+    "question_type": "single-session-user",
+    "question": "Which hotel did the user book in Lisbon?",
+    "answer": "The user has not mentioned booking a hotel in Lisbon.",
+    "question_date": "2026-01-06",
+    "haystack_session_ids": ["session_c"],
+    "haystack_dates": ["2026-01-05"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "I am comparing train routes for a spring trip."},
+        {"role": "assistant", "content": "You are comparing train routes for spring."}
+      ]
+    ],
+    "answer_session_ids": []
+  }
+]

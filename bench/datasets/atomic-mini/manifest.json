@@ -1,0 +1,8 @@
+{
+  "id": "atomic-mini",
+  "name": "Atomic Mini",
+  "version": "0.1.0",
+  "description": "Small deterministic corpus for smoke-testing the Atomic benchmark runner.",
+  "atoms": "atoms.jsonl",
+  "queries": "queries.jsonl"
+}

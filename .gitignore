@@ -17,6 +17,9 @@ registry.db-journal
 registry.db-wal
 registry.db-shm
 databases/
+data/
+bench/runs/
+bench/reports/
 docker-compose.prod.yml
 fly.toml
 exports/

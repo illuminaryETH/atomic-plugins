@@ -6,6 +6,7 @@ members = [
     "crates/atomic-server",
     "crates/mcp-bridge",
     "crates/atomic-cloud",
+    "crates/atomic-bench",
 ]
 
 [profile.dev]
