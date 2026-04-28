@@ -332,46 +332,10 @@ pub struct AtomLinkView {
     pub status: String,
 }
 
-/// Citation embedded in a wiki article.
-#[derive(Debug, Serialize)]
-pub struct WikiCitationView {
-    pub citation_index: i32,
-    pub atom_id: String,
-    pub excerpt: String,
-    pub source_url: Option<String>,
-}
-
-/// Wiki article response for get_wiki.
-#[derive(Debug, Serialize)]
-pub struct WikiArticleView {
-    pub tag_id: String,
-    pub article_id: String,
-    pub content_markdown: String,
-    pub atom_count: i32,
-    pub updated_at: String,
-    pub citations: Vec<WikiCitationView>,
-}
-
-/// Wiki summary entry for list_wikis.
-#[derive(Debug, Serialize)]
-pub struct WikiSummaryView {
-    pub tag_id: String,
-    pub tag_name: String,
-    pub atom_count: i32,
-    pub inbound_links: i32,
-    pub updated_at: String,
-}
-
-/// Related-tag hit for get_related_tags.
-#[derive(Debug, Serialize)]
-pub struct RelatedTagView {
-    pub tag_id: String,
-    pub tag_name: String,
-    pub score: f64,
-    pub shared_atoms: i32,
-    pub semantic_edges: i32,
-    pub has_article: bool,
-}
+/// Related-tag, wiki-summary, and full-wiki responses are passed through from
+/// `atomic-core` directly (`RelatedTag`, `WikiArticleSummary`,
+/// `WikiArticleWithCitations`). Defining MCP-specific view types for them
+/// would just rename fields without dropping any internal noise.
 
 /// Response for ingest_url. `was_existing` is true when the URL was already
 /// stored — in that case `atom` reflects the pre-existing atom (with its
@@ -409,6 +373,8 @@ pub struct KeywordTagHit {
     pub tag_id: String,
     pub name: String,
     pub parent_id: Option<String>,
+    pub atom_count: i32,
+    pub score: f32,
 }
 
 /// Chat hit returned inside keyword_search.

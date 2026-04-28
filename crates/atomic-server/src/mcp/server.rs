@@ -557,26 +557,7 @@ impl AtomicMcpServer {
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         match wiki {
-            Some(w) => {
-                let view = WikiArticleView {
-                    tag_id: w.article.tag_id,
-                    article_id: w.article.id,
-                    content_markdown: w.article.content,
-                    atom_count: w.article.atom_count,
-                    updated_at: w.article.updated_at,
-                    citations: w
-                        .citations
-                        .into_iter()
-                        .map(|c| WikiCitationView {
-                            citation_index: c.citation_index,
-                            atom_id: c.atom_id,
-                            excerpt: c.excerpt,
-                            source_url: c.source_url,
-                        })
-                        .collect(),
-                };
-                json_response(&view)
-            }
+            Some(w) => json_response(&w),
             None => Ok(json_null()),
         }
     }
@@ -595,19 +576,7 @@ impl AtomicMcpServer {
             .get_all_wiki_articles()
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let views: Vec<WikiSummaryView> = wikis
-            .into_iter()
-            .map(|w| WikiSummaryView {
-                tag_id: w.tag_id,
-                tag_name: w.tag_name,
-                atom_count: w.atom_count,
-                inbound_links: w.inbound_links,
-                updated_at: w.updated_at,
-            })
-            .collect();
-
-        json_response(&views)
+        json_response(&wikis)
     }
 
     /// Get tags semantically related to a given tag
@@ -625,20 +594,7 @@ impl AtomicMcpServer {
             .get_related_tags(&params.tag_id, limit)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let views: Vec<RelatedTagView> = related
-            .into_iter()
-            .map(|r| RelatedTagView {
-                tag_id: r.tag_id,
-                tag_name: r.tag_name,
-                score: r.score,
-                shared_atoms: r.shared_atoms,
-                semantic_edges: r.semantic_edges,
-                has_article: r.has_article,
-            })
-            .collect();
-
-        json_response(&views)
+        json_response(&related)
     }
 
     /// Fetch a URL and save it as a new atom (or return the existing one)
@@ -769,6 +725,8 @@ impl AtomicMcpServer {
                     tag_id: t.id,
                     name: t.name,
                     parent_id: t.parent_id,
+                    atom_count: t.atom_count,
+                    score: t.score,
                 })
                 .collect(),
             chats: results
