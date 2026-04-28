@@ -66,6 +66,24 @@ pub struct DeleteAtomParams {
     pub atom_id: String,
 }
 
+/// Sort field for list_atoms.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AtomSortField {
+    Updated,
+    Created,
+    Published,
+    Title,
+}
+
+/// Sort direction.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
 /// Input parameters for list_atoms tool
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListAtomsParams {
@@ -82,13 +100,13 @@ pub struct ListAtomsParams {
     #[serde(default)]
     pub offset: Option<i32>,
 
-    /// Sort field: "updated" (default), "created", "published", or "title"
+    /// Sort field (default: updated)
     #[serde(default)]
-    pub sort_by: Option<String>,
+    pub sort_by: Option<AtomSortField>,
 
-    /// Sort direction: "desc" (default) or "asc"
+    /// Sort direction (default: desc)
     #[serde(default)]
-    pub sort_order: Option<String>,
+    pub sort_order: Option<SortDirection>,
 }
 
 /// Input parameters for list_tags tool
@@ -98,14 +116,6 @@ pub struct ListTagsParams {
     /// Set to 0 to include empty tags.
     #[serde(default)]
     pub min_count: Option<i32>,
-}
-
-/// Input parameters for get_atoms_by_tag tool
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetAtomsByTagParams {
-    /// The UUID of the tag. Atoms tagged with this tag *or any descendant tag*
-    /// are returned (the tag tree is traversed downward).
-    pub tag_id: String,
 }
 
 /// Input parameters for find_similar tool
@@ -118,7 +128,8 @@ pub struct FindSimilarParams {
     #[serde(default)]
     pub limit: Option<i32>,
 
-    /// Minimum cosine similarity to include (default: 0.5, range: 0.0–1.0)
+    /// Minimum cosine similarity to include (default: 0.3, range: 0.0–1.0).
+    /// Matches semantic_search's default; raise for stricter results.
     #[serde(default)]
     pub threshold: Option<f32>,
 }
@@ -251,7 +262,7 @@ pub struct AtomSummaryView {
     pub updated_at: String,
 }
 
-/// Response shape for list_atoms / get_atoms_by_tag.
+/// Response shape for list_atoms.
 #[derive(Debug, Serialize)]
 pub struct AtomListResponse {
     pub atoms: Vec<AtomSummaryView>,
@@ -363,13 +374,13 @@ pub struct RelatedTagView {
 }
 
 /// Response for ingest_url. `was_existing` is true when the URL was already
-/// stored — in that case `atom_id`/`title` refer to the pre-existing atom and
-/// `content_length` is `None`.
+/// stored — in that case `atom` reflects the pre-existing atom (with its
+/// current tags) and `content_length` is `None`. On a fresh ingest,
+/// `content_length` carries the extracted markdown size; tags may be empty
+/// since auto-tagging runs asynchronously.
 #[derive(Debug, Serialize)]
 pub struct IngestUrlResponse {
-    pub atom_id: String,
-    pub url: String,
-    pub title: String,
+    pub atom: AtomSummaryView,
     pub was_existing: bool,
     pub content_length: Option<usize>,
 }

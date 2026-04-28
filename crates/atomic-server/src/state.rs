@@ -112,6 +112,9 @@ pub enum ServerEvent {
     AtomUpdated {
         atom: atomic_core::AtomWithTags,
     },
+    AtomDeleted {
+        atom_id: String,
+    },
 
     // Import progress events
     ImportProgress {

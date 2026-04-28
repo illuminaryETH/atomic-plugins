@@ -16,11 +16,21 @@ use tokio::sync::broadcast;
 
 const ATOM_SNIPPET_CHARS: usize = 200;
 
-fn snippet_from(content: &str) -> String {
+pub(crate) fn snippet_from(content: &str) -> String {
     content.chars().take(ATOM_SNIPPET_CHARS).collect()
 }
 
-fn tag_refs(atom: &AtomWithTags) -> Vec<TagRef> {
+/// Snippet for an atom, falling back to a content prefix if the stored
+/// snippet is empty (e.g., for atoms created before snippet generation ran).
+pub(crate) fn effective_snippet(atom: &atomic_core::models::Atom) -> String {
+    if atom.snippet.is_empty() {
+        snippet_from(&atom.content)
+    } else {
+        atom.snippet.clone()
+    }
+}
+
+pub(crate) fn tag_refs(atom: &AtomWithTags) -> Vec<TagRef> {
     atom.tags
         .iter()
         .map(|t| TagRef {
@@ -30,15 +40,11 @@ fn tag_refs(atom: &AtomWithTags) -> Vec<TagRef> {
         .collect()
 }
 
-fn atom_summary(atom: &AtomWithTags) -> AtomSummaryView {
+pub(crate) fn atom_summary(atom: &AtomWithTags) -> AtomSummaryView {
     AtomSummaryView {
         atom_id: atom.atom.id.clone(),
         title: atom.atom.title.clone(),
-        snippet: if atom.atom.snippet.is_empty() {
-            snippet_from(&atom.atom.content)
-        } else {
-            atom.atom.snippet.clone()
-        },
+        snippet: effective_snippet(&atom.atom),
         source_url: atom.atom.source_url.clone(),
         tags: tag_refs(atom),
         created_at: atom.atom.created_at.clone(),
@@ -46,7 +52,7 @@ fn atom_summary(atom: &AtomWithTags) -> AtomSummaryView {
     }
 }
 
-fn flatten_tags(tags: &[TagWithCount], out: &mut Vec<TagSummaryView>) {
+pub(crate) fn flatten_tags(tags: &[TagWithCount], out: &mut Vec<TagSummaryView>) {
     for t in tags {
         out.push(TagSummaryView {
             tag_id: t.tag.id.clone(),
@@ -65,6 +71,13 @@ fn json_response<T: serde::Serialize>(value: &T) -> Result<CallToolResult, Error
     let text = serde_json::to_string_pretty(value)
         .map_err(|e| ErrorData::internal_error(format!("Serialization error: {}", e), None))?;
     Ok(CallToolResult::success(vec![Content::text(text)]))
+}
+
+/// JSON `null`. Used by `get_*`-style tools to signal "not found" in a way
+/// that `JSON.parse` accepts; the convention is consistent across all
+/// not-found returns in this module.
+fn json_null() -> CallToolResult {
+    CallToolResult::success(vec![Content::text("null".to_string())])
 }
 
 /// Extension type inserted by the `on_request` hook to carry the `?db=` selection.
@@ -166,12 +179,7 @@ impl AtomicMcpServer {
 
         let atom_with_tags = match core.get_atom(&params.atom_id).await {
             Ok(Some(a)) => a,
-            Ok(None) => {
-                return Ok(CallToolResult::success(vec![Content::text(format!(
-                    "Atom not found: {}",
-                    params.atom_id
-                ))]));
-            }
+            Ok(None) => return Ok(json_null()),
             Err(e) => return Err(ErrorData::internal_error(e.to_string(), None)),
         };
 
@@ -270,12 +278,7 @@ impl AtomicMcpServer {
         // Verify the atom exists first
         match core.get_atom(&params.atom_id).await {
             Ok(Some(_)) => {}
-            Ok(None) => {
-                return Ok(CallToolResult::success(vec![Content::text(format!(
-                    "Atom not found: {}",
-                    params.atom_id
-                ))]));
-            }
+            Ok(None) => return Ok(json_null()),
             Err(e) => return Err(ErrorData::internal_error(e.to_string(), None)),
         }
 
@@ -308,7 +311,7 @@ impl AtomicMcpServer {
 
     /// Delete an atom permanently
     #[tool(
-        description = "Permanently delete an atom by id. Use this only when the user explicitly asks to forget something or remove an obsolete note. Cannot be undone."
+        description = "Permanently delete an atom by id. Use this only when the user explicitly asks to forget something or remove an obsolete note. Cannot be undone. Idempotent: deleting an already-missing id is a no-op."
     )]
     async fn delete_atom(
         &self,
@@ -316,20 +319,13 @@ impl AtomicMcpServer {
         Parameters(params): Parameters<DeleteAtomParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let core = self.resolve_core(&context).await?;
-        match core.get_atom(&params.atom_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return Ok(CallToolResult::success(vec![Content::text(format!(
-                    "Atom not found: {}",
-                    params.atom_id
-                ))]));
-            }
-            Err(e) => return Err(ErrorData::internal_error(e.to_string(), None)),
-        }
-
         core.delete_atom(&params.atom_id)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let _ = self.event_tx.send(ServerEvent::AtomDeleted {
+            atom_id: params.atom_id.clone(),
+        });
 
         json_response(&DeleteAtomResponse {
             atom_id: params.atom_id,
@@ -339,7 +335,7 @@ impl AtomicMcpServer {
 
     /// List atoms with optional tag filter and pagination
     #[tool(
-        description = "List atoms in the knowledge base, optionally scoped to a tag (and its descendants). Returns compact summaries — call read_atom to fetch full content. Useful for browsing or scanning a topic."
+        description = "List atoms in the knowledge base, optionally scoped to a tag. When `tag_id` is set, the listing cascades to all descendant tags in the tree. Returns compact summaries — call read_atom to fetch full content. This is the canonical atom-listing tool."
     )]
     async fn list_atoms(
         &self,
@@ -353,15 +349,15 @@ impl AtomicMcpServer {
         let core = self.resolve_core(&context).await?;
         let limit = params.limit.unwrap_or(50).clamp(1, 200);
         let offset = params.offset.unwrap_or(0).max(0);
-        let sort_by = match params.sort_by.as_deref() {
-            Some("created") => SortField::Created,
-            Some("published") => SortField::Published,
-            Some("title") => SortField::Title,
-            _ => SortField::Updated,
+        let sort_by = match params.sort_by {
+            Some(AtomSortField::Created) => SortField::Created,
+            Some(AtomSortField::Published) => SortField::Published,
+            Some(AtomSortField::Title) => SortField::Title,
+            Some(AtomSortField::Updated) | None => SortField::Updated,
         };
-        let sort_order = match params.sort_order.as_deref() {
-            Some("asc") => SortOrder::Asc,
-            _ => SortOrder::Desc,
+        let sort_order = match params.sort_order {
+            Some(SortDirection::Asc) => SortOrder::Asc,
+            Some(SortDirection::Desc) | None => SortOrder::Desc,
         };
 
         let core_params = CoreListAtomsParams {
@@ -416,7 +412,7 @@ impl AtomicMcpServer {
 
     /// List all tags as a flat array (parent_id conveys hierarchy)
     #[tool(
-        description = "List the tag tree as a flat array — each tag carries its parent_id, direct atom_count, and subtree_count (atoms in this tag plus all descendants). Use this to discover topics before calling get_atoms_by_tag or get_wiki."
+        description = "List the tag tree as a flat array — each tag carries its parent_id, direct atom_count, and subtree_count (atoms in this tag plus all descendants). Use this to discover topics, then call list_atoms with `tag_id` to drill in or get_wiki for the tag's article."
     )]
     async fn list_tags(
         &self,
@@ -436,25 +432,6 @@ impl AtomicMcpServer {
         json_response(&flat)
     }
 
-    /// Get atoms tagged with a specific tag (or any descendant tag)
-    #[tool(
-        description = "Return all atoms tagged with the given tag, including atoms tagged only under descendant tags in the tag tree. Use after list_tags to drill into a topic."
-    )]
-    async fn get_atoms_by_tag(
-        &self,
-        context: RequestContext<RoleServer>,
-        Parameters(params): Parameters<GetAtomsByTagParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let core = self.resolve_core(&context).await?;
-        let atoms = core
-            .get_atoms_by_tag(&params.tag_id)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let summaries: Vec<AtomSummaryView> = atoms.iter().map(atom_summary).collect();
-        json_response(&summaries)
-    }
-
     /// Find atoms semantically similar to a given atom
     #[tool(
         description = "Return atoms whose content is semantically close to the given atom, based on vector embeddings. Useful for following a thought thread or surfacing related notes."
@@ -466,7 +443,7 @@ impl AtomicMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         let core = self.resolve_core(&context).await?;
         let limit = params.limit.unwrap_or(10).clamp(1, 50);
-        let threshold = params.threshold.unwrap_or(0.5).clamp(0.0, 1.0);
+        let threshold = params.threshold.unwrap_or(0.3).clamp(0.0, 1.0);
 
         let results = core
             .find_similar(&params.atom_id, limit, threshold)
@@ -478,11 +455,7 @@ impl AtomicMcpServer {
             .map(|r| SimilarAtomView {
                 atom_id: r.atom.atom.id.clone(),
                 title: r.atom.atom.title.clone(),
-                snippet: if r.atom.atom.snippet.is_empty() {
-                    snippet_from(&r.atom.atom.content)
-                } else {
-                    r.atom.atom.snippet.clone()
-                },
+                snippet: effective_snippet(&r.atom.atom),
                 similarity_score: r.similarity_score,
             })
             .collect();
@@ -516,11 +489,7 @@ impl AtomicMcpServer {
                 .map(|n| NeighborhoodAtomView {
                     atom_id: n.atom.atom.id.clone(),
                     title: n.atom.atom.title.clone(),
-                    snippet: if n.atom.atom.snippet.is_empty() {
-                        snippet_from(&n.atom.atom.content)
-                    } else {
-                        n.atom.atom.snippet.clone()
-                    },
+                    snippet: effective_snippet(&n.atom.atom),
                     depth: n.depth,
                     tags: tag_refs(&n.atom),
                 })
@@ -608,9 +577,7 @@ impl AtomicMcpServer {
                 };
                 json_response(&view)
             }
-            None => Ok(CallToolResult::success(vec![Content::text(
-                "null".to_string(),
-            )])),
+            None => Ok(json_null()),
         }
     }
 
@@ -676,7 +643,7 @@ impl AtomicMcpServer {
 
     /// Fetch a URL and save it as a new atom (or return the existing one)
     #[tool(
-        description = "Fetch a URL, extract its article content as markdown, and save it as a new atom. If the URL has already been ingested, returns the existing atom with `was_existing: true` instead of erroring. Embedding and tagging run in the background after this call returns."
+        description = "Fetch a URL, extract its article content as markdown, and save it as a new atom. If the URL has already been ingested, returns the existing atom (with its current tags) and `was_existing: true` instead of erroring. Embedding and tagging run in the background after this call returns, so the response's `tags` may be empty for a fresh ingest."
     )]
     async fn ingest_url(
         &self,
@@ -693,9 +660,7 @@ impl AtomicMcpServer {
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
         {
             return json_response(&IngestUrlResponse {
-                atom_id: existing.atom.id,
-                url: params.url,
-                title: existing.atom.title,
+                atom: atom_summary(&existing),
                 was_existing: true,
                 content_length: None,
             });
@@ -716,10 +681,22 @@ impl AtomicMcpServer {
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
+        // Refetch so the caller gets a real summary (snippet, timestamps, source_url)
+        // rather than a hand-built skeleton. Tags may still be empty since
+        // auto-tagging is queued after create_atom returns.
+        let saved = core
+            .get_atom(&result.atom_id)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .ok_or_else(|| {
+                ErrorData::internal_error(
+                    "Atom disappeared between ingest and refetch".to_string(),
+                    None,
+                )
+            })?;
+
         json_response(&IngestUrlResponse {
-            atom_id: result.atom_id,
-            url: result.url,
-            title: result.title,
+            atom: atom_summary(&saved),
             was_existing: false,
             content_length: Some(result.content_length),
         })
@@ -741,15 +718,13 @@ impl AtomicMcpServer {
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
         {
             Some(atom) => json_response(&atom_summary(&atom)),
-            None => Ok(CallToolResult::success(vec![Content::text(
-                "null".to_string(),
-            )])),
+            None => Ok(json_null()),
         }
     }
 
     /// Fast keyword search across atoms, wiki articles, tags, and chats
     #[tool(
-        description = "Fast FTS5 keyword search across atoms, wiki articles, tags, and chat conversations. Cheaper than semantic_search (no embedding call) and returns hits across more entity types. Prefer this when the user types specific terms; use semantic_search when the question is conceptual."
+        description = "Fast FTS5 keyword search across atoms, wiki articles, tags, and chat conversations. Cheaper than semantic_search (no embedding call) and returns hits across more entity types. Prefer this when the user types specific terms; use semantic_search when the question is conceptual. The `score` field is FTS-based relevance — within a section, higher means more relevant."
     )]
     async fn keyword_search(
         &self,
@@ -824,5 +799,156 @@ impl ServerHandler for AtomicMcpServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the response-shaping helpers. These cover the field
+    //! mapping that's most likely to regress when atomic-core's models
+    //! evolve. Full HTTP-level MCP integration tests (initialize → tools/call)
+    //! are intentionally out of scope here — they require spinning up the
+    //! StreamableHttpService and running the MCP handshake, which is a
+    //! follow-up.
+    use super::*;
+    use atomic_core::models::{Atom, Tag, TagWithCount};
+
+    fn make_atom(id: &str, title: &str, content: &str, snippet: &str) -> Atom {
+        Atom {
+            id: id.to_string(),
+            content: content.to_string(),
+            title: title.to_string(),
+            snippet: snippet.to_string(),
+            source_url: None,
+            source: None,
+            published_at: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            embedding_status: "complete".to_string(),
+            tagging_status: "complete".to_string(),
+            embedding_error: None,
+            tagging_error: None,
+        }
+    }
+
+    fn make_tag(id: &str, name: &str, parent_id: Option<&str>) -> Tag {
+        Tag {
+            id: id.to_string(),
+            name: name.to_string(),
+            parent_id: parent_id.map(String::from),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            is_autotag_target: false,
+        }
+    }
+
+    #[test]
+    fn effective_snippet_uses_stored_snippet_when_present() {
+        let atom = make_atom("a1", "Title", "full content here", "stored snippet");
+        assert_eq!(effective_snippet(&atom), "stored snippet");
+    }
+
+    #[test]
+    fn effective_snippet_falls_back_to_content_prefix_when_empty() {
+        let atom = make_atom("a1", "Title", "fallback content", "");
+        assert_eq!(effective_snippet(&atom), "fallback content");
+    }
+
+    #[test]
+    fn effective_snippet_caps_at_200_chars_on_fallback() {
+        let long = "x".repeat(500);
+        let atom = make_atom("a1", "Title", &long, "");
+        assert_eq!(effective_snippet(&atom).chars().count(), 200);
+    }
+
+    #[test]
+    fn snippet_from_counts_chars_not_bytes() {
+        // Each '日' is 3 bytes in UTF-8 but 1 char; confirm we don't truncate
+        // mid-codepoint or count bytes instead.
+        let s: String = "日".repeat(250);
+        let snippet = snippet_from(&s);
+        assert_eq!(snippet.chars().count(), 200);
+    }
+
+    #[test]
+    fn atom_summary_copies_id_title_timestamps_and_source() {
+        let mut atom = make_atom("a1", "T", "C", "S");
+        atom.source_url = Some("https://example.com/x".to_string());
+        let with_tags = AtomWithTags {
+            atom,
+            tags: vec![make_tag("t1", "rust", None)],
+        };
+        let view = atom_summary(&with_tags);
+        assert_eq!(view.atom_id, "a1");
+        assert_eq!(view.title, "T");
+        assert_eq!(view.snippet, "S");
+        assert_eq!(view.source_url.as_deref(), Some("https://example.com/x"));
+        assert_eq!(view.created_at, "2026-01-01T00:00:00Z");
+        assert_eq!(view.updated_at, "2026-01-02T00:00:00Z");
+        assert_eq!(view.tags.len(), 1);
+        assert_eq!(view.tags[0].id, "t1");
+        assert_eq!(view.tags[0].name, "rust");
+    }
+
+    #[test]
+    fn tag_refs_drops_parent_id_and_metadata() {
+        let with_tags = AtomWithTags {
+            atom: make_atom("a1", "T", "C", "S"),
+            tags: vec![
+                make_tag("t1", "rust", None),
+                make_tag("t2", "async", Some("t1")),
+            ],
+        };
+        let refs = tag_refs(&with_tags);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].id, "t1");
+        assert_eq!(refs[0].name, "rust");
+        assert_eq!(refs[1].id, "t2");
+        assert_eq!(refs[1].name, "async");
+    }
+
+    #[test]
+    fn flatten_tags_walks_full_tree_in_dfs_order() {
+        // root -> child1 -> grandchild
+        //      -> child2
+        let tree = vec![TagWithCount {
+            tag: make_tag("root", "Root", None),
+            atom_count: 1,
+            children_total: 4,
+            children: vec![
+                TagWithCount {
+                    tag: make_tag("c1", "Child1", Some("root")),
+                    atom_count: 2,
+                    children_total: 3,
+                    children: vec![TagWithCount {
+                        tag: make_tag("g1", "Grand", Some("c1")),
+                        atom_count: 3,
+                        children_total: 3,
+                        children: vec![],
+                    }],
+                },
+                TagWithCount {
+                    tag: make_tag("c2", "Child2", Some("root")),
+                    atom_count: 4,
+                    children_total: 4,
+                    children: vec![],
+                },
+            ],
+        }];
+
+        let mut out = Vec::new();
+        flatten_tags(&tree, &mut out);
+        let ids: Vec<&str> = out.iter().map(|t| t.tag_id.as_str()).collect();
+        assert_eq!(ids, vec!["root", "c1", "g1", "c2"]);
+
+        // Field mapping: atom_count vs subtree_count must come from the right
+        // source struct.
+        let g1 = &out[2];
+        assert_eq!(g1.atom_count, 3);
+        assert_eq!(g1.subtree_count, 3);
+        let root = &out[0];
+        assert_eq!(root.atom_count, 1);
+        assert_eq!(root.subtree_count, 4);
+        assert_eq!(root.parent_id, None);
+        assert_eq!(g1.parent_id.as_deref(), Some("c1"));
     }
 }
