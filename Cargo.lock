@@ -702,6 +702,7 @@ dependencies = [
  "utoipa",
  "utoipa-scalar",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

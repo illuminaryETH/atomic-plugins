@@ -6,10 +6,13 @@
 //! then exercises each tool over JSON-RPC. Responses are SSE — each event's
 //! `data: ` line is parsed back to JSON.
 //!
-//! Tools that need a configured embedder, LLM provider, or external network
-//! (`semantic_search`, `find_similar`, `get_atom_neighborhood`, `ingest_url`
-//! fresh path) are skipped here; the tests focus on what's exercisable
-//! against a clean SQLite database with no provider configured.
+//! Tools that need a configured embedder or external network — `semantic_search`,
+//! `find_similar`, `get_atom_neighborhood`, `ingest_url` (fresh path) — use
+//! `McpHarness::start_with_embeddings()`, which mounts a `wiremock` server in
+//! front of the OpenAI-compatible `OpenAICompatProvider`. The real production
+//! provider plumbing (settings → `ProviderConfig::from_settings` → HTTP) runs;
+//! only the upstream API is faked. Tests against tools that don't touch the
+//! pipeline still use the lighter `start()`.
 
 use actix_web::{web, App, HttpServer};
 use atomic_core::{CreateAtomRequest, DatabaseManager};
@@ -25,6 +28,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, Request as WiremockRequest, Respond, ResponseTemplate};
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -42,6 +47,9 @@ struct McpHarness {
     client: reqwest::Client,
     core: atomic_core::AtomicCore,
     server_task: tokio::task::JoinHandle<()>,
+    /// Held only to keep the mock alive for the duration of the test. Tests
+    /// that need its URL go through `mock_uri()`.
+    mock_server: Option<MockServer>,
     _temp: tempfile::TempDir,
 }
 
@@ -169,7 +177,115 @@ impl McpHarness {
             client,
             core,
             server_task,
+            mock_server: None,
             _temp: temp,
+        }
+    }
+
+    /// Spin up a harness with an OpenAI-compatible mock embeddings endpoint
+    /// wired into the core's provider settings. Also exposes a `GET /test-page`
+    /// route on the same mock so `ingest_url` tests can fetch a deterministic
+    /// article without touching the network.
+    ///
+    /// Uses `embedding_dimension = 1536` to match the default `vec_chunks` table
+    /// dim — avoids a table-recreation cycle. `auto_tagging_enabled` is set to
+    /// `false` so the pipeline doesn't also reach for the LLM.
+    async fn start_with_embeddings() -> Self {
+        let mut h = Self::start().await;
+
+        let mock = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(EmbeddingResponder { dim: 1536 })
+            .mount(&mock)
+            .await;
+
+        // `set_body_raw` is used (not `set_body_string`) because the latter
+        // hard-codes Content-Type: text/plain, and `atomic_core::ingest::fetch`
+        // rejects non-HTML responses.
+        Mock::given(method("GET"))
+            .and(path("/test-page"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(TEST_ARTICLE_HTML.as_bytes().to_vec(), "text/html"),
+            )
+            .mount(&mock)
+            .await;
+
+        let base = format!("{}/v1", mock.uri());
+        h.core
+            .set_setting("provider", "openai_compat")
+            .await
+            .expect("set provider");
+        h.core
+            .set_setting("openai_compat_base_url", &base)
+            .await
+            .expect("set base_url");
+        h.core
+            .set_setting("openai_compat_embedding_model", "test-embed")
+            .await
+            .expect("set model");
+        h.core
+            .set_setting("openai_compat_embedding_dimension", "1536")
+            .await
+            .expect("set dim");
+        h.core
+            .set_setting("auto_tagging_enabled", "false")
+            .await
+            .expect("disable tagging");
+
+        h.mock_server = Some(mock);
+        h
+    }
+
+    fn mock_uri(&self) -> String {
+        self.mock_server
+            .as_ref()
+            .expect("start_with_embeddings() not called")
+            .uri()
+    }
+
+    /// Block until the embedding pipeline has drained.
+    ///
+    /// `core.create_atom` enqueues a pipeline job and spawns the worker
+    /// (`embedding.rs:2114`) — control returns *before* embeddings are
+    /// persisted. Tests that read `atom_chunks` / `vec_chunks` after seeding
+    /// must explicitly wait for the queue to empty and every atom to leave
+    /// the `pending`/`processing` states.
+    async fn wait_for_pipeline_idle(&self) {
+        let db = self.core.database().expect("sqlite backend");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let busy = {
+                let conn = db.read_conn().expect("read_conn");
+                let jobs: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM atom_pipeline_jobs", [], |r| r.get(0))
+                    .unwrap_or(0);
+                let in_flight: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM atoms WHERE embedding_status IN ('pending', 'processing')",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                jobs > 0 || in_flight > 0
+            };
+            if !busy {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                let conn = db.read_conn().unwrap();
+                let states: Vec<(String, String)> = conn
+                    .prepare("SELECT id, embedding_status FROM atoms")
+                    .unwrap()
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .unwrap()
+                    .collect::<Result<_, _>>()
+                    .unwrap();
+                panic!("pipeline did not drain within 10s; atoms: {:?}", states);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
     }
 
@@ -267,6 +383,90 @@ async fn drain_sse(resp: reqwest::Response) -> String {
     .await;
     String::from_utf8_lossy(&buf).into_owned()
 }
+
+/// Deterministic unit-length pseudo-embedding for a given text. Same input →
+/// same vector. The vectors share a constant offset before normalization so
+/// any two are highly similar (>0.99 cosine) — that's deliberate: it makes
+/// `find_similar` and `get_atom_neighborhood` produce non-empty results
+/// against a fake provider, which is what the wiring tests need to assert.
+fn fake_embedding(input: &str, dim: usize) -> Vec<f32> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    input.hash(&mut hasher);
+    let h = hasher.finish();
+
+    let mut v = Vec::with_capacity(dim);
+    // Per-dim base (constant) plus a small per-input perturbation seeded by
+    // the hash. The constant dominates so all vectors cluster near a single
+    // point on the unit sphere.
+    for i in 0..dim {
+        let perturb = ((h >> ((i % 8) * 8)) & 0xFF) as f32 / 255.0;
+        v.push(1.0 + perturb * 0.05);
+    }
+    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for x in &mut v {
+            *x /= norm;
+        }
+    }
+    v
+}
+
+/// `wiremock` responder for `POST /v1/embeddings`. Reads the request's
+/// `input: [..]` array and returns one embedding per element, matching the
+/// shape `OpenAICompatProvider::embed_batch` deserializes.
+struct EmbeddingResponder {
+    dim: usize,
+}
+
+impl Respond for EmbeddingResponder {
+    fn respond(&self, request: &WiremockRequest) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&request.body)
+            .expect("embeddings request body must be JSON");
+        let inputs = body
+            .get("input")
+            .and_then(|v| v.as_array())
+            .expect("embeddings request must have an `input` array");
+
+        let data: Vec<Value> = inputs
+            .iter()
+            .map(|v| {
+                let text = v.as_str().unwrap_or("");
+                json!({ "embedding": fake_embedding(text, self.dim) })
+            })
+            .collect();
+
+        ResponseTemplate::new(200).set_body_json(json!({ "data": data }))
+    }
+}
+
+/// HTML payload served by the `GET /test-page` mock. Has to be substantive
+/// and article-shaped enough to clear `is_probably_readable()` and the 200-char
+/// minimum content length in `atomic_core::ingest::extract::extract_article`.
+const TEST_ARTICLE_HTML: &str = r#"<!DOCTYPE html>
+<html>
+<head>
+  <title>The Domestic Ferret</title>
+</head>
+<body>
+  <article>
+    <h1>The Domestic Ferret</h1>
+    <p>The ferret is a small, domesticated species belonging to the family Mustelidae.
+       Ferrets have been kept as pets for thousands of years and are commonly used in
+       hunting and as working animals in agricultural and industrial settings.</p>
+    <p>Their average length is about 50 cm including a 13 cm tail, and they typically
+       weigh between 0.7 and 2 kg. The natural lifespan of a domestic ferret is
+       between seven and ten years, with sexual dimorphism observable between males
+       and females.</p>
+    <p>Like many other members of the mustelid family, ferrets have scent glands near
+       their anus, the secretions from which are used in scent marking. Ferrets are
+       crepuscular animals — they spend most of their time asleep, with bursts of
+       activity around dawn and dusk.</p>
+  </article>
+</body>
+</html>"#;
 
 /// Parse an SSE body and pull out the JSON-RPC response with the matching id.
 fn find_response(body: String, id: i64) -> Value {
@@ -703,4 +903,170 @@ async fn get_atom_links_returns_array() {
         .call_tool("get_atom_links", json!({ "atom_id": atom_id }))
         .await;
     assert!(r.is_array());
+}
+
+// ---------------------------------------------------------------------------
+// Tests against tools that need an embedder configured.
+// Use `McpHarness::start_with_embeddings()`, which fronts the OpenAICompat
+// provider with a wiremock server.
+// ---------------------------------------------------------------------------
+
+#[actix_web::test]
+async fn semantic_search_returns_results_through_mock_provider() {
+    let h = McpHarness::start_with_embeddings().await;
+
+    for content in ["alpha note about cats", "beta note about dogs", "gamma note about fish"] {
+        h.core
+            .create_atom(
+                CreateAtomRequest {
+                    content: content.to_string(),
+                    ..Default::default()
+                },
+                |_| {},
+            )
+            .await
+            .expect("create_atom");
+    }
+    h.wait_for_pipeline_idle().await;
+
+    let r = h
+        .call_tool(
+            "semantic_search",
+            json!({ "query": "cats", "limit": 5 }),
+        )
+        .await;
+    let arr = r.as_array().unwrap_or_else(|| panic!("semantic_search must return an array, got {}", r));
+    assert!(!arr.is_empty(), "expected ≥1 result, got {}", r);
+    // Pin the wire shape — the real consumer (an LLM) depends on these keys.
+    let first = &arr[0];
+    assert!(first.get("atom_id").is_some(), "missing atom_id: {}", first);
+    assert!(
+        first.get("similarity_score").is_some(),
+        "missing similarity_score: {}",
+        first
+    );
+}
+
+#[actix_web::test]
+async fn find_similar_returns_other_atoms_excluding_self() {
+    let h = McpHarness::start_with_embeddings().await;
+
+    let seed = h
+        .core
+        .create_atom(
+            CreateAtomRequest {
+                content: "alpha seed note".to_string(),
+                ..Default::default()
+            },
+            |_| {},
+        )
+        .await
+        .unwrap()
+        .expect("seed atom");
+    for content in ["beta companion", "gamma companion"] {
+        h.core
+            .create_atom(
+                CreateAtomRequest {
+                    content: content.to_string(),
+                    ..Default::default()
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+    }
+    h.wait_for_pipeline_idle().await;
+
+    let r = h
+        .call_tool(
+            "find_similar",
+            json!({ "atom_id": seed.atom.id, "limit": 5, "threshold": 0.0 }),
+        )
+        .await;
+    let arr = r.as_array().expect("find_similar returns an array");
+    assert!(!arr.is_empty(), "expected ≥1 similar atom, got {}", r);
+    for item in arr {
+        assert_ne!(
+            item["atom_id"].as_str(),
+            Some(seed.atom.id.as_str()),
+            "seed atom appeared in its own find_similar result"
+        );
+        assert!(item.get("similarity_score").is_some());
+    }
+}
+
+#[actix_web::test]
+async fn get_atom_neighborhood_returns_graph_around_seed() {
+    let h = McpHarness::start_with_embeddings().await;
+
+    let seed = h
+        .core
+        .create_atom(
+            CreateAtomRequest {
+                content: "graph center note".to_string(),
+                ..Default::default()
+            },
+            |_| {},
+        )
+        .await
+        .unwrap()
+        .expect("seed");
+    for content in ["neighbor one", "neighbor two"] {
+        h.core
+            .create_atom(
+                CreateAtomRequest {
+                    content: content.to_string(),
+                    ..Default::default()
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+    }
+    h.wait_for_pipeline_idle().await;
+
+    let r = h
+        .call_tool(
+            "get_atom_neighborhood",
+            json!({
+                "atom_id": seed.atom.id,
+                "depth": 1,
+                // 0.0 so even tiny similarities surface — the fake embedder
+                // produces highly-clustered vectors, but be permissive.
+                "min_similarity": 0.0,
+            }),
+        )
+        .await;
+
+    assert_eq!(r["center_atom_id"], json!(seed.atom.id));
+    let atoms = r["atoms"].as_array().expect("atoms is an array");
+    // The seed itself is always in the neighborhood at depth 0.
+    assert!(
+        atoms.iter().any(|n| n["atom_id"] == json!(seed.atom.id)),
+        "neighborhood did not include the seed atom: {}",
+        r
+    );
+    assert!(r["edges"].is_array(), "edges must be an array, got {}", r);
+}
+
+#[actix_web::test]
+async fn ingest_url_fetches_article_and_creates_atom() {
+    let h = McpHarness::start_with_embeddings().await;
+    let url = format!("{}/test-page", h.mock_uri());
+
+    let r = h
+        .call_tool("ingest_url", json!({ "url": url.clone() }))
+        .await;
+
+    assert_eq!(r["was_existing"], json!(false), "expected fresh ingest, got {}", r);
+    assert!(
+        r["content_length"].as_u64().unwrap_or(0) > 0,
+        "content_length should be positive on fresh ingest, got {}",
+        r["content_length"]
+    );
+    assert_eq!(r["atom"]["source_url"], json!(url));
+
+    // A second call against the same URL should now hit the dedup path.
+    let again = h.call_tool("ingest_url", json!({ "url": url })).await;
+    assert_eq!(again["was_existing"], json!(true));
 }
