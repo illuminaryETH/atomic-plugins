@@ -1700,6 +1700,13 @@ impl AtomicCore {
     }
 
     /// Process due jobs from the unified embedding/tagging queue.
+    ///
+    /// Returns once the work has been **handed off** to a background task —
+    /// not once it has completed. The returned count is the number of jobs
+    /// claimed and dispatched; per-atom completion is reported via
+    /// `EmbeddingEvent::PipelineQueueCompleted` on `on_event`. Callers that
+    /// need to await drain (e.g. integration tests) should listen for that
+    /// event or poll `atoms.embedding_status`.
     pub async fn process_queued_pipeline_jobs<F>(&self, on_event: F) -> Result<i32, AtomicCoreError>
     where
         F: Fn(EmbeddingEvent) + Send + Sync + 'static,
